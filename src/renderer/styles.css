@@ -1,0 +1,2047 @@
+/* pogchatter — terminal-TUI stylesheet, ported from the original design mockups.
+   JetBrains Mono is bundled via @fontsource (imported in main.tsx). Two themes; default `ice`.
+   Switching themes is a single class swap on .pc-app (theme-ice / theme-midnight).
+   Border language: dashed = "creates something new" (ghost add box, + channel, + add rule,
+   combine-into-monitor); solid = everything else. No transitions — state changes are instant. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+#root {
+  position: relative;
+}
+
+/* ── themes ── */
+.pc-app.theme-ice {
+  --bg: #242933;
+  --bgElev: #2a313d;
+  --bgInput: #20262f;
+  --rule: #39424f;
+  --ruleStrong: #4c5868;
+  --fg: #d8dee9;
+  --dim: #8b97aa;
+  --dimmer: #6b7890;
+  --tw: #b4a0e0;
+  --twBg: rgba(180, 160, 224, 0.14);
+  --yt: #e89aa0;
+  --ytBg: rgba(232, 154, 160, 0.13);
+  --ok: #a3be8c;
+  --warn: #ebcb8b;
+  --err: #e07a7a;
+  --accent: #88c0d0;
+  --vip: #d3a0c8;
+  --vipBg: rgba(211, 160, 200, 0.16);
+  --modeFg: #1b2027;
+  --avaBg: #323a47;
+  --sel: rgba(136, 192, 208, 0.08);
+  --vig: 0.34;
+}
+.pc-app.theme-midnight {
+  --bg: #0b0e14;
+  --bgElev: #0e131c;
+  --bgInput: #0a0d13;
+  --rule: #1b2330;
+  --ruleStrong: #2a3547;
+  --fg: #c7d2e0;
+  --dim: #7a899e;
+  --dimmer: #5b6b84;
+  --tw: #b69cff;
+  --twBg: rgba(150, 120, 255, 0.14);
+  --yt: #ff9d8a;
+  --ytBg: rgba(255, 157, 138, 0.13);
+  --ok: #7ee0a8;
+  --warn: #f2c66b;
+  --err: #ff7a7a;
+  --accent: #56c2d6;
+  --vip: #ff79c6;
+  --vipBg: rgba(255, 121, 198, 0.14);
+  --modeFg: #06121a;
+  --avaBg: #161d29;
+  --sel: rgba(86, 194, 214, 0.07);
+  --vig: 0.42;
+}
+
+.pc-app {
+  /* chrome type scale (chat text itself follows --chat-fs) */
+  --fs-micro: 9px;
+  --fs-small: 10.5px;
+  --fs-ui: 11.5px;
+  --fs-emph: 12.5px;
+  /* shared metrics */
+  --gut: 11px; /* one column gutter for headers, rows, and the composer */
+  --pad: 8px;
+  --radius: 2px;
+  --overlay: rgba(0, 0, 0, 0.2);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+  background: var(--bg);
+  color: var(--fg);
+  /* Native checkboxes, selects, and the color input follow the dark palette. */
+  color-scheme: dark;
+  accent-color: var(--accent);
+  /* Chat text size — settable in Settings; UI chrome below uses its own fixed compact sizes. */
+  font-size: var(--chat-fs, 13px);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'liga' 0;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pc-app * {
+  box-sizing: border-box;
+}
+.pc-app ::selection {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* One TUI focus treatment wherever keyboard focus lands. */
+.pc-app :focus-visible {
+  outline: 1px dashed var(--accent);
+  outline-offset: 1px;
+}
+/* Text fields self-indicate with the caret (some add an accent border); a text input matches
+   :focus-visible the whole time the user types, so the dashed box would frame every keystroke. */
+.pc-app input:focus-visible,
+.pc-app textarea:focus-visible,
+.pc-app select:focus-visible {
+  outline: none;
+}
+
+/* spacing utilities (replacing one-off inline styles) */
+.pc-mt {
+  margin-top: 12px;
+}
+.pc-ml {
+  margin-left: var(--pad);
+}
+
+/* platform/status tag chip — one definition for the titlebar, column heads, modals, and lists.
+   .acc marks app-owned views (FIND/USER/REPLIES/CFG); .mon is reserved for monitors. */
+.pc-app .tag {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+  padding: 1px 4px;
+  flex: 0 0 auto;
+}
+.pc-app .tag.tw {
+  color: var(--tw);
+  background: var(--twBg);
+}
+.pc-app .tag.yt {
+  color: var(--yt);
+  background: var(--ytBg);
+}
+/* Logged-out auth chips: platform colors mean "connected", so the tag goes grey until then. */
+.pc-app .tag.off {
+  color: var(--dim);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--dim);
+}
+.pc-app .tag.mon,
+.pc-app .tag.acc {
+  color: var(--accent);
+  background: var(--sel);
+}
+.pc-app .tag.flag {
+  color: var(--err);
+  background: var(--overlay);
+}
+
+/* Themed scrollbars everywhere (not just the message stream). */
+.pc-app * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ruleStrong) transparent;
+}
+.pc-app ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.pc-app ::-webkit-scrollbar-thumb {
+  background: var(--ruleStrong);
+}
+.pc-app ::-webkit-scrollbar-track,
+.pc-app ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.pc-screen {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pc-screen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+  background: radial-gradient(
+    125% 115% at 50% 48%,
+    transparent 56%,
+    rgba(0, 0, 0, calc(0.6 * var(--vig))) 100%
+  );
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, calc(0.5 * var(--vig)));
+}
+
+/* title / auth bar */
+.pc-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 38px;
+  flex: 0 0 38px;
+  padding: 0 12px;
+  background: var(--bgElev);
+  border-bottom: 1px solid var(--rule);
+  -webkit-app-region: drag;
+}
+.pc-titlebar.plat-mac {
+  padding-left: 78px;
+}
+.pc-wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.pc-logo {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.pc-logo .blk {
+  color: var(--accent);
+}
+.pc-ver {
+  font-size: var(--fs-ui);
+  color: var(--dimmer);
+}
+.pc-tb-spacer {
+  flex: 1;
+}
+.pc-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 9px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--fs-ui);
+  -webkit-app-region: no-drag;
+}
+.pc-chip .who {
+  color: var(--fg);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-chip button.who {
+  border: none;
+  background: transparent;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.pc-chip button.who:hover {
+  color: var(--accent);
+}
+.pc-chip .lo {
+  color: var(--dimmer);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  padding: 0;
+}
+.pc-chip .lo:hover {
+  color: var(--err);
+}
+.pc-chip.act {
+  cursor: pointer;
+}
+.pc-chip.act:hover {
+  border-color: var(--ruleStrong);
+  color: var(--fg);
+}
+.pc-tb-btn {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px dashed var(--ruleStrong);
+  background: transparent;
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--fs-ui);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.pc-tb-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* window controls — platform-aware native chrome */
+.pc-wcs {
+  display: flex;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.pc-wc {
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.pc-wc:hover {
+  background: var(--sel);
+  color: var(--fg);
+}
+.pc-wc.close:hover {
+  /* Windows-convention close red — a deliberate platform color, not themed. */
+  background: #e81123;
+  color: #fff;
+}
+.pc-wcs.win {
+  align-self: stretch;
+  margin-left: 6px;
+  margin-right: -12px;
+}
+.pc-wcs.win .pc-wc {
+  width: 46px;
+  height: 38px;
+}
+.pc-wcs.linux {
+  align-items: center;
+  gap: 7px;
+  margin-left: 8px;
+}
+.pc-wcs.linux .pc-wc {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+}
+.pc-wcs.linux .pc-wc:hover {
+  background: var(--ruleStrong);
+  color: var(--fg);
+}
+.pc-wcs.linux .pc-wc.close:hover {
+  background: var(--err);
+  border-color: var(--err);
+  color: #fff;
+}
+.g-min {
+  width: 10px;
+  height: 1px;
+  background: currentColor;
+  display: block;
+}
+.g-max {
+  width: 9px;
+  height: 9px;
+  border: 1px solid currentColor;
+  border-radius: 1px;
+  display: block;
+}
+
+/* body / columns */
+.pc-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.pc-col {
+  flex: 0 0 var(--colw, 340px);
+  width: var(--colw, 340px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--rule);
+  position: relative;
+  background: var(--bg);
+}
+.pc-col::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
+  z-index: 5;
+}
+.pc-col.tw::before {
+  background: linear-gradient(90deg, var(--tw), transparent 70%);
+  opacity: 0.5;
+}
+.pc-col.yt::before {
+  background: linear-gradient(90deg, var(--yt), transparent 70%);
+  opacity: 0.5;
+}
+.pc-col.active::before {
+  opacity: 1;
+}
+.pc-col.active {
+  background: linear-gradient(180deg, var(--sel), transparent 120px);
+}
+
+.pc-colhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  flex: 0 0 34px;
+  padding: 0 6px 0 var(--gut);
+  border-bottom: 1px solid var(--rule);
+  background: var(--bgElev);
+  position: relative;
+  z-index: 6;
+  overflow: hidden;
+}
+
+/* Drag handle on the column's right edge. */
+.pc-col-resize {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 8;
+}
+.pc-col-resize:hover {
+  background: var(--accent);
+  opacity: 0.35;
+}
+.pc-col.mon {
+  border-top: 2px solid var(--accent);
+}
+.pc-col.mon.flagged {
+  border-top-color: var(--err);
+}
+.pc-colhead .chan {
+  color: var(--fg);
+  font-weight: 600;
+  font-size: var(--fs-emph);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.pc-colbtns {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  opacity: 0;
+}
+.pc-col:hover .pc-colbtns,
+.pc-col:focus-within .pc-colbtns {
+  opacity: 1;
+}
+.pc-icbtn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+}
+.pc-icbtn:hover {
+  background: var(--sel);
+  color: var(--fg);
+}
+.pc-icbtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.pc-icbtn.x:hover {
+  color: var(--err);
+}
+
+/* status chips (full lifecycle) */
+.pc-stat {
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pc-stat.ml {
+  margin-left: auto;
+}
+.pc-stat .led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.pc-stat .led.blink {
+  animation: pcblink 1.6s steps(1) infinite;
+}
+.pc-stat .sp {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: pcspin 0.8s linear infinite;
+}
+.pc-stat.s-live {
+  color: var(--ok);
+}
+.pc-stat.s-connected {
+  color: var(--ok);
+}
+.pc-stat.s-waiting {
+  color: var(--warn);
+}
+.pc-stat.s-connecting {
+  color: var(--warn);
+}
+.pc-stat.s-offline {
+  color: var(--dimmer);
+}
+.pc-stat.s-ended {
+  color: var(--dim);
+}
+.pc-stat.s-replay {
+  color: var(--accent);
+}
+.pc-stat.s-error {
+  color: var(--err);
+}
+.pc-stat .vw {
+  color: var(--dim);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes pcblink {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  61%,
+  100% {
+    opacity: 0.25;
+  }
+}
+@keyframes pcspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* message stream */
+.pc-stream {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* y-axis ONLY: the stream lives inside the horizontally scrolling column strip (.pc-body), and
+   * overflow-x: hidden makes it an x-axis scroll container too — the `overscroll-behavior`
+   * shorthand would contain both axes and swallow horizontal swipes meant for the strip. */
+  overscroll-behavior-y: contain;
+  padding: 6px 0 8px;
+  min-height: 0;
+}
+.pc-empty {
+  color: var(--dimmer);
+  font-size: var(--fs-ui);
+  padding: 18px 14px;
+  text-align: center;
+}
+/*
+ * Off-screen chat rows skip layout/paint via content-visibility, so a large history buffer pays no
+ * rendering cost for messages scrolled out of view — only on-screen rows are laid out. The
+ * intrinsic-size estimate keeps the scrollbar roughly stable while fast-scrolling; `auto` remembers
+ * each row's real height once it has been rendered, so re-scrolling is exact. Rows stay in the DOM
+ * (not windowed), so native scrolling, pin-to-bottom, text selection, and find keep working.
+ *
+ * Scoped to the chat surfaces (column streams + the message modals) — the only places these
+ * rows render.
+ */
+.pc-stream .pc-msg,
+.pc-stream .pc-hl,
+.pc-stream .pc-bits,
+.pc-stream .pc-sys,
+.pc-ua-body .pc-msg,
+.pc-ua-body .pc-hl,
+.pc-ua-body .pc-bits,
+.pc-ua-body .pc-sys {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
+.pc-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2.5px var(--gut);
+  position: relative;
+}
+.pc-msg:hover {
+  background: var(--sel);
+}
+.pc-msg.you {
+  background: var(--sel);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.pc-msg.fm {
+  background: var(--sel);
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+.pc-msg.del .pc-text,
+.pc-msg.del .pc-user {
+  opacity: 0.4;
+}
+.pc-msg.del .pc-text {
+  text-decoration: line-through;
+}
+/* A monitored author's row: a steady accent on all their lines until monitoring is cleared.
+   A highlight ping or a moderation flag (below) outranks it. */
+.pc-msg.mon {
+  background: color-mix(in srgb, var(--ok) 9%, transparent);
+  box-shadow: inset 2px 0 0 var(--ok);
+}
+.pc-msg.ping {
+  background: color-mix(in srgb, var(--ping) 11%, transparent);
+  box-shadow: inset 2px 0 0 var(--ping);
+}
+/* A flagged message outranks a highlight tint so moderation stands out. */
+.pc-msg.flag {
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--err);
+}
+.pc-col.flash {
+  animation: pc-col-flash 1.2s ease-out;
+}
+@keyframes pc-col-flash {
+  0% {
+    background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  }
+  100% {
+    background: var(--bg);
+  }
+}
+.pc-time {
+  flex: 0 0 auto;
+  color: var(--dimmer);
+  font-size: var(--fs-small);
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pc-ava {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  background: var(--avaBg);
+  border-radius: var(--radius);
+  display: block;
+  margin-top: 1px;
+  object-fit: cover;
+}
+.pc-bdgs {
+  display: inline-flex;
+  gap: 3px;
+  vertical-align: -4px;
+  margin-right: 4px;
+}
+.pc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.pc-badge-img {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius);
+  vertical-align: -4px;
+  margin-right: 3px;
+  object-fit: contain;
+}
+.b-broadcaster {
+  color: var(--yt);
+  background: var(--ytBg);
+}
+.b-moderator {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.b-vip {
+  color: var(--vip);
+  background: var(--vipBg);
+}
+.b-subscriber {
+  color: var(--tw);
+  background: var(--twBg);
+}
+.b-member {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.b-verified {
+  color: var(--accent);
+  background: var(--sel);
+}
+.pc-body-txt {
+  min-width: 0;
+  flex: 1;
+  word-break: break-word;
+}
+.pc-user {
+  font-weight: 700;
+}
+.pc-colon {
+  color: var(--dimmer);
+  margin: 0 5px 0 1px;
+}
+.pc-text {
+  color: var(--fg);
+}
+.pc-fm-tag {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--warn);
+  background: var(--overlay);
+  border: 1px solid var(--warn);
+  padding: 1px 4px;
+  margin-right: 5px;
+  border-radius: var(--radius);
+  vertical-align: 1px;
+}
+.pc-del-tag {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.5px;
+  color: var(--err);
+  margin-right: 5px;
+}
+.pc-flag-tag {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--err);
+  background: var(--overlay);
+  border: 1px solid var(--err);
+  padding: 1px 4px;
+  margin-right: 5px;
+  border-radius: var(--radius);
+  vertical-align: 1px;
+}
+/* The 👁 marker on a monitored author's lines. */
+.pc-mon-tag {
+  font-size: 10px;
+  color: var(--ok);
+  margin-right: 5px;
+}
+.pc-mod-alerts {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+.pc-mod-share {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pc-mod-share-status {
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+.pc-mention {
+  color: var(--accent);
+  background: var(--sel);
+  padding: 0 3px;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+.pc-uni-emote {
+  font-size: 1.35em;
+  line-height: 1;
+  vertical-align: -0.16em;
+}
+.pc-emote {
+  font-size: 1.5em;
+  line-height: 1;
+  vertical-align: -0.22em;
+  margin: 0 1px;
+  display: inline-block;
+  position: relative;
+}
+.pc-emote.anim {
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+.pc-emote-img {
+  height: 1.5em;
+  width: auto;
+  vertical-align: -0.32em;
+  margin: 0 1px;
+  display: inline-block;
+  position: relative;
+}
+.pc-emote-img.anim {
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+/* A failed emote load is hidden (no broken-image icon) while it retries; the :code: text stands in. */
+.pc-emote-broken {
+  display: none;
+}
+.pc-emote-pending {
+  font-size: 0.82em;
+  opacity: 0.6;
+  color: var(--dim);
+}
+.pc-emote .zw,
+.pc-emote-stack .zw {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 1.25em;
+  width: auto;
+}
+.pc-emote-stack {
+  position: relative;
+  display: inline-block;
+  vertical-align: -0.32em;
+  margin: 0 1px;
+}
+.pc-prov {
+  position: absolute;
+  right: -1px;
+  bottom: -3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+}
+.pc-reply {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--dimmer);
+  font-size: var(--fs-small);
+  padding: 0 var(--gut) 0 40px;
+  margin-top: 1px;
+}
+.pc-reply .q {
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-sys {
+  padding: 4px var(--gut);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+.pc-sys::before,
+.pc-sys::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+.pc-sys b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* highlight cards */
+.pc-hl {
+  margin: 4px 10px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 12px;
+}
+.pc-sc-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  font-weight: 700;
+}
+.pc-sc-head .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-sc-head .amt {
+  font-variant-numeric: tabular-nums;
+}
+.pc-sc-time {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+.pc-sc-body {
+  padding: 6px 9px;
+  line-height: 1.45;
+}
+.pc-sticker {
+  font-size: 26px;
+  line-height: 1;
+  margin-left: auto;
+}
+.pc-sticker-img {
+  height: 48px;
+  width: auto;
+  margin-left: auto;
+}
+.pc-hl-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-left: 2px solid;
+}
+.pc-hl-line .ic {
+  font-size: 14px;
+}
+.pc-hl-member {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: var(--ok);
+  color: var(--fg);
+}
+.pc-member-head {
+  font-weight: 600;
+}
+/* A member milestone-chat message: the welcome/milestone line plus the member's own typed text. */
+.pc-hl-member-body {
+  padding: 6px 10px 7px 20px;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+  border-left: 2px solid var(--ok);
+}
+/* Twitch resub-message body: the member-body shape, in the platform purple. */
+.pc-hl-sub-body {
+  padding: 6px 10px 7px 20px;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--tw) 8%, transparent);
+  border-left: 2px solid var(--tw);
+}
+.pc-hl-sub {
+  background: var(--twBg);
+  border-color: var(--tw);
+  color: var(--fg);
+}
+.pc-hl-line b {
+  font-weight: 700;
+}
+.pc-bits {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2.5px var(--gut);
+  background: var(--overlay);
+  box-shadow: inset 2px 0 0 var(--tw);
+}
+.pc-cheer {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* input */
+.pc-input {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--rule);
+  background: var(--bgInput);
+  position: relative;
+}
+
+/* emoji / emote autocomplete */
+.pc-ac {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 100%;
+  margin-bottom: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  /* y only — sits inside .pc-body's horizontal strip; see .pc-stream. */
+  overscroll-behavior-y: contain;
+  background: var(--bgElev);
+  border: 1px solid var(--ruleStrong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+.pc-ac-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.pc-ac-row.on {
+  background: var(--accent);
+  color: var(--bg);
+}
+.pc-ac-ic {
+  width: 20px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+.pc-ac-img {
+  height: 18px;
+  width: auto;
+}
+.pc-ac-img.anim {
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+.pc-ac-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-ac-prov {
+  flex: 0 0 auto;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.pc-ac-row.on .pc-ac-prov {
+  color: var(--bg);
+}
+
+/* emoji / emote picker panel */
+.pc-picker {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 100%;
+  margin-bottom: 4px;
+  height: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bgElev);
+  border: 1px solid var(--ruleStrong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 21;
+}
+.pc-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+.pc-picker-search input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 5px 8px;
+  outline: none;
+}
+.pc-picker-search input:focus {
+  border-color: var(--accent);
+}
+/* shared ghost ✕ (picker, reply bar, rule rows) */
+.pc-x {
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 4px;
+}
+.pc-x:hover {
+  color: var(--err);
+}
+.pc-replybar .pc-x,
+.pc-hl-row .pc-x {
+  margin-left: auto;
+}
+.pc-picker-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--rule);
+  overflow-x: auto;
+}
+.pc-picker-tab {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: var(--radius);
+  opacity: 0.55;
+}
+.pc-picker-tab.on {
+  opacity: 1;
+}
+.pc-picker-grid {
+  flex: 1;
+  overflow-y: auto;
+  /* y only — sits inside .pc-body's horizontal strip; see .pc-stream. */
+  overscroll-behavior-y: contain;
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 30px);
+  gap: 2px;
+  align-content: start;
+}
+.pc-picker-cell {
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  padding: 0;
+}
+.pc-picker-cell:hover {
+  background: var(--sel);
+}
+.pc-picker-sethead {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: sticky;
+  top: -6px;
+  padding: 5px 2px 3px;
+  margin-top: 2px;
+  background: var(--bgElev);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-picker-sethead .ct {
+  margin-left: auto;
+  color: var(--dimmer);
+}
+.pc-picker-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+.pc-picker-emote {
+  max-width: 26px;
+  max-height: 26px;
+}
+.pc-picker-empty {
+  grid-column: 1 / -1;
+  color: var(--dimmer);
+  font-size: var(--fs-ui);
+  padding: 14px;
+  text-align: center;
+}
+.pc-replybar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px var(--gut) 0;
+  font-size: var(--fs-small);
+  color: var(--dim);
+}
+.pc-replybar b {
+  color: var(--accent);
+}
+.pc-inrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 var(--gut);
+  height: 42px;
+}
+.pc-inrow .prompt {
+  color: var(--accent);
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.pc-inrow input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font: inherit;
+  height: 100%;
+}
+.pc-inrow input::placeholder {
+  color: var(--dimmer);
+}
+.pc-inrow.ro .prompt {
+  color: var(--dimmer);
+}
+.pc-inrow .send {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--rule);
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.pc-inrow .send:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.pc-inrow .send:disabled {
+  color: var(--dimmer);
+  cursor: default;
+}
+.pc-inrow .emo {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 17px;
+  padding: 2px;
+}
+.pc-inrow .emo:hover {
+  color: var(--accent);
+}
+.pc-col-err {
+  padding: 4px var(--gut);
+  font-size: var(--fs-small);
+  color: var(--err);
+}
+
+/* ghost / add channel */
+.pc-ghost {
+  flex: 0 0 var(--colw, 340px);
+  width: var(--colw, 340px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 54px;
+  position: relative;
+}
+.pc-ghostbox {
+  margin: 0 16px;
+  width: calc(100% - 32px);
+  border: 1px dashed var(--ruleStrong);
+  background: transparent;
+  padding: 16px;
+}
+.pc-ghostbtn {
+  cursor: pointer;
+  color: var(--dim);
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+}
+.pc-ghostbtn:hover {
+  color: var(--accent);
+}
+.pc-ghostbtn .plus {
+  font-size: 20px;
+  line-height: 1;
+}
+.pc-ghostbox .gh-t {
+  font-size: var(--fs-ui);
+  letter-spacing: 0.5px;
+  color: var(--dimmer);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pc-plat {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.pc-plat button {
+  flex: 1;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--fs-ui);
+  letter-spacing: 0.5px;
+  padding: 5px;
+  cursor: pointer;
+}
+/* selected state shared by the platform picker, channel rows, and picker tabs */
+.pc-plat button.on,
+.pc-chan-row.on,
+.pc-picker-tab.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--sel);
+}
+.pc-addform {
+  display: flex;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  height: 32px;
+}
+.pc-addform input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 0 9px;
+}
+.pc-addform input::placeholder {
+  color: var(--dimmer);
+}
+.pc-addform button {
+  border: none;
+  border-left: 1px solid var(--rule);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-ui);
+  font-weight: 700;
+  padding: 0 12px;
+  cursor: pointer;
+}
+.pc-addform button:hover {
+  background: var(--sel);
+}
+.pc-addform button:disabled {
+  color: var(--dimmer);
+  cursor: default;
+  background: transparent;
+}
+.pc-adderr {
+  margin-top: 8px;
+  font-size: var(--fs-small);
+  color: var(--err);
+}
+.pc-addhint {
+  margin-top: 10px;
+  font-size: var(--fs-small);
+  color: var(--dimmer);
+  line-height: 1.5;
+}
+.pc-addstreams {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px dashed var(--ruleStrong);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-ui);
+  font-weight: 700;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.pc-addstreams:hover {
+  background: var(--sel);
+}
+.pc-addstreams:disabled {
+  color: var(--dimmer);
+  cursor: default;
+  background: transparent;
+}
+.pc-addnote {
+  margin-top: 8px;
+  font-size: var(--fs-small);
+  color: var(--accent);
+}
+.pc-streamnote {
+  flex: 0 0 auto;
+  font-size: var(--fs-small);
+  color: var(--dimmer);
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-origin {
+  border: 1px solid currentcolor;
+  border-radius: var(--radius);
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  padding: 0 4px;
+  margin-right: 5px;
+  cursor: pointer;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.pc-origin:hover {
+  background: var(--sel);
+}
+
+/* status bar */
+.pc-statusbar {
+  flex: 0 0 24px;
+  height: 24px;
+  display: flex;
+  align-items: stretch;
+  background: var(--bgElev);
+  border-top: 1px solid var(--rule);
+  font-size: var(--fs-ui);
+  position: relative;
+  z-index: 31;
+}
+.pc-seg {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 var(--gut);
+  color: var(--dim);
+  border-right: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.pc-seg.mode {
+  background: var(--accent);
+  color: var(--modeFg);
+  font-weight: 700;
+  letter-spacing: 0.8px;
+}
+.pc-seg.r {
+  border-right: none;
+  border-left: 1px solid var(--rule);
+}
+.pc-seg b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.pc-seg .led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 5px var(--ok);
+}
+.pc-seg .led.warn {
+  background: var(--warn);
+  box-shadow: 0 0 5px var(--warn);
+}
+.pc-seg .led.off {
+  background: var(--dimmer);
+  box-shadow: none;
+}
+.pc-sb-spacer {
+  flex: 1;
+  border-right: 1px solid var(--rule);
+}
+.pc-num {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+/* context menu (right-click → reply) */
+.pc-ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.pc-ctx {
+  position: fixed;
+  z-index: 41;
+  min-width: 120px;
+  padding: 3px;
+  background: var(--bgElev);
+  border: 1px solid var(--ruleStrong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.pc-ctx button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 5px 9px;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.pc-ctx button:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+.pc-ctx button.danger {
+  color: var(--err);
+}
+.pc-ctx button.danger:hover {
+  background: var(--err);
+  color: var(--bg);
+}
+.pc-ctx-sep {
+  height: 1px;
+  margin: 3px 0;
+  background: var(--rule);
+}
+.pc-ctx-err {
+  padding: 5px 9px;
+  font-size: var(--fs-ui);
+  color: var(--err);
+  max-width: 200px;
+}
+.pc-ctx-load {
+  padding: 5px 9px;
+  font-size: var(--fs-ui);
+  color: var(--dim);
+}
+.pc-ctx-head {
+  padding: 5px 9px 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--dimmer);
+}
+
+/* modals (Twitch device-code / YouTube cookie paste) */
+.pc-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.pc-modal {
+  border: 1px solid var(--ruleStrong);
+  background: var(--bgElev);
+  width: 320px;
+  max-width: 90vw;
+  box-shadow: var(--shadow);
+  /* Cap to the viewport and let the body scroll, so the header + footer (e.g. Close) stay reachable
+     however short the window is. */
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+}
+.pc-modal .mh {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: var(--fs-emph);
+}
+/* A form wrapping a modal's rows participates in the panel's column layout transparently. */
+.pc-modal-form {
+  display: contents;
+}
+.pc-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  font-weight: 400;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+}
+.pc-search-count {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.pc-mon-name {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 6px;
+  outline: none;
+  margin-bottom: 8px;
+}
+.pc-mon-name:focus {
+  border-color: var(--accent);
+}
+.pc-mon-list {
+  max-height: 260px;
+  overflow-y: auto;
+  /* No overscroll containment: on short windows the list must chain to the scrollable modal
+   * body (.pc-modal .mb) around it, which already contains against the page. */
+  border: 1px solid var(--rule);
+}
+.pc-mon-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--rule);
+}
+.pc-mon-item:last-child {
+  border-bottom: none;
+}
+.pc-mon-item:hover {
+  background: var(--sel);
+}
+.pc-mon-label {
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-log-dir {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.pc-log-path {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-ui);
+  color: var(--dim);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  padding: 6px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-log-dir .pc-mbtn {
+  flex: 0 0 auto;
+}
+/* User-activity view: a chat-styled list of one user's messages inside the modal body. */
+.pc-ua-body {
+  min-height: 140px;
+  padding: 6px 4px;
+}
+/* User-card profile header: the platform-fetched extras + Monitor toggle above the message list.
+   The base row (avatar, name, button) renders immediately; profile lines appear as they arrive. */
+.pc-ua-profile {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-ui);
+  line-height: 1.45;
+}
+.pc-ua-profile .pc-ava {
+  width: 40px;
+  height: 40px;
+  margin-top: 1px;
+}
+.pc-ua-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  word-break: break-word;
+}
+.pc-ua-name {
+  color: var(--fg);
+  font-weight: 700;
+  font-size: var(--fs-emph);
+}
+.pc-ua-handle {
+  color: var(--dim);
+  font-weight: 400;
+  margin-left: 6px;
+}
+.pc-ua-meta {
+  color: var(--dim);
+}
+.pc-ua-desc {
+  color: var(--dim);
+  white-space: pre-line;
+}
+/* Navigation is locked down in-app, so the channel URL is select-to-copy text (one click selects). */
+.pc-ua-url {
+  font-size: var(--fs-small);
+  user-select: all;
+}
+.pc-ua-profile .pc-ua-monbtn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.pc-modal .mb {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  font-size: var(--fs-ui);
+  color: var(--dim);
+  line-height: 1.55;
+}
+.pc-modal .mb b {
+  color: var(--fg);
+}
+.pc-modal .code {
+  display: inline-block;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 2px;
+  font-size: 15px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  padding: 4px 10px;
+  margin: 6px 0;
+}
+.pc-modal .link {
+  color: var(--accent);
+  word-break: break-all;
+}
+.pc-modal textarea {
+  width: 100%;
+  height: 72px;
+  resize: none;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 6px;
+  outline: none;
+  margin-top: 6px;
+}
+.pc-modal textarea:focus {
+  border-color: var(--accent);
+}
+.pc-modal .mf {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--rule);
+}
+.pc-mbtn {
+  flex: 1;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 7px;
+  cursor: pointer;
+}
+.pc-mbtn:hover {
+  border-color: var(--ruleStrong);
+}
+.pc-mbtn.pri {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pc-mbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* settings */
+.pc-tb-btn.icon {
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 1;
+  /* Opens an existing surface (search/settings) rather than creating one — solid, not dashed. */
+  border-style: solid;
+  border-color: var(--rule);
+}
+.pc-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+.pc-setting + .pc-setting {
+  margin-top: 12px;
+}
+.pc-setting-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pc-setting-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+.pc-setting-desc {
+  color: var(--dim);
+  font-size: var(--fs-ui);
+}
+.pc-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid var(--ruleStrong);
+  border-radius: 10px;
+  background: var(--rule);
+  position: relative;
+  cursor: pointer;
+}
+.pc-switch::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.pc-switch:checked {
+  background: var(--accent);
+}
+.pc-switch:checked::after {
+  transform: translateX(16px);
+  background: var(--bg);
+}
+.pc-setting-group {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+.pc-setting-group-title {
+  color: var(--dimmer);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.pc-setting-note {
+  margin: 0 0 8px;
+}
+.pc-setting-flags {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pc-setting-flags code {
+  color: var(--accent);
+  font-size: var(--fs-small);
+}
+.pc-modal-wide {
+  width: 520px;
+}
+/* Settings rule editors (highlights / moderation / pre-ban) — distinct from .pc-hl chat cards. */
+.pc-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pc-hl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+.pc-hl-pattern {
+  flex: 1 1 130px;
+  min-width: 110px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 4px 6px;
+}
+.pc-hl-pattern.bad {
+  border-color: var(--err);
+  color: var(--err);
+}
+.pc-hl-target {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 4px;
+}
+.pc-hl-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-small);
+  color: var(--dim);
+  cursor: pointer;
+}
+.pc-hl-color {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  cursor: pointer;
+}
+.pc-hl-add {
+  align-self: flex-start;
+  border: 1px dashed var(--ruleStrong);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--fs-ui);
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.pc-hl-add:hover {
+  color: var(--fg);
+}
+.pc-chan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pc-chan-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.pc-chan-row:hover {
+  border-color: var(--ruleStrong);
+}
+.pc-chan-row:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.pc-chan-row .pc-ava {
+  width: 26px;
+  height: 26px;
+}
+.pc-chan-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.pc-chan-name {
+  font-weight: 600;
+  font-size: var(--fs-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-chan-handle {
+  color: var(--dim);
+  font-size: var(--fs-small);
+}
+.pc-chan-tick {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+.pc-warnbox {
+  font-size: var(--fs-small);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin-top: 8px;
+  background: var(--overlay);
+}
+.pc-tipbox {
+  font-size: var(--fs-small);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin-top: 8px;
+  background: var(--overlay);
+}
+.pc-modal-err {
+  margin-top: 8px;
+  font-size: var(--fs-ui);
+  color: var(--err);
+}

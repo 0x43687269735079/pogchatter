@@ -1,0 +1,13 @@
+# pnpm 11 build-script approval (replaces the old package.json "pnpm.onlyBuiltDependencies").
+# Only these dependencies may run install/build scripts; everything else is blocked.
+allowBuilds:
+  electron: true
+  # Squirrel.Windows installer maker pulled in transitively by electron-builder. We ship the nsis
+  # target instead, so its build script (which downloads Squirrel binaries) is never needed.
+  electron-winstaller: false
+  esbuild: true
+minimumReleaseAgeExclude:
+  - app-builder-lib@26.15.2
+  - dmg-builder@26.15.2
+  - electron-builder-squirrel-windows@26.15.2
+  - electron-builder@26.15.2

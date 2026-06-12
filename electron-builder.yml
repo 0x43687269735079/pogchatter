@@ -1,0 +1,123 @@
+appId: com.pogchatter.app
+productName: Pogchatter
+
+directories:
+  buildResources: build
+  output: dist
+
+# Ad-hoc sign the mac bundle after packaging (no-op elsewhere) — see the mac section below.
+afterSign: build/mac-adhoc-sign.cjs
+
+# Static (FUSE-less) AppImage runtime. The default ("0.0.0") legacy toolset needs libfuse2 —
+# which Ubuntu 22.04+ no longer ships — and hardcodes --no-sandbox into the .desktop Exec. The
+# static runtime needs no FUSE, and its AppRun probes user-namespace availability at launch
+# (`unshare -Ur true`), adding --no-sandbox only where the kernel/AppArmor actually blocks the
+# Chromium sandbox (e.g. Ubuntu 23.10+'s userns restriction).
+toolsets:
+  appimage: '1.0.3'
+
+# Everything (main, preload, renderer) is bundled into out/ by electron-vite; package.json has no
+# production dependencies, so electron-builder ships zero node_modules. Everything below trims
+# dev-only files the packaged app never loads.
+files:
+  - out/**
+  - package.json
+  - '!**/*.{test,spec}.{js,ts}'
+  - '!**/*.map'
+  - '!{.env,.env.*,.env.example}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{electron.vite.config.ts,vitest.config.ts}'
+  - '!{.oxlintrc.json,.oxfmtrc.json}'
+  - '!README.md'
+  - '!local-dev-artefacts/**'
+
+# Strip Chromium locales the app doesn't use (~47MB / 53 files per platform). en-US must stay —
+# it is Chromium's hard fallback and its absence breaks startup. The literal underscore en_GB is
+# required for mac: .lproj dirs use underscores and the matcher compares strings without BCP-47
+# normalization, so 'en-GB' alone would delete en_GB.lproj. Side effect: Chromium-internal UI
+# (context menus, media controls) is English-only regardless of OS locale.
+electronLanguages:
+  - en-US
+  - en-GB
+  - en_GB
+
+# Supported targets — keep future work compatible with all five:
+# Windows x64 + arm64, Linux x64 + arm64, macOS arm64 only (Apple dropped x86).
+# No native Node modules, so every target cross-builds from one machine.
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    # Portable zip alongside the installer: a plain extract-and-run path with no NSIS extraction
+    # machinery in the way. Must be extracted to a LOCAL drive (Chromium's sandbox broker cannot
+    # spawn child processes from network/UNC paths — crbug.com/103902).
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  # Not redundant with productName: electron-builder would otherwise derive the exe name
+  # from the lowercase package name.
+  executableName: Pogchatter
+  # Names the zip artifacts (pinned — the zip default drops "win"/the arch inconsistently);
+  # nsis.artifactName below takes precedence for the installers.
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+# NSIS builds MUST run with ELECTRON_BUILDER_7Z_FILTER=BCJ2 (wired into the package.json build
+# scripts): without it, 7-Zip auto-applies its ARM64 branch filter to the arm64 payload's
+# executable block, which the Nsis7z plugin's older decoder can't read — the installer then
+# "succeeds" while silently skipping every .exe/.dll. BCJ2 is what the x64 payload always used.
+nsis:
+  oneClick: false
+  # No electron-updater in this project, so differential-update blockmaps buy nothing — and the
+  # differential path forces a 1MB-dictionary, non-solid, 'normal'-level LZMA payload. Disabling
+  # it yields a solid -mx=9 archive (10-20% smaller installers) and drops the .blockmap artifacts.
+  # Flip back to true if electron-updater is ever adopted.
+  differentialPackage: false
+  # perMachine false still SHOWS the all-users/admin page in assisted mode; build/installer.nsh's
+  # customInstallMode forces per-user and skips that page (the dir chooser below stays).
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # Per-arch installers only. The combined dual-arch installer is the historically buggy NSIS
+  # path on Windows-on-ARM and tripled the download for no benefit.
+  buildUniversalInstaller: false
+  artifactName: ${productName}-${version}-setup-${arch}.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  category: public.app-category.social-networking
+  # No Developer ID: signing is skipped (CSC_IDENTITY_AUTO_DISCOVERY=false in build:mac and CI)
+  # and the afterSign hook below applies a real ad-hoc signature instead. Without it the bundle
+  # keeps upstream Electron's seal, broken by packaging — quarantined downloads then die as
+  # "damaged" rather than offering Gatekeeper's "Open Anyway" flow. Set a Developer ID identity
+  # here to ship properly signed builds.
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # lzfse: smaller than the default UDZO (zlib) and fast to mount, unlike UDBZ (bzip2).
+  format: ULFO
+  # Solid theme color instead of the stock arrow image: matches the TUI look and drops the
+  # .background.tiff file from the volume. (.VolumeIcon.icns stays — it brands the mounted disk.)
+  backgroundColor: '#242933'
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+  category: Network
+  # Not redundant with productName: without it the binary, .desktop file, and icon inside the
+  # AppImage are all named after the lowercase package name.
+  executableName: Pogchatter
+  # Derive the installed .desktop filename from desktopName in package.json so it matches
+  # StartupWMClass and Electron's Wayland app_id (window association — electron-builder#9103).
+  syncDesktopName: true
+  artifactName: ${productName}-${version}-${arch}.${ext}

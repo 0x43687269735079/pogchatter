@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+out/
+dist/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Local tool state (not application source)
+.claude/
+.codex/
+
+# Local-only working files — never for the repo.
+local-dev-artefacts/

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "import", "unicorn", "react"],
+  "categories": { "correctness": "error" },
+  "ignorePatterns": ["out/**", "dist/**", "node_modules/**", "local-dev-artefacts/**"],
+  "env": { "es2024": true },
+  "overrides": [
+    {
+      "files": ["src/main/**", "src/preload/**", "electron.vite.config.ts"],
+      "env": { "node": true }
+    },
+    {
+      "files": ["src/renderer/**"],
+      "env": { "browser": true }
+    }
+  ]
+}

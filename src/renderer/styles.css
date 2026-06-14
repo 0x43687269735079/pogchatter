@@ -1214,26 +1214,33 @@ body,
 }
 .pc-inrow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 0 var(--gut);
-  height: 42px;
+  padding: 11px var(--gut);
 }
 .pc-inrow .prompt {
   color: var(--accent);
   font-weight: 700;
   flex: 0 0 auto;
+  line-height: 1.4;
 }
-.pc-inrow input {
+/* Auto-growing composer: one line by default, expands with the draft up to four lines (capped by
+   max-height), then scrolls. The line metrics here must match MAX_INPUT_LINES in ChannelColumn. */
+.pc-inrow textarea {
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
   color: var(--fg);
   font: inherit;
-  height: 100%;
+  line-height: 1.4;
+  resize: none;
+  padding: 0;
+  margin: 0;
+  max-height: calc(1.4em * 4);
+  overflow-y: auto;
 }
-.pc-inrow input::placeholder {
+.pc-inrow textarea::placeholder {
   color: var(--dimmer);
 }
 .pc-inrow.ro .prompt {

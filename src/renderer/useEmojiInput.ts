@@ -34,7 +34,7 @@ export interface EmojiInput {
  */
 export function useEmojiInput(
   channelId: string,
-  inputRef: RefObject<HTMLInputElement | null>,
+  inputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>,
   setDraft: (value: string) => void
 ): EmojiInput {
   const [catalog, setCatalog] = useState<EmojiCatalog | undefined>(undefined)

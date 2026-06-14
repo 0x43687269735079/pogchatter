@@ -627,8 +627,9 @@ body,
   background: var(--sel);
   box-shadow: inset 2px 0 0 var(--warn);
 }
-/* A hidden/removed message stays fully visible (a moderator must be able to act on it), but is a
-   clearly-marked tinted card — the content is only dimmed enough to read as "not live". */
+/* A message hidden/removed by decision stays fully visible (a moderator must be able to act on it),
+   in a clearly-marked tinted card with its text struck through — distinct from an automod message
+   still *waiting* for review, which renders as the held card (not struck, still revealable). */
 .pc-msg.del {
   background: color-mix(in srgb, var(--err) 8%, transparent);
   box-shadow: inset 2px 0 0 var(--err);
@@ -636,6 +637,9 @@ body,
 .pc-msg.del .pc-text,
 .pc-msg.del .pc-user {
   opacity: 0.75;
+}
+.pc-msg.del .pc-text {
+  text-decoration: line-through;
 }
 /* A monitored author's row: a steady accent on all their lines until monitoring is cleared.
    A highlight ping or a moderation flag (below) outranks it. */

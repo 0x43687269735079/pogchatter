@@ -182,14 +182,16 @@ describe('iframe bootstrap fixture: capture 2-response', () => {
   const bootstrapActions = liveChatBootstrap2.continuationContents.liveChatContinuation
     .actions as RawAction[]
 
-  it('switches from the selected Top chat view to Live chat, then dispatches the batch', async () => {
+  it('surfaces the Top chat snapshot on the switch, then again from the Live reload', async () => {
     vi.useFakeTimers()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const onMessages = vi.fn()
       const onClears = vi.fn()
-      // First poll returns the bootstrap (view selector → switch, batch not dispatched); the
-      // immediate re-poll from the Live chat continuation serves the same batch and dispatches it.
+      // First poll returns the bootstrap snapshot (view selector → dispatch its batch, then switch);
+      // the immediate re-poll from the Live chat continuation serves the same batch and dispatches it
+      // again. The snapshot is surfaced rather than discarded because it carries the chat's pending
+      // state (e.g. the automod held-for-review backlog); the renderer dedups the overlap by id.
       const { reader, execute } = readerWith([liveChatBootstrap2, liveChatBootstrap2], {
         onMessages,
         onClears
@@ -203,16 +205,21 @@ describe('iframe bootstrap fixture: capture 2-response', () => {
         continuation: 'continuation-2-live-reload'
       })
 
-      expect(onMessages).toHaveBeenCalledTimes(1)
-      expect(onMessages.mock.calls[0]?.[0]).toHaveLength(1)
-      // Each removeChatItemAction clears one message by id — never a whole-user clear.
-      expect(onClears).toHaveBeenCalledTimes(1)
-      expect(onClears.mock.calls[0]?.[0]).toEqual([
+      // The same batch is delivered twice (switch snapshot + Live reload); downstream dedup collapses
+      // it. Each removeChatItemAction clears one message by id — never a whole-user clear.
+      const expectedClears = [
         { messageId: 'ChwKGkNJM3h3cWJ2NUpRREZmSGVQd1FkcVZBSjVB' },
         { messageId: 'ChwKGkNKcWY5S0R2NUpRREZXcnRQd1FkNTlBQS1n' }
-      ])
+      ]
+      expect(onMessages).toHaveBeenCalledTimes(2)
+      expect(onMessages.mock.calls[0]?.[0]).toHaveLength(1)
+      expect(onMessages.mock.calls[1]?.[0]).toHaveLength(1)
+      expect(onClears).toHaveBeenCalledTimes(2)
+      expect(onClears.mock.calls[0]?.[0]).toEqual(expectedClears)
+      expect(onClears.mock.calls[1]?.[0]).toEqual(expectedClears)
 
-      // The real addBannerToLiveChatCommand is skipped but surfaces one parse-health warning.
+      // The real addBannerToLiveChatCommand is skipped; it warns once per reader even though the
+      // batch is now dispatched twice (the unknown type is remembered after the first warning).
       expect(warn).toHaveBeenCalledTimes(1)
       expect(warn.mock.calls[0]?.[1]).toMatchObject({
         newTypes: ['addBannerToLiveChatCommand']

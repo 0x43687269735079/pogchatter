@@ -285,10 +285,25 @@ if (debugLogEnabled()) {
 function debugLogChatEvent(event: ChatEvent): void {
   if (event.kind === 'message') {
     debugMessageCounts.set(event.channelId, (debugMessageCounts.get(event.channelId) ?? 0) + 1)
+    // A held-for-review message is the moderator-only signal we want to see arriving; log each one
+    // distinctly (id + action count) rather than burying it in the 30s message tally.
+    if (event.message.held !== undefined) {
+      debugLog('held', event.channelId, {
+        id: event.message.id,
+        actions: event.message.held.actions.length
+      })
+    }
     return
   }
   if (event.kind === 'replace') {
-    debugLog('replace', event.channelId, { id: event.message.id })
+    // Distinguish a held-for-review replacement (a pending card) from a moderator's hide (struck
+    // "removed"): a moderated message can arrive as a replace of an item we never buffered, and
+    // which it is decides whether the renderer should surface it standalone.
+    debugLog('replace', event.channelId, {
+      id: event.message.id,
+      held: event.message.held !== undefined,
+      deleted: event.message.deleted === true
+    })
     return
   }
   if (event.kind === 'status') {
@@ -618,13 +633,16 @@ void app
       void loadUserEmotes()
     })
 
-    // YouTube sending only; reading uses a separate unauthenticated instance so
-    // login never interrupts the live-chat readers.
+    // When logged in, the live-chat reader polls with the authenticated session (see
+    // getYouTubeReader) so YouTube delivers the moderator-only "held for review" items; logged out,
+    // it falls back to the anonymous instance below. An auth change therefore reconnects the open
+    // YouTube chats so each re-bootstraps with the right session.
     const ytAuth = new YouTubeAuthManager(
       store,
       identity.userAgent,
       () => visitorData,
       () => {
+        void sourceManager.reconnectByPlatform('youtube')
         // Same as the Twitch path: fresh cookies (or a channel switch) may restore moderation
         // permissions, so auto-mod's per-channel pauses must not outlive the login.
         autoMod?.resetPermanentFailures('youtube')
@@ -639,7 +657,8 @@ void app
       broadcastAuth()
     })
 
-    // The unauthenticated YouTube reader is created lazily on the first YouTube channel.
+    // The anonymous YouTube reader, created lazily on the first YouTube channel and used only when
+    // logged out (the authenticated session is preferred while logged in — see getYouTubeReader).
     let youtubeReader: Promise<Innertube> | undefined
     const createYouTubeReader = async (): Promise<Innertube> => {
       // Reuse the persisted visitor identity across restarts (instead of a fresh random one each
@@ -657,6 +676,13 @@ void app
       return yt
     }
     const getYouTubeReader = (): Promise<Innertube> => {
+      // Prefer the authenticated session while logged in, so moderator-only items (held-for-review
+      // messages) arrive; the anonymous instance is the logged-out fallback. Read the authed
+      // instance fresh each call — it's rebuilt on cookie rotation/recovery.
+      const authed = ytAuth.readerInnertube()
+      if (authed !== undefined) {
+        return Promise.resolve(authed)
+      }
       if (youtubeReader === undefined) {
         // Reset the cache on failure so one transient error doesn't poison every later YouTube add.
         youtubeReader = createYouTubeReader().catch((error: unknown) => {

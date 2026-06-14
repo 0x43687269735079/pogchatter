@@ -20,7 +20,8 @@ const emotes = {
 const auth = {
   sendMessage: vi.fn(),
   checkSendRestriction: vi.fn().mockResolvedValue(undefined),
-  getEmojiCatalog: vi.fn().mockResolvedValue([])
+  getEmojiCatalog: vi.fn().mockResolvedValue([]),
+  fetchLiveChatBootstrap: vi.fn().mockResolvedValue(undefined)
 } as unknown as YouTubeAuthManager
 
 // The signaler starts by default for a live chat; give it a fetch that never resolves so its
@@ -651,7 +652,8 @@ describe('YouTubeSource send-restriction probe races', () => {
         .fn()
         .mockReturnValueOnce(first.promise)
         .mockReturnValueOnce(second.promise),
-      getEmojiCatalog: vi.fn().mockResolvedValue([])
+      getEmojiCatalog: vi.fn().mockResolvedValue([]),
+      fetchLiveChatBootstrap: vi.fn().mockResolvedValue(undefined)
     } as unknown as YouTubeAuthManager
     const yt = {
       getInfo: vi.fn().mockResolvedValue(liveInfo()),
@@ -686,7 +688,8 @@ describe('YouTubeSource send gating', () => {
     return {
       sendMessage,
       checkSendRestriction: vi.fn().mockResolvedValue(undefined),
-      getEmojiCatalog: vi.fn().mockResolvedValue([])
+      getEmojiCatalog: vi.fn().mockResolvedValue([]),
+      fetchLiveChatBootstrap: vi.fn().mockResolvedValue(undefined)
     } as unknown as YouTubeAuthManager
   }
 

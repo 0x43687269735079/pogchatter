@@ -6,7 +6,7 @@ vi.mock('youtubei.js', () => ({
 
 import { Innertube } from 'youtubei.js'
 import type { AuthStore } from '@main/auth/AuthStore'
-import { YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManager'
+import { extractYtInitialData, YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManager'
 
 const create = vi.mocked(Innertube.create)
 
@@ -710,5 +710,28 @@ describe('YouTubeAuthManager init/auth-change races', () => {
 
     expect(manager.isLoggedIn).toBe(false)
     expect(store.get('youtube')).toBeUndefined()
+  })
+})
+
+describe('extractYtInitialData (live_chat page bootstrap)', () => {
+  it('extracts the embedded ytInitialData object', () => {
+    const html = `<html><script>var ytInitialData = {"a":1,"b":{"c":"x"}};</script></html>`
+    expect(extractYtInitialData(html)).toEqual({ a: 1, b: { c: 'x' } })
+  })
+
+  it('is not unbalanced by braces inside a message string', () => {
+    // A chat message containing braces must not end the object scan early.
+    const html = `window["ytInitialData"] = {"msg":"a } b { c","ok":true};\n</script>`
+    expect(extractYtInitialData(html)).toEqual({ msg: 'a } b { c', ok: true })
+  })
+
+  it('handles an escaped quote inside a string', () => {
+    const html = `ytInitialData = {"t":"say \\"hi\\" }","n":2};`
+    expect(extractYtInitialData(html)).toEqual({ t: 'say "hi" }', n: 2 })
+  })
+
+  it('returns undefined when the marker is absent or the slice is not JSON', () => {
+    expect(extractYtInitialData('<html>no data here</html>')).toBeUndefined()
+    expect(extractYtInitialData('ytInitialData = {not valid json}')).toBeUndefined()
   })
 })

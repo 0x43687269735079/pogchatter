@@ -682,12 +682,12 @@ describe('LiveChatReader sustained degradation', () => {
 })
 
 describe('LiveChatReader live-chat selection (CUB-7)', () => {
-  function withViewSelector(): unknown {
+  function withViewSelector(actions: unknown[] = []): unknown {
     return {
       data: {
         continuationContents: {
           liveChatContinuation: {
-            actions: [],
+            actions,
             continuations: [
               { timedContinuationData: { continuation: 'top-next', timeoutMs: 5000 } }
             ],
@@ -715,6 +715,34 @@ describe('LiveChatReader live-chat selection (CUB-7)', () => {
     }
   }
 
+  const heldAction = {
+    addChatItemAction: {
+      item: {
+        liveChatAutoModMessageRenderer: {
+          id: 'held-1',
+          timestampUsec: '1700000000000000',
+          headerText: { runs: [{ text: 'This message is held for review.' }] },
+          autoModeratedItem: {
+            liveChatTextMessageRenderer: {
+              id: 'held-1',
+              authorName: { simpleText: 'Mallory' },
+              message: { runs: [{ text: 'sketchy' }] },
+              timestampUsec: '1700000000000000'
+            }
+          },
+          moderationButtons: [
+            {
+              buttonRenderer: {
+                text: { simpleText: 'Show' },
+                serviceEndpoint: { moderateLiveChatEndpoint: { params: 'show-token' } }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+
   it('switches from the default Top chat continuation to Live chat, then polls from it', async () => {
     vi.useFakeTimers()
     try {
@@ -730,6 +758,69 @@ describe('LiveChatReader live-chat selection (CUB-7)', () => {
       expect(execute).toHaveBeenCalledTimes(2)
       // The re-poll used the Live chat continuation, not Top chat's "top-next".
       expect(execute.mock.calls[1]?.[1]).toMatchObject({ continuation: 'live' })
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('surfaces the switch snapshot actions (held-for-review backlog) before switching', async () => {
+    vi.useFakeTimers()
+    try {
+      // The Top-chat snapshot that triggers the switch also carries the pending automod queue. It
+      // must be dispatched, not discarded — the Live reload is not guaranteed to replay the backlog.
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce(withViewSelector([heldAction]))
+        .mockResolvedValue(liveResponse([], 'next', 5000))
+      const onMessages = vi.fn()
+      const reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'top',
+        false,
+        handlers({ onMessages })
+      )
+
+      reader.start()
+      await vi.advanceTimersByTimeAsync(0) // poll 1 (Top chat) → dispatch snapshot + switch
+      expect(onMessages).toHaveBeenCalledTimes(1)
+      const delivered = onMessages.mock.calls[0]?.[0] as Array<{ id: string; held?: unknown }>
+      expect(delivered).toHaveLength(1)
+      expect(delivered[0]?.id).toBe('held-1')
+      expect(delivered[0]?.held).toBeDefined()
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('dispatches a bootstrap snapshot (held queue) on start, then polls its continuation', async () => {
+    vi.useFakeTimers()
+    try {
+      // The live_chat page snapshot carries the standing held queue + the Top→Live view selector;
+      // start() processes it like a poll, surfacing the held items before any API request.
+      const bootstrap = (withViewSelector([heldAction]) as { data: unknown }).data
+      const execute = vi.fn().mockResolvedValue(liveResponse([], 'next', 5000))
+      const onMessages = vi.fn()
+      const reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'top',
+        false,
+        handlers({ onMessages })
+      )
+
+      reader.start(bootstrap)
+      // The held item is surfaced from the snapshot synchronously, with no API call yet.
+      expect(onMessages).toHaveBeenCalledTimes(1)
+      const delivered = onMessages.mock.calls[0]?.[0] as Array<{ held?: unknown }>
+      expect(delivered[0]?.held).toBeDefined()
+      expect(execute).not.toHaveBeenCalled()
+      // It then polls the Live continuation the snapshot switched to.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute.mock.calls[0]?.[1]).toMatchObject({ continuation: 'live' })
       reader.stop()
     } finally {
       vi.useRealTimers()

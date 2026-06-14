@@ -116,6 +116,55 @@ function restrictionReason(response: RawChatRestriction): string | undefined {
   return plainText(panel.liveChatRestrictedParticipationRenderer.message) ?? 'Chat is restricted'
 }
 
+/**
+ * Extract the `ytInitialData` JSON object embedded in a `live_chat` HTML page. String-aware brace
+ * matching (so a `{`/`}` inside a chat message can't unbalance the scan); returns undefined if the
+ * marker is absent or the slice doesn't parse.
+ */
+export function extractYtInitialData(html: string): unknown | undefined {
+  // YouTube assigns it as `window["ytInitialData"] = {…}` (sometimes `var ytInitialData = {…}`), so
+  // anchor on the name and take the next object brace rather than a fixed `name = {` shape.
+  const marker = html.indexOf('ytInitialData')
+  if (marker < 0) {
+    return undefined
+  }
+  const start = html.indexOf('{', marker)
+  if (start < 0) {
+    return undefined
+  }
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < html.length; i++) {
+    const ch = html[i]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(start, i + 1))
+        } catch {
+          return undefined
+        }
+      }
+    }
+  }
+  return undefined
+}
+
 /** Parse a pasted `Cookie` header / `name=value` blob into a fresh jar. */
 function parseJar(raw: string): Map<string, string> {
   const jar = new Map<string, string>()
@@ -275,6 +324,16 @@ export class YouTubeAuthManager {
 
   get isLoggedIn(): boolean {
     return this.#authed !== undefined
+  }
+
+  /**
+   * The authenticated InnerTube to read live chat with when logged in, or undefined when logged
+   * out (callers fall back to the anonymous reader). Reading authenticated is what surfaces the
+   * moderator-only renderers — automod "held for review" messages — that an anonymous poll never
+   * receives. Always read the *current* instance per use: it's rebuilt on cookie rotation/recovery.
+   */
+  readerInnertube(): Innertube | undefined {
+    return this.#authed
   }
 
   /** The account's channels (default identity plus any brand channels). Empty when logged out. */
@@ -599,6 +658,46 @@ export class YouTubeAuthManager {
       return restrictionReason(response.data as RawChatRestriction)
     } catch {
       // A probe failure must not block sending; the send path still reports a held message.
+      return undefined
+    }
+  }
+
+  /**
+   * The live-chat initial snapshot, fetched as the signed-in moderator from the `live_chat` HTML
+   * page (`ytInitialData`) — the same data the browser's chat iframe loads. This is the ONLY place
+   * YouTube returns the *standing* automod "held for review" queue: the `get_live_chat` POST API
+   * omits items held before this connection (it only carries freshly-held ones), but the page
+   * server-renders the full current state, held queue included. The shape matches a `get_live_chat`
+   * response (`continuationContents.liveChatContinuation`), so the reader processes it identically.
+   * Returns undefined when logged out or on any failure — the reader then just polls the API.
+   */
+  async fetchLiveChatBootstrap(continuation: string): Promise<unknown | undefined> {
+    if (this.#authed === undefined) {
+      return undefined
+    }
+    // The brand channel's page id rides in the URL (as on the browser's live_chat iframe), so the
+    // page renders the moderator's view rather than the base account's.
+    const pageId =
+      this.#selectedId === DEFAULT_CHANNEL ? '' : `&pageId=${encodeURIComponent(this.#selectedId)}`
+    const url = `https://www.youtube.com/live_chat?continuation=${encodeURIComponent(continuation)}${pageId}`
+    try {
+      const response = await this.#makeFetch(this.#jar)(url, {
+        headers: { 'User-Agent': this.#userAgent }
+      })
+      if (!response.ok) {
+        this.#log(`live_chat bootstrap: HTTP ${response.status}`)
+        return undefined
+      }
+      const data = extractYtInitialData(await response.text())
+      if (data === undefined) {
+        this.#log('live_chat bootstrap: no ytInitialData in page')
+        return undefined
+      }
+      const held = (JSON.stringify(data).match(/liveChatAutoModMessageRenderer/g) ?? []).length
+      this.#log(`live_chat bootstrap: loaded (${held} held-for-review item(s))`)
+      return data
+    } catch (error) {
+      this.#log(`live_chat bootstrap failed: ${error instanceof Error ? error.message : error}`)
       return undefined
     }
   }

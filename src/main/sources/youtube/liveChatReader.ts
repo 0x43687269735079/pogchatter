@@ -169,11 +169,26 @@ export class LiveChatReader {
     this.#handlers = handlers
   }
 
-  start(): void {
+  /**
+   * Begin reading. `initialResponse` is an optional pre-fetched snapshot (the `live_chat` page's
+   * `ytInitialData`, shaped like a get_live_chat response) — it's dispatched through the same
+   * handling as a poll, so the standing automod "held for review" queue it carries (which the POST
+   * API omits) is surfaced before ongoing polling takes over from the continuation it advances to.
+   */
+  start(initialResponse?: unknown): void {
     if (this.#running || this.#continuation === undefined) {
       return
     }
     this.#running = true
+    if (initialResponse !== undefined) {
+      const delay = this.#handleResponse(initialResponse as RawLiveChatResponse, false)
+      // A confirmed end (undefined) stops the reader; otherwise schedule polling from the
+      // continuation the snapshot advanced us to (0 when it triggered the Top→Live switch).
+      if (delay !== undefined) {
+        this.#schedule(delay)
+      }
+      return
+    }
     void this.#poll()
   }
 
@@ -291,10 +306,17 @@ export class LiveChatReader {
     // messages) once, from the first response's view selector, then re-poll from that continuation.
     const liveContinuation = this.#liveChatContinuation(live)
     if (liveContinuation !== undefined) {
+      // This first ("Top chat") response is a snapshot: it already carries the chat's pending state,
+      // including the automod "held for review" backlog a moderator sees on open. The "Live chat"
+      // reload we switch to is not guaranteed to replay that backlog, so surface this snapshot's
+      // actions before switching instead of discarding them. The renderer dedups by id, so any
+      // overlap when the Live reload re-sends the same items is absorbed.
+      const snapshot = live.actions ?? []
+      this.#dispatch(snapshot)
       this.#unreadable = 0
       this.#switchedToLive = true
       this.#continuation = liveContinuation
-      this.#logSwitch()
+      this.#logSwitch(snapshot.length)
       return 0
     }
     const hadMessages = this.#dispatch(live.actions ?? []) > 0
@@ -438,12 +460,14 @@ export class LiveChatReader {
     return items[1]?.continuation?.reloadContinuationData?.continuation
   }
 
-  #logSwitch(): void {
+  #logSwitch(snapshotActions: number): void {
     if (!SIGNALER_DEBUG) {
       return
     }
     const time = new Date().toISOString().slice(11, 23)
-    process.stdout.write(`[${time}] [reader] ${this.#sourceId}: switched Top chat → Live chat\n`)
+    process.stdout.write(
+      `[${time}] [reader] ${this.#sourceId}: switched Top chat → Live chat (surfaced ${snapshotActions} snapshot actions)\n`
+    )
   }
 
   /** Exponential backoff with jitter, capped, for repeated poll failures. */

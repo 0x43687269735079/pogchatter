@@ -58,14 +58,26 @@ export function applyEventsToMessages(
       touched.add(event.channelId)
       changed = true
     } else if (event.kind === 'replace') {
-      // Update a buffered row in place (held → approved/hidden) without moving it. Ignore a
-      // replacement whose target is no longer buffered (already trimmed).
-      const list = next[event.channelId]
-      if (list === undefined || !list.some((m) => m.id === event.message.id)) {
-        continue
+      const ids = idsFor(event.channelId)
+      if (ids.has(event.message.id)) {
+        // Update the buffered row in place (held → approved/hidden) without moving it.
+        next[event.channelId] = (next[event.channelId] ?? []).map((m) =>
+          m.id === event.message.id ? event.message : m
+        )
+        changed = true
+      } else if (event.message.held !== undefined || event.message.deleted === true) {
+        // A moderated item — still-pending held, or already hidden — can arrive as a replace of a
+        // message we never buffered: a moderator joining a stream gets the standing moderation
+        // backlog as the end-state of items whose original add predates this connection. Surface it
+        // rather than dropping it, so the moderator sees it (a held card, or a struck "removed"
+        // line). Insert at its send-time slot, not the end, so it sits in chat order rather than
+        // jumping to the bottom. A plain unbuffered replacement is an approved/edited message we
+        // missed or one that was trimmed — nothing to moderate, so ignore it.
+        ids.add(event.message.id)
+        next[event.channelId] = insertByTimestamp(next[event.channelId] ?? [], event.message)
+        touched.add(event.channelId)
+        changed = true
       }
-      next[event.channelId] = list.map((m) => (m.id === event.message.id ? event.message : m))
-      changed = true
     } else if (event.kind === 'clear') {
       const list = next[event.channelId]
       if (!list) {
@@ -125,6 +137,20 @@ export function applyEventsToMessages(
     }
   }
   return next
+}
+
+/**
+ * Insert a message at its chronological slot in an oldest-first buffer (newest last). Used for a
+ * moderation-backlog row surfaced out of band (a held/hidden replace of an unbuffered message), so
+ * it lands where it was sent instead of at the bottom. Scans from the end — the backlog is small and
+ * its send time is usually near the tail it's reconciled against.
+ */
+function insertByTimestamp(list: ChatMessage[], message: ChatMessage): ChatMessage[] {
+  let index = list.length
+  while (index > 0 && (list[index - 1]?.timestamp ?? 0) > message.timestamp) {
+    index -= 1
+  }
+  return [...list.slice(0, index), message, ...list.slice(index)]
 }
 
 /**

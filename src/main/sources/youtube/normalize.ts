@@ -318,11 +318,34 @@ function baseMessage(sourceId: string, renderer: RawRenderer): ChatMessage {
   if (renderer.deletedStateMessage !== undefined) {
     message.deleted = true
   }
+  // A message held for review carries a headerText. It arrives wrapped in a
+  // liveChatAutoModMessageRenderer when freshly held (handled by heldMessage), but in the Live view
+  // and the standing backlog it comes as an ordinary renderer bearing that same header — so detect
+  // it here, by the header, for that shape.
+  const held = buildHeld(renderer)
+  if (held !== undefined) {
+    message.held = held
+  }
   const reply = donationReply(renderer)
   if (reply !== undefined) {
     message.reply = reply
   }
   return message
+}
+
+/**
+ * The held-for-review state on a message renderer, or undefined if it isn't held. YouTube marks a
+ * held message with a headerText ("This message is held for review.") plus its Show/Hide review
+ * buttons and per-author moderation buttons. It reaches us two ways — wrapped in a
+ * liveChatAutoModMessageRenderer when freshly held, or, in the Live view and the standing backlog, as
+ * an ordinary renderer carrying that same header — and the header is the signal common to both.
+ */
+function buildHeld(renderer: RawRenderer): HeldReview | undefined {
+  const header = textToString(renderer.headerText)
+  if (header === '') {
+    return undefined
+  }
+  return { actions: parseHeldActions(renderer), headerText: header }
 }
 
 /**
@@ -347,12 +370,9 @@ function heldMessage(sourceId: string, outer: RawRenderer): ChatMessage {
   if (outer.id !== undefined && outer.id !== '') {
     message.id = outer.id
   }
-  const held: HeldReview = { actions: parseHeldActions(outer) }
-  const header = textToString(outer.headerText)
-  if (header !== '') {
-    held.headerText = header
-  }
-  message.held = held
+  // The autoMod wrapper is always held; its header/buttons live on the outer renderer (the inner
+  // item only supplied the visible text above, so baseMessage didn't see them).
+  message.held = buildHeld(outer) ?? { actions: parseHeldActions(outer) }
   return message
 }
 
@@ -394,6 +414,10 @@ const KNOWN_ACTION_KEYS = new Set([
 ])
 // Metadata that rides alongside an action key on the same object without being an action type.
 const ACTION_METADATA_KEYS = new Set(['clickTrackingParams'])
+// Actions we recognize and deliberately skip — they carry no chat content. Classified so they
+// don't trip the parse-health warning: `liveChatReportModerationStateCommand` accompanies a
+// moderator's own actions to sync the report/hold state, with nothing to render.
+const IGNORED_ACTION_KEYS = new Set(['liveChatReportModerationStateCommand'])
 // The item renderers collect() consumes from an addChatItemAction — must mirror RawItem.
 const KNOWN_ITEM_KEYS = new Set([
   'liveChatTextMessageRenderer',
@@ -431,7 +455,7 @@ function reportUnknownItemKeys(item: RawItem | undefined, out: string[]): void {
 
 function collectUnknownKeys(action: RawAction, out: string[]): void {
   for (const key of Object.keys(action)) {
-    if (ACTION_METADATA_KEYS.has(key)) {
+    if (ACTION_METADATA_KEYS.has(key) || IGNORED_ACTION_KEYS.has(key)) {
       continue
     }
     if (!KNOWN_ACTION_KEYS.has(key)) {

@@ -604,6 +604,50 @@ describe('YouTube held-for-review messages', () => {
     expect(messages[0]?.held?.actions).toEqual([])
     expect(messages[0]?.author.displayName).toBe('Spammer')
   })
+
+  // The Live view / standing backlog delivers a held message as an ordinary text renderer that
+  // carries the held header (and its own buttons) rather than the liveChatAutoModMessageRenderer
+  // wrapper — the headerText is the marker common to both shapes.
+  function plainHeldText(): RawAction {
+    return {
+      addChatItemAction: {
+        item: {
+          liveChatTextMessageRenderer: {
+            id: 'held-plain',
+            timestampUsec: '1700000000000000',
+            authorName: { simpleText: 'Spammer' },
+            authorExternalChannelId: 'UCspam',
+            message: { runs: [{ text: 'questionable' }] },
+            headerText: { runs: [{ text: 'This message is held for review.' }] },
+            inlineActionButtons: [inlineButton('DELETE', 'Remove', 'REMOVE')]
+          }
+        }
+      }
+    } as RawAction
+  }
+
+  it('detects a held message that arrives as a plain text renderer with a held header', () => {
+    const { messages } = normalizeAction('src', plainHeldText())
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.held?.headerText).toBe('This message is held for review.')
+    expect(messages[0]?.fragments).toEqual([{ type: 'text', text: 'questionable' }])
+    expect(messages[0]?.held?.actions.map((action) => action.label)).toEqual(['Remove'])
+  })
+
+  it('marks a held replacement when it arrives as a plain text renderer with a held header', () => {
+    const item = (plainHeldText().addChatItemAction as { item: unknown }).item
+    const { replacements } = normalizeAction('src', {
+      replaceChatItemAction: { targetItemId: 'orig-id', replacementItem: item }
+    } as RawAction)
+    expect(replacements).toHaveLength(1)
+    expect(replacements[0]?.id).toBe('orig-id')
+    expect(replacements[0]?.held?.headerText).toBe('This message is held for review.')
+  })
+
+  it('does not mark an ordinary message (no header) as held', () => {
+    const { messages } = normalizeAction('src', textMessage([{ text: 'just a normal message' }]))
+    expect(messages[0]?.held).toBeUndefined()
+  })
 })
 
 describe('YouTube replaceChatItemAction', () => {

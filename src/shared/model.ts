@@ -123,6 +123,33 @@ export interface ChatMessage {
   ping?: { color: string }
   /** Set when the message matched a moderation watchlist term — flagged for a moderator to review. */
   flagged?: boolean
+  /**
+   * Set on a YouTube message YouTube's automod held for review (only delivered to moderators/the
+   * broadcaster): the explanatory header plus YouTube's own inline approve/remove actions. The
+   * message renders as a distinct "held for review" card; the `⋮` menu (see {@link menuToken})
+   * still offers the per-author moderation actions (hide/ban/timeout).
+   */
+  held?: HeldReview
+}
+
+/** A YouTube automod "held for review" message's header and inline moderation actions. */
+export interface HeldReview {
+  /** YouTube's explanatory line, e.g. "Held for review". */
+  headerText?: string
+  /** The inline actions YouTube offers on the held message (typically Allow and Remove). */
+  actions: HeldAction[]
+}
+
+/** One inline action on a held-for-review message; its `token` is replayed by the main process. */
+export interface HeldAction {
+  /** Stable id for the action (the button's icon type, or its index when none). */
+  id: string
+  /** Human label as YouTube names it (e.g. "Allow", "Remove"). */
+  label: string
+  /** Remove/reject-style actions — the UI confirms before running. */
+  destructive: boolean
+  /** Opaque token the main process replays to perform the action (see ChatApi.runHeldAction). */
+  token: string
 }
 
 /**
@@ -524,6 +551,8 @@ export interface ChatApi {
     actionId: string,
     timeoutSeconds?: number
   ): Promise<SendResult>
+  /** Run a held-for-review message's inline action ({@link HeldAction.token}); approve/remove. */
+  runHeldAction(channelId: string, token: string): Promise<SendResult>
   /** Custom emotes (7TV/BTTV/FFZ global + this channel's) for input autocomplete and the picker. */
   getEmotes(channelId: string): Promise<ChannelEmote[]>
   /** A Super Chat's reply thread (the donation first, then its replies) for the reply-thread view. */

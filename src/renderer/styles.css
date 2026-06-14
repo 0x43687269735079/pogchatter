@@ -895,6 +895,69 @@ body,
   font-weight: 600;
 }
 
+/* held-for-review card (YouTube automod) — a distinct amber-edged block needing a moderator's call */
+.pc-held {
+  margin: 4px 10px;
+  border: 1px solid var(--warn);
+  border-left-width: 2px;
+  border-radius: var(--radius);
+  background: var(--overlay);
+  font-size: 12px;
+}
+.pc-held-head {
+  padding: 3px 10px;
+  font-size: var(--fs-small);
+  letter-spacing: 0.3px;
+  color: var(--warn);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-held-body {
+  padding: 6px 10px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.pc-held-body .pc-user {
+  font-weight: 600;
+}
+.pc-held-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 7px;
+}
+.pc-held-actions button {
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--rule);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.pc-held-actions button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.pc-held-actions button.danger:hover:not(:disabled) {
+  color: var(--err);
+  border-color: var(--err);
+}
+.pc-held-actions button:disabled {
+  color: var(--dimmer);
+  cursor: default;
+}
+.pc-held-actions button.more {
+  margin-left: auto;
+  border-color: transparent;
+  font-size: 15px;
+  padding: 0 6px;
+}
+.pc-held-err {
+  padding: 0 10px 6px;
+  color: var(--err);
+  font-size: var(--fs-small);
+}
+
 /* highlight cards */
 .pc-hl {
   margin: 4px 10px;

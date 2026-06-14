@@ -60,6 +60,8 @@ export interface ChatSource {
   getMessageActions?(menuToken: string): Promise<ChatAction[]>
   /** Run one of {@link getMessageActions}'s actions; throws on failure. `timeoutSeconds` sets a timeout's duration. */
   runMessageAction?(menuToken: string, actionId: string, timeoutSeconds?: number): Promise<void>
+  /** Run a held-for-review message's inline action (its opaque token); throws on failure. */
+  runHeldAction?(token: string): Promise<void>
   /** A Super Chat's reply thread (the donation then its replies) for the token on a reply's context. */
   getReplyThread?(threadToken: string): Promise<ChatMessage[]>
   /** Platform profile details for an author seen in this chat (user card); undefined when unavailable. */

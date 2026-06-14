@@ -1,4 +1,4 @@
-import type { ChatAction } from '@shared/model'
+import type { ChatAction, HeldAction } from '@shared/model'
 
 /**
  * Parsing for YouTube's live-chat per-message "⋮" menu (`live_chat/get_item_context_menu`). The
@@ -253,4 +253,76 @@ export function resolveConfirmDialog(endpoint: RawEndpoint): RawEndpoint | undef
   }
   const action = renderer['serviceEndpoint'] ?? renderer['navigationEndpoint']
   return isObject(action) ? action : undefined
+}
+
+interface RawButtonRenderer {
+  text?: RawText
+  icon?: { iconType?: string }
+  serviceEndpoint?: RawEndpoint
+  navigationEndpoint?: RawEndpoint
+  command?: RawEndpoint
+}
+
+/** The endpoint a button replays — YouTube puts it under any of these keys. */
+function buttonEndpoint(renderer: RawButtonRenderer): RawEndpoint | undefined {
+  return renderer.serviceEndpoint ?? renderer.navigationEndpoint ?? renderer.command
+}
+
+/** Encode a raw button endpoint into the opaque token the renderer hands back to runHeldAction. */
+function encodeHeldToken(endpoint: RawEndpoint): string {
+  return Buffer.from(JSON.stringify(endpoint), 'utf8').toString('base64')
+}
+
+/** Decode a held-action token back to its raw endpoint, or undefined if malformed. */
+export function decodeHeldToken(token: string): RawEndpoint | undefined {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(token, 'base64').toString('utf8'))
+    return isObject(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The inline approve/remove actions on a YouTube automod "held for review" message, from its raw
+ * `moderationButtons` (each a `buttonRenderer` with a label, icon, and the endpoint to replay). The
+ * endpoint is replayed verbatim later (see {@link decodeHeldToken} + the manager), so this never
+ * constructs a moderation call — it only carries YouTube's own. A purchase CTA (should one ever
+ * appear) is dropped, like the context menu. `buttons` is untyped raw JSON.
+ */
+export function parseHeldActions(buttons: unknown): HeldAction[] {
+  const actions: HeldAction[] = []
+  if (!Array.isArray(buttons)) {
+    return actions
+  }
+  buttons.forEach((button, index) => {
+    const renderer = isObject(button) ? (button['buttonRenderer'] as RawButtonRenderer) : undefined
+    const endpoint = isObject(renderer) ? buttonEndpoint(renderer) : undefined
+    const label = menuText(renderer?.text)
+    if (renderer === undefined || endpoint === undefined || label === '') {
+      return
+    }
+    if (isPurchase(renderer.icon?.iconType, label)) {
+      return
+    }
+    actions.push({
+      id: renderer.icon?.iconType ?? `held-${index}`,
+      label,
+      destructive: DESTRUCTIVE.test(label),
+      token: encodeHeldToken(endpoint)
+    })
+  })
+  return actions
+}
+
+/**
+ * A `moderateLiveChatEndpoint.params` token anywhere inside an endpoint. A held message's
+ * approve/remove button may carry the moderate endpoint directly or wrapped (e.g. in a command
+ * executor), so this searches the whole endpoint rather than only its top level. Undefined when the
+ * endpoint is not a moderation call (it's then replayed verbatim).
+ */
+export function deepModerationParams(endpoint: RawEndpoint | undefined): string | undefined {
+  const moderate = findFirst(endpoint, 'moderateLiveChatEndpoint')
+  const params = isObject(moderate) ? moderate['params'] : undefined
+  return typeof params === 'string' && params !== '' ? params : undefined
 }

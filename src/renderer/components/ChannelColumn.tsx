@@ -213,6 +213,12 @@ export function ChannelColumn({
     setMenu({ message, x, y })
   }, [])
 
+  // Replay a held-for-review message's inline action (approve/remove). Stable for the same reason.
+  const runHeldAction = useCallback(
+    (channelId: string, token: string) => window.chat.runHeldAction(channelId, token),
+    []
+  )
+
   // Render the rows once per message/identity change, not on every keystroke or status update —
   // on a fast, full chat this keeps typing from re-rendering the whole list (see MessageRow memo).
   // The right-click menu is always available — it offers "User activity" for any line, plus reply
@@ -226,10 +232,11 @@ export function ChannelColumn({
           palette={palette}
           revealDeleted={revealDeleted}
           onContextMenu={openContextMenu}
+          onHeldAction={runHeldAction}
           monitoredKeys={monitoredKeys}
         />
       )),
-    [messages, palette, revealDeleted, openContextMenu, monitoredKeys]
+    [messages, palette, revealDeleted, openContextMenu, runHeldAction, monitoredKeys]
   )
 
   function startReply(message: ChatMessage): void {

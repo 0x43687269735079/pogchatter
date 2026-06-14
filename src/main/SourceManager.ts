@@ -261,6 +261,14 @@ export class SourceManager {
     await source.runMessageAction(menuToken, actionId, timeoutSeconds)
   }
 
+  async runHeldAction(channelId: string, token: string): Promise<void> {
+    const source = this.#sources.get(channelId)
+    if (source?.runHeldAction === undefined) {
+      throw new Error('No chat actions available for this channel')
+    }
+    await source.runHeldAction(token)
+  }
+
   /** A Super Chat's reply thread (donation + replies); empty if the source can't fetch one. */
   async getReplyThread(channelId: string, threadToken: string): Promise<ChatMessage[]> {
     return (await this.#sources.get(channelId)?.getReplyThread?.(threadToken)) ?? []

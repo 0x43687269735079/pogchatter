@@ -43,7 +43,8 @@ function shortLabel(label: string): string {
  * Merge several columns' message buffers into one time-ordered feed for a combined view, keeping only
  * the most recent `cap` messages. Per-channel inputs are already ordered oldest→newest; the stable
  * sort keeps same-timestamp messages in member then arrival order. With `flaggedOnly`, only messages
- * flagged by the moderation watchlist are kept — the basis for the flagged-messages view.
+ * needing a moderator's eye are kept (watchlist matches and YouTube automod "held for review"
+ * messages) — the basis for the flagged-messages view.
  */
 export function mergeMonitorMessages(
   memberIds: readonly string[],
@@ -56,7 +57,7 @@ export function mergeMonitorMessages(
     const list = messagesByChannel[id]
     if (list !== undefined) {
       for (const message of list) {
-        if (!flaggedOnly || message.flagged === true) {
+        if (!flaggedOnly || message.flagged === true || message.held !== undefined) {
           merged.push(message)
         }
       }

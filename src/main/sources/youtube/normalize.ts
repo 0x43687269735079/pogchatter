@@ -4,9 +4,11 @@ import type {
   ChatMessage,
   ClearTarget,
   Fragment,
+  HeldReview,
   Highlight,
   ReplyContext
 } from '@shared/model'
+import { parseHeldActions } from '@main/sources/youtube/liveChatActions'
 
 // Minimal shapes of the raw InnerTube live-chat renderers we consume. Parsing the
 // raw JSON (rather than youtubei.js's typed LiveChat) keeps one unexpected action
@@ -59,6 +61,12 @@ interface RawRenderer {
   headerPrimaryText?: RawText
   /** The "⋮" menu token; opens the per-message action menu (report/block/moderation). */
   contextMenuEndpoint?: { liveChatItemContextMenuEndpoint?: { params?: string } }
+  /** On a `liveChatAutoModMessageRenderer`: the wrapped message held for review. */
+  autoModeratedItem?: RawItem
+  /** On a `liveChatAutoModMessageRenderer`: YouTube's inline approve/remove buttons (raw JSON). */
+  moderationButtons?: unknown
+  /** On a `liveChatAutoModMessageRenderer`: the "held for review" explanatory line. */
+  headerText?: RawText
   /**
    * On a reply to a Super Chat, a chip whose tap opens the donation's reply thread and whose title
    * is the donor's handle — the only marker that ties a reply back to the donation it answers.
@@ -84,6 +92,7 @@ interface RawItem {
   liveChatPaidMessageRenderer?: RawRenderer
   liveChatPaidStickerRenderer?: RawRenderer
   liveChatMembershipItemRenderer?: RawRenderer
+  liveChatAutoModMessageRenderer?: RawRenderer
 }
 export interface RawAction {
   addChatItemAction?: { item?: RawItem }
@@ -304,6 +313,40 @@ function baseMessage(sourceId: string, renderer: RawRenderer): ChatMessage {
   return message
 }
 
+/**
+ * A YouTube automod "held for review" message (`liveChatAutoModMessageRenderer`). YouTube delivers
+ * these only to moderators/the broadcaster: the visible message (author + text) is the wrapped
+ * `autoModeratedItem`, while the outer renderer carries the review header, the inline approve/remove
+ * buttons, the per-author moderation menu, and the id the held item is later approved/removed under.
+ */
+function heldMessage(sourceId: string, outer: RawRenderer): ChatMessage {
+  const inner = outer.autoModeratedItem
+  const innerRenderer =
+    inner?.liveChatTextMessageRenderer ??
+    inner?.liveChatPaidMessageRenderer ??
+    inner?.liveChatMembershipItemRenderer
+  // Build the visible row from the wrapped item (author + text), falling back to the outer renderer
+  // if YouTube ever omits the inner one.
+  const message = baseMessage(sourceId, innerRenderer ?? outer)
+  // The held container owns the id and the moderation menu — a later approve/remove (and the
+  // markChatItemAsDeleted that clears the held card on approval) reference the container, not the
+  // wrapped item.
+  if (outer.id !== undefined && outer.id !== '') {
+    message.id = outer.id
+  }
+  const menuToken = outer.contextMenuEndpoint?.liveChatItemContextMenuEndpoint?.params
+  if (menuToken !== undefined && menuToken !== '') {
+    message.menuToken = menuToken
+  }
+  const held: HeldReview = { actions: parseHeldActions(outer.moderationButtons) }
+  const header = textToString(outer.headerText)
+  if (header !== '') {
+    held.headerText = header
+  }
+  message.held = held
+  return message
+}
+
 function applyAmount(
   message: ChatMessage,
   highlight: Highlight,
@@ -345,7 +388,8 @@ const KNOWN_ITEM_KEYS = new Set([
   'liveChatTextMessageRenderer',
   'liveChatPaidMessageRenderer',
   'liveChatPaidStickerRenderer',
-  'liveChatMembershipItemRenderer'
+  'liveChatMembershipItemRenderer',
+  'liveChatAutoModMessageRenderer'
 ])
 // Item renderers we recognize and deliberately don't render — informational, not chat content.
 // Classified here so they don't trip the parse-health warning (seen in the field: the
@@ -450,6 +494,8 @@ function collect(
         renderer.backgroundColor
       )
     )
+  } else if (item.liveChatAutoModMessageRenderer !== undefined) {
+    messages.push(heldMessage(sourceId, item.liveChatAutoModMessageRenderer))
   } else if (item.liveChatMembershipItemRenderer !== undefined) {
     const renderer = item.liveChatMembershipItemRenderer
     // baseMessage keeps the member's own milestone-chat text (renderer.message) as fragments; the

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  decodeHeldToken,
+  deepModerationParams,
   findActionEndpoint,
   moderationParams,
+  parseHeldActions,
   parseMenuActions,
   resolveConfirmDialog,
   timeoutOptions,
@@ -318,5 +321,63 @@ describe('timeoutOptions / timeoutParams', () => {
   it('is empty for a non-timeout endpoint', () => {
     expect(timeoutOptions(findActionEndpoint(moderatorMenu, 'DELETE'))).toEqual([])
     expect(timeoutOptions(undefined)).toEqual([])
+  })
+})
+
+describe('parseHeldActions', () => {
+  const buttons = [
+    {
+      buttonRenderer: {
+        text: { simpleText: 'Allow' },
+        icon: { iconType: 'CHECK' },
+        serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
+      }
+    },
+    {
+      buttonRenderer: {
+        text: { simpleText: 'Remove' },
+        icon: { iconType: 'DELETE' },
+        // The moderate endpoint may be wrapped (e.g. in a command executor) — deepModerationParams finds it.
+        serviceEndpoint: {
+          commandExecutorCommand: { commands: [{ moderateLiveChatEndpoint: { params: 'REM' } }] }
+        }
+      }
+    }
+  ]
+
+  it('parses label/destructive/id and round-trips the endpoint through the token', () => {
+    const actions = parseHeldActions(buttons)
+    expect(actions.map((action) => [action.label, action.destructive, action.id])).toEqual([
+      ['Allow', false, 'CHECK'],
+      ['Remove', true, 'DELETE']
+    ])
+    expect(deepModerationParams(decodeHeldToken(actions[0]?.token ?? ''))).toBe('APP')
+    expect(deepModerationParams(decodeHeldToken(actions[1]?.token ?? ''))).toBe('REM')
+  })
+
+  it('falls back to an index id, replays a non-moderate endpoint verbatim, and drops endpoint-less buttons', () => {
+    const actions = parseHeldActions([
+      {},
+      { buttonRenderer: { text: { simpleText: 'No endpoint' } } },
+      {
+        buttonRenderer: {
+          text: { simpleText: 'Open' },
+          navigationEndpoint: { urlEndpoint: { url: 'x' } }
+        }
+      }
+    ])
+    expect(actions).toHaveLength(1)
+    expect(actions[0]?.id).toBe('held-2')
+    // No moderate params → the executor replays the endpoint verbatim.
+    expect(deepModerationParams(decodeHeldToken(actions[0]?.token ?? ''))).toBeUndefined()
+  })
+
+  it('ignores a non-array and never throws', () => {
+    expect(parseHeldActions(undefined)).toEqual([])
+    expect(parseHeldActions({})).toEqual([])
+  })
+
+  it('decodeHeldToken returns undefined on a malformed token', () => {
+    expect(decodeHeldToken('@@@ not valid base64 json @@@')).toBeUndefined()
   })
 })

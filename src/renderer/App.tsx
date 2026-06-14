@@ -284,8 +284,17 @@ export function App(): ReactElement {
     ytUserLogoutRef.current = false
   }, [auth.youtube.loggedIn])
 
-  // The built-in flagged-messages view exists whenever the moderation watchlist has a configured term.
+  // The built-in flagged-messages view exists whenever the moderation watchlist has a configured
+  // term, or a YouTube automod "held for review" message is present (only moderators receive those).
   const hasModerationRules = settings.moderation.rules.some((rule) => rule.pattern.trim() !== '')
+  // Short-circuits when rules already make it visible; otherwise `.some` stops at the first held
+  // message, so the held scan only runs (and only fully) when there are no watchlist terms.
+  const flaggedVisible = useMemo(
+    () =>
+      hasModerationRules ||
+      Object.values(messages).some((list) => list.some((message) => message.held !== undefined)),
+    [hasModerationRules, messages]
+  )
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
 
@@ -313,19 +322,19 @@ export function App(): ReactElement {
     const stored = applyStored ? settingsRef.current.columnOrder : undefined
     setOrder((prev) =>
       reconcileColumnOrder(prev, {
-        flaggedVisible: hasModerationRules,
+        flaggedVisible,
         monitorIds,
         channelIds: channels.map((channel) => channel.id),
         stored
       })
     )
-  }, [channels, monitorIds, hasModerationRules, settings.columnOrder])
+  }, [channels, monitorIds, flaggedVisible, settings.columnOrder])
 
   // Chat columns and monitor views in one ordered list, so both move and reorder the same way.
   const orderedColumns = order
     .map((id): Column | undefined => {
       if (id === FLAGGED_COLUMN_ID) {
-        return hasModerationRules ? { kind: 'flagged', id } : undefined
+        return flaggedVisible ? { kind: 'flagged', id } : undefined
       }
       const channel = channels.find((c) => c.id === id)
       if (channel !== undefined) {

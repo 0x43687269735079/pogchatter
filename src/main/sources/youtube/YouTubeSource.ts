@@ -151,6 +151,10 @@ export class YouTubeSource extends BaseChatSource {
     return this.#auth.runMessageAction(menuToken, actionId, timeoutSeconds)
   }
 
+  runHeldAction(token: string): Promise<void> {
+    return this.#auth.runHeldAction(token)
+  }
+
   /**
    * Fetch a Super Chat's reply thread (the donation followed by its replies) from the engagement
    * panel the `threadToken` identifies, so the whole chain can be shown in one view. Reading is

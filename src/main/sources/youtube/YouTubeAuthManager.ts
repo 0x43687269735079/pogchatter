@@ -5,6 +5,8 @@ import type { ChatAction, YouTubeChannel } from '@shared/model'
 import { proxiedFetch, proxyUrl } from '@main/net/proxy'
 import { isYouTubeHost } from '@main/sources/channelId'
 import {
+  decodeHeldToken,
+  deepModerationParams,
   findActionEndpoint,
   moderationParams,
   parseMenuActions,
@@ -548,6 +550,32 @@ export class YouTubeAuthManager {
       throw new Error('That timeout duration is no longer available')
     }
     this.#log(`running message action ${actionId}`)
+    await new YTNodes.NavigationEndpoint(endpoint).call(yt.actions, { parse: false })
+  }
+
+  /**
+   * Run a held-for-review message's inline action (its {@link HeldAction.token}, an opaque encoding
+   * of YouTube's own button endpoint). A moderation button carries a `moderateLiveChatEndpoint`
+   * whose params the web client POSTs to `live_chat/moderate`; replay that exactly. Anything else is
+   * executed verbatim as the endpoint YouTube put on the button. Throws with a user-facing message
+   * on failure.
+   */
+  async runHeldAction(token: string): Promise<void> {
+    const yt = this.#authed
+    if (yt === undefined) {
+      throw new Error('Log in to YouTube to use chat actions')
+    }
+    const endpoint = decodeHeldToken(token)
+    if (endpoint === undefined) {
+      throw new Error('That action is no longer available')
+    }
+    const params = deepModerationParams(endpoint)
+    if (params !== undefined) {
+      this.#log('running held action via live_chat/moderate')
+      await yt.actions.execute('live_chat/moderate', { params, parse: false })
+      return
+    }
+    this.#log('running held action via its endpoint')
     await new YTNodes.NavigationEndpoint(endpoint).call(yt.actions, { parse: false })
   }
 

@@ -118,6 +118,12 @@ export function CombinedColumn({
     setMenu({ message, x, y })
   }, [])
 
+  // Held-for-review messages appear here too (the flagged view); replay their inline actions.
+  const runHeldAction = useCallback(
+    (channelId: string, token: string) => window.chat.runHeldAction(channelId, token),
+    []
+  )
+
   function handleScroll(): void {
     const el = bodyRef.current
     if (!el) {
@@ -267,6 +273,7 @@ export function CombinedColumn({
                   palette={palette}
                   revealDeleted={revealDeleted}
                   onContextMenu={openContextMenu}
+                  onHeldAction={runHeldAction}
                   originLabel={origin?.label}
                   originColor={origin?.color}
                   onOriginClick={onJump}

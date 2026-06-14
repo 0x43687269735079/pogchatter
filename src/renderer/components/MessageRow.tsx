@@ -1,5 +1,12 @@
-import { type CSSProperties, Fragment, memo, type ReactElement, type ReactNode } from 'react'
-import type { ChatMessage, Fragment as Frag } from '@shared/model'
+import {
+  type CSSProperties,
+  Fragment,
+  memo,
+  type ReactElement,
+  type ReactNode,
+  useState
+} from 'react'
+import type { ChatMessage, Fragment as Frag, HeldAction, SendResult } from '@shared/model'
 import { Avatar } from '@renderer/components/Avatar'
 import { Badges } from '@renderer/components/Badges'
 import { EmoteImg } from '@renderer/components/EmoteImg'
@@ -133,6 +140,8 @@ interface MessageRowProps {
   /** Show a deleted message's original text (dimmed + struck) instead of "message removed". */
   revealDeleted: boolean
   onContextMenu?: ((message: ChatMessage, x: number, y: number) => void) | undefined
+  /** Replay a held-for-review message's inline action (approve/remove); resolves with the outcome. */
+  onHeldAction?: ((channelId: string, token: string) => Promise<SendResult>) | undefined
   /**
    * Origin tag for a combined monitor view (the column this message came from); omitted elsewhere.
    * Passed as plain strings so the memoized row compares them by value and isn't re-rendered each
@@ -151,6 +160,115 @@ interface MessageRowProps {
 }
 
 /**
+ * A YouTube automod "held for review" message: a distinct card with the review header, the message,
+ * and YouTube's own inline actions (typically Allow / Remove). Destructive actions take a confirming
+ * second click; the ⋮ button (and right-click) opens the standard moderation menu (hide/ban/timeout)
+ * for the author. Manages its own confirm/busy/error state, so it's a component rather than an inline
+ * branch of MessageRow (which can't hold hooks past its early returns).
+ */
+function HeldCard({
+  message,
+  palette,
+  onContextMenu,
+  onHeldAction
+}: {
+  message: ChatMessage
+  palette: readonly string[]
+  onContextMenu?: ((message: ChatMessage, x: number, y: number) => void) | undefined
+  onHeldAction?: ((channelId: string, token: string) => Promise<SendResult>) | undefined
+}): ReactElement {
+  const held = message.held
+  const [confirming, setConfirming] = useState<string | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
+  const name = message.author.displayName
+
+  async function run(action: HeldAction): Promise<void> {
+    if (action.destructive && confirming !== action.id) {
+      setConfirming(action.id)
+      return
+    }
+    if (onHeldAction === undefined) {
+      return
+    }
+    setBusy(true)
+    setError(undefined)
+    try {
+      // On success YouTube clears or replaces the held card itself (a markChatItemAsDeleted on this
+      // card's id for remove; a fresh message for approve), so there's nothing to update here.
+      const result = await onHeldAction(message.channelId, action.token)
+      if (!result.ok) {
+        setError(result.error)
+        setConfirming(undefined)
+      }
+    } catch {
+      setError('action failed')
+      setConfirming(undefined)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="pc-held"
+      onContextMenu={
+        onContextMenu !== undefined
+          ? (event): void => {
+              event.preventDefault()
+              onContextMenu(message, event.clientX, event.clientY)
+            }
+          : undefined
+      }
+    >
+      <div className="pc-held-head">⚑ {held?.headerText ?? 'held for review'}</div>
+      <div className="pc-held-body">
+        <Avatar name={message.author.name} url={message.author.avatarUrl} palette={palette} />
+        <Badges badges={message.author.badges} />
+        <span
+          className="pc-user"
+          style={{ color: message.author.color ?? nameColor(name, palette) }}
+        >
+          {atName(name)}
+        </span>
+        <span className="pc-colon">:</span>
+        <span className="pc-text">{renderFragments(message.fragments)}</span>
+      </div>
+      <div className="pc-held-actions">
+        {(held?.actions ?? []).map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            className={action.destructive ? 'danger' : undefined}
+            disabled={busy || onHeldAction === undefined}
+            onClick={() => {
+              void run(action)
+            }}
+          >
+            {confirming === action.id ? `confirm — ${action.label}?` : action.label}
+          </button>
+        ))}
+        {onContextMenu !== undefined ? (
+          <button
+            type="button"
+            className="more"
+            title="More moderation actions (hide, ban, timeout)"
+            aria-label="More moderation actions"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect()
+              onContextMenu(message, rect.left, rect.bottom)
+            }}
+          >
+            ⋮
+          </button>
+        ) : null}
+      </div>
+      {error !== undefined ? <div className="pc-held-err">{error}</div> : null}
+    </div>
+  )
+}
+
+/**
  * A single chat line. Memoized: a fast chat re-renders its column on every incoming message and on
  * every keystroke in the composer, so re-running the regex-heavy fragment rendering for all ~500
  * buffered rows each time would starve the main thread (and the autoscroll). With stable `message`,
@@ -161,6 +279,7 @@ export const MessageRow = memo(function MessageRow({
   palette,
   revealDeleted,
   onContextMenu,
+  onHeldAction,
   originLabel,
   originColor,
   onOriginClick,
@@ -176,6 +295,19 @@ export const MessageRow = memo(function MessageRow({
   const time = clockHM(message.timestamp)
   const name = message.author.displayName
   const highlight = message.highlight
+
+  // A YouTube automod "held for review" message renders as its own card with inline approve/remove
+  // actions; the ⋮ menu (handleContextMenu) still offers per-author moderation (hide/ban/timeout).
+  if (message.held !== undefined) {
+    return (
+      <HeldCard
+        message={message}
+        palette={palette}
+        onContextMenu={onContextMenu}
+        onHeldAction={onHeldAction}
+      />
+    )
+  }
 
   if (highlight?.kind === 'superchat' || highlight?.kind === 'supersticker') {
     const base = highlight.color ?? '#1976d2'

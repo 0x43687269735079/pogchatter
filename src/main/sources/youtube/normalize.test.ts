@@ -515,3 +515,75 @@ describe('YouTube membership messages', () => {
     ])
   })
 })
+
+function heldAction(overrides: Record<string, unknown> = {}): RawAction {
+  return {
+    addChatItemAction: {
+      item: {
+        liveChatAutoModMessageRenderer: {
+          id: 'held-1',
+          timestampUsec: '1700000000000000',
+          headerText: { simpleText: 'Held for review' },
+          contextMenuEndpoint: { liveChatItemContextMenuEndpoint: { params: 'MENU' } },
+          autoModeratedItem: {
+            liveChatTextMessageRenderer: {
+              id: 'inner-1',
+              authorName: { simpleText: 'Spammer' },
+              authorExternalChannelId: 'UCspam',
+              timestampUsec: '1700000000000000',
+              message: { runs: [{ text: 'questionable' }] }
+            }
+          },
+          moderationButtons: [
+            {
+              buttonRenderer: {
+                text: { simpleText: 'Allow' },
+                icon: { iconType: 'CHECK' },
+                serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APPROVE' } }
+              }
+            },
+            {
+              buttonRenderer: {
+                text: { simpleText: 'Remove' },
+                icon: { iconType: 'DELETE' },
+                serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REMOVE' } }
+              }
+            }
+          ],
+          ...overrides
+        }
+      }
+    }
+  } as RawAction
+}
+
+describe('YouTube held-for-review messages', () => {
+  it('surfaces the wrapped message with the review header and inline actions', () => {
+    const { messages } = normalizeAction('src', heldAction())
+    expect(messages).toHaveLength(1)
+    const message = messages[0]
+    // The held container owns the id and the moderation menu; the author/text come from the wrapped item.
+    expect(message?.id).toBe('held-1')
+    expect(message?.menuToken).toBe('MENU')
+    expect(message?.author.displayName).toBe('Spammer')
+    expect(message?.fragments).toEqual([{ type: 'text', text: 'questionable' }])
+    expect(message?.held?.headerText).toBe('Held for review')
+    expect(
+      message?.held?.actions.map((action) => [action.label, action.destructive, action.id])
+    ).toEqual([
+      ['Allow', false, 'CHECK'],
+      ['Remove', true, 'DELETE']
+    ])
+    expect(message?.held?.actions.every((action) => action.token.length > 0)).toBe(true)
+  })
+
+  it('is a recognized action, not a parse-health unknown', () => {
+    expect(unknownActionKeys(heldAction())).toEqual([])
+  })
+
+  it('still surfaces the held message when YouTube omits the inline buttons', () => {
+    const { messages } = normalizeAction('src', heldAction({ moderationButtons: undefined }))
+    expect(messages[0]?.held?.actions).toEqual([])
+    expect(messages[0]?.author.displayName).toBe('Spammer')
+  })
+})

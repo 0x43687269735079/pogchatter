@@ -1224,8 +1224,9 @@ body,
   flex: 0 0 auto;
   line-height: 1.4;
 }
-/* Auto-growing composer: one line by default, expands with the draft up to four lines (capped by
-   max-height), then scrolls. The line metrics here must match MAX_INPUT_LINES in ChannelColumn. */
+/* Auto-growing composer: one line by default, expands with the draft, then scrolls. The four-line
+   cap lives entirely here in `max-height` below (line-height × 4); ChannelColumn's resizeInput only
+   sets height to scrollHeight and lets this max-height clamp it. */
 .pc-inrow textarea {
   flex: 1;
   background: transparent;

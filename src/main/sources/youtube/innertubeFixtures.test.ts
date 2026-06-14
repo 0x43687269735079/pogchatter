@@ -19,6 +19,7 @@ import {
 function handlers(over: Partial<LiveChatHandlers> = {}): LiveChatHandlers {
   return {
     onMessages: vi.fn(),
+    onReplacements: vi.fn(),
     onClears: vi.fn(),
     onEnd: vi.fn(),
     onStall: vi.fn(),

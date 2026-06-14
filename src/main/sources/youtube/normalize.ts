@@ -63,10 +63,14 @@ interface RawRenderer {
   contextMenuEndpoint?: { liveChatItemContextMenuEndpoint?: { params?: string } }
   /** On a `liveChatAutoModMessageRenderer`: the wrapped message held for review. */
   autoModeratedItem?: RawItem
-  /** On a `liveChatAutoModMessageRenderer`: YouTube's inline approve/remove buttons (raw JSON). */
+  /** On a held renderer: YouTube's Show/Hide review buttons (raw JSON). */
   moderationButtons?: unknown
+  /** On a held (and now any moderated) renderer: per-author Remove/timeout/hide buttons (raw JSON). */
+  inlineActionButtons?: unknown
   /** On a `liveChatAutoModMessageRenderer`: the "held for review" explanatory line. */
   headerText?: RawText
+  /** On a replaced message that was hidden ("Message … hidden by @mod") — present = deleted state. */
+  deletedStateMessage?: RawText
   /**
    * On a reply to a Super Chat, a chip whose tap opens the donation's reply thread and whose title
    * is the donor's handle — the only marker that ties a reply back to the donation it answers.
@@ -104,6 +108,9 @@ export interface RawAction {
   removeChatItemAction?: { targetItemId?: string }
   removeChatItemByAuthorAction?: { externalChannelId?: string }
   replayChatItemAction?: { actions?: RawAction[] }
+  // Replace a message in place (held → approved text, or → a hidden deleted-state placeholder); the
+  // replacement renderer carries the same id as the target.
+  replaceChatItemAction?: { targetItemId?: string; replacementItem?: RawItem }
 }
 
 function pickThumb(thumbs: RawThumbs | undefined): string {
@@ -306,6 +313,11 @@ function baseMessage(sourceId: string, renderer: RawRenderer): ChatMessage {
   if (menuToken !== undefined && menuToken !== '') {
     message.menuToken = menuToken
   }
+  // A replaced message YouTube has hidden carries a "Message … hidden by @mod" deletedStateMessage;
+  // render it like any moderator-deleted line (dimmed/struck, or hidden per the reveal setting).
+  if (renderer.deletedStateMessage !== undefined) {
+    message.deleted = true
+  }
   const reply = donationReply(renderer)
   if (reply !== undefined) {
     message.reply = reply
@@ -328,17 +340,14 @@ function heldMessage(sourceId: string, outer: RawRenderer): ChatMessage {
   // Build the visible row from the wrapped item (author + text), falling back to the outer renderer
   // if YouTube ever omits the inner one.
   const message = baseMessage(sourceId, innerRenderer ?? outer)
-  // The held container owns the id and the moderation menu — a later approve/remove (and the
-  // markChatItemAsDeleted that clears the held card on approval) reference the container, not the
-  // wrapped item.
+  // The held container owns the id — a later replaceChatItemAction (approve → text, or hide →
+  // deleted state) targets it. The wrapped item carries the same id in practice; prefer the outer
+  // one explicitly. The ⋮ menu token comes from the wrapped item (baseMessage already set it); the
+  // held renderer has no top-level context menu of its own.
   if (outer.id !== undefined && outer.id !== '') {
     message.id = outer.id
   }
-  const menuToken = outer.contextMenuEndpoint?.liveChatItemContextMenuEndpoint?.params
-  if (menuToken !== undefined && menuToken !== '') {
-    message.menuToken = menuToken
-  }
-  const held: HeldReview = { actions: parseHeldActions(outer.moderationButtons) }
+  const held: HeldReview = { actions: parseHeldActions(outer) }
   const header = textToString(outer.headerText)
   if (header !== '') {
     held.headerText = header
@@ -360,15 +369,16 @@ function applyAmount(
   return message
 }
 
-/** Expand one raw chat action into normalized messages and clear targets. */
+/** Expand one raw chat action into normalized new messages, in-place replacements, and clears. */
 export function normalizeAction(
   sourceId: string,
   action: RawAction
-): { messages: ChatMessage[]; clears: ClearTarget[] } {
+): { messages: ChatMessage[]; replacements: ChatMessage[]; clears: ClearTarget[] } {
   const messages: ChatMessage[] = []
+  const replacements: ChatMessage[] = []
   const clears: ClearTarget[] = []
-  collect(sourceId, action, messages, clears)
-  return { messages, clears }
+  collect(sourceId, action, messages, replacements, clears)
+  return { messages, replacements, clears }
 }
 
 // The action types collect() consumes — must mirror RawAction. Anything else at an action's top
@@ -379,7 +389,8 @@ const KNOWN_ACTION_KEYS = new Set([
   'markChatItemsByAuthorAsDeletedAction',
   'removeChatItemAction',
   'removeChatItemByAuthorAction',
-  'replayChatItemAction'
+  'replayChatItemAction',
+  'replaceChatItemAction'
 ])
 // Metadata that rides alongside an action key on the same object without being an action type.
 const ACTION_METADATA_KEYS = new Set(['clickTrackingParams'])
@@ -410,6 +421,14 @@ export function unknownActionKeys(action: RawAction): string[] {
   return unknown
 }
 
+function reportUnknownItemKeys(item: RawItem | undefined, out: string[]): void {
+  for (const itemKey of Object.keys(item ?? {})) {
+    if (!KNOWN_ITEM_KEYS.has(itemKey) && !IGNORED_ITEM_KEYS.has(itemKey)) {
+      out.push(itemKey)
+    }
+  }
+}
+
 function collectUnknownKeys(action: RawAction, out: string[]): void {
   for (const key of Object.keys(action)) {
     if (ACTION_METADATA_KEYS.has(key)) {
@@ -422,11 +441,9 @@ function collectUnknownKeys(action: RawAction, out: string[]): void {
         collectUnknownKeys(inner, out)
       }
     } else if (key === 'addChatItemAction') {
-      for (const itemKey of Object.keys(action.addChatItemAction?.item ?? {})) {
-        if (!KNOWN_ITEM_KEYS.has(itemKey) && !IGNORED_ITEM_KEYS.has(itemKey)) {
-          out.push(itemKey)
-        }
-      }
+      reportUnknownItemKeys(action.addChatItemAction?.item, out)
+    } else if (key === 'replaceChatItemAction') {
+      reportUnknownItemKeys(action.replaceChatItemAction?.replacementItem, out)
     }
   }
 }
@@ -435,11 +452,27 @@ function collect(
   sourceId: string,
   action: RawAction,
   messages: ChatMessage[],
+  replacements: ChatMessage[],
   clears: ClearTarget[]
 ): void {
   if (action.replayChatItemAction !== undefined) {
     for (const inner of action.replayChatItemAction.actions ?? []) {
-      collect(sourceId, inner, messages, clears)
+      collect(sourceId, inner, messages, replacements, clears)
+    }
+    return
+  }
+  if (action.replaceChatItemAction !== undefined) {
+    const target = action.replaceChatItemAction.targetItemId
+    const item = action.replaceChatItemAction.replacementItem
+    if (target !== undefined && item !== undefined) {
+      // Normalize the replacement through the same item dispatch, then key it to the target id so it
+      // updates that row in place (held → approved text, or → a hidden deleted-state placeholder).
+      const replaced: ChatMessage[] = []
+      collect(sourceId, { addChatItemAction: { item } }, replaced, [], clears)
+      for (const replacement of replaced) {
+        replacement.id = target
+        replacements.push(replacement)
+      }
     }
     return
   }

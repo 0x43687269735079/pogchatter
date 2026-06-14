@@ -38,6 +38,7 @@ function liveResponse(actions: unknown[], continuation = 'next', timeoutMs = 500
 function handlers(over: Partial<LiveChatHandlers> = {}): LiveChatHandlers {
   return {
     onMessages: vi.fn(),
+    onReplacements: vi.fn(),
     onClears: vi.fn(),
     onEnd: vi.fn(),
     onStall: vi.fn(),

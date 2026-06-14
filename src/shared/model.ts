@@ -506,6 +506,12 @@ export type TwitchLoginPrompt =
 /** Events pushed from the main process to the renderer. */
 export type ChatEvent =
   | { kind: 'message'; channelId: string; message: ChatMessage }
+  /**
+   * Replace an existing message in place, keyed by `message.id` (YouTube `replaceChatItemAction` —
+   * e.g. an automod held message becoming the approved text, or a hidden deleted-state placeholder).
+   * Updates the buffered row without re-firing alerts or moving it; ignored if the row is gone.
+   */
+  | { kind: 'replace'; channelId: string; message: ChatMessage }
   | { kind: 'status'; channelId: string; status: SourceStatus }
   /** The signed-in user's ability to send here changed (reason set = blocked, undefined = allowed). */
   | { kind: 'sendRestriction'; channelId: string; reason: string | undefined }

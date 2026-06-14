@@ -10,6 +10,8 @@ import type {
 
 export interface ChatSourceEventMap {
   message: [message: ChatMessage]
+  /** Replace a buffered message in place, keyed by `message.id` (YouTube `replaceChatItemAction`). */
+  replace: [message: ChatMessage]
   status: [status: SourceStatus]
   clear: [target: ClearTarget]
   /** The signed-in user's send eligibility changed (reason set = blocked, undefined = allowed). */
@@ -118,6 +120,11 @@ export abstract class BaseChatSource implements ChatSource {
 
   protected emitMessage(message: ChatMessage): void {
     this.emitter.emit('message', message)
+  }
+
+  /** Replace a buffered message in place by id (YouTube held-message approve/hide, edits). */
+  protected emitReplace(message: ChatMessage): void {
+    this.emitter.emit('replace', message)
   }
 
   protected setStatus(status: SourceStatus): void {

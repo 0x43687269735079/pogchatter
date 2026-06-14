@@ -266,6 +266,8 @@ export function resolveConfirmDialog(endpoint: RawEndpoint): RawEndpoint | undef
 interface RawButtonRenderer {
   text?: RawText
   icon?: { iconType?: string }
+  accessibility?: { label?: string }
+  tooltip?: string
   serviceEndpoint?: RawEndpoint
   navigationEndpoint?: RawEndpoint
   command?: RawEndpoint
@@ -274,6 +276,15 @@ interface RawButtonRenderer {
 /** The endpoint a button replays — YouTube puts it under any of these keys. */
 function buttonEndpoint(renderer: RawButtonRenderer): RawEndpoint | undefined {
   return renderer.serviceEndpoint ?? renderer.navigationEndpoint ?? renderer.command
+}
+
+/**
+ * A button's label. The held message's Show/Hide buttons carry a `text`; its inline per-author
+ * buttons (Remove / timeout / hide-user) carry only an accessibility label + tooltip, so fall back
+ * to those rather than dropping the button for an empty label.
+ */
+function buttonLabel(renderer: RawButtonRenderer): string {
+  return menuText(renderer.text) || (renderer.accessibility?.label ?? renderer.tooltip ?? '')
 }
 
 /** Encode a raw button endpoint into the opaque token the renderer hands back to runHeldAction. */
@@ -292,35 +303,52 @@ export function decodeHeldToken(token: string): RawEndpoint | undefined {
 }
 
 /**
- * The inline approve/remove actions on a YouTube automod "held for review" message, from its raw
- * `moderationButtons` (each a `buttonRenderer` with a label, icon, and the endpoint to replay). The
- * endpoint is replayed verbatim later (see {@link decodeHeldToken} + the manager), so this never
- * constructs a moderation call — it only carries YouTube's own. A purchase CTA (should one ever
- * appear) is dropped, like the context menu. `buttons` is untyped raw JSON.
+ * The actions on a YouTube automod "held for review" message, from the raw renderer. Two groups:
+ * `moderationButtons` is the review decision (Show / keep Hidden) — reversible, so not destructive;
+ * `inlineActionButtons` is the per-author moderation YouTube hands the held item (Remove / put in
+ * timeout / hide user) — destructive, gated behind a confirm. Each button's endpoint is replayed
+ * verbatim later (see {@link decodeHeldToken} + the manager), so this never constructs a moderation
+ * call. A purchase CTA (should one ever appear) is dropped, like the context menu.
  */
-export function parseHeldActions(buttons: unknown): HeldAction[] {
+export function parseHeldActions(renderer: unknown): HeldAction[] {
+  if (!isObject(renderer)) {
+    return []
+  }
   const actions: HeldAction[] = []
+  // Review toggle first (Show, then Hide), then the per-author moderation buttons.
+  collectHeldButtons(renderer['moderationButtons'], 'review', false, actions)
+  collectHeldButtons(renderer['inlineActionButtons'], 'mod', true, actions)
+  return actions
+}
+
+function collectHeldButtons(
+  buttons: unknown,
+  prefix: string,
+  perAuthor: boolean,
+  out: HeldAction[]
+): void {
   if (!Array.isArray(buttons)) {
-    return actions
+    return
   }
   buttons.forEach((button, index) => {
     const renderer = isObject(button) ? (button['buttonRenderer'] as RawButtonRenderer) : undefined
     const endpoint = isObject(renderer) ? buttonEndpoint(renderer) : undefined
-    const label = menuText(renderer?.text)
+    const label = renderer === undefined ? '' : buttonLabel(renderer)
     if (renderer === undefined || endpoint === undefined || label === '') {
       return
     }
-    if (isPurchase(renderer.icon?.iconType, label)) {
+    const iconType = renderer.icon?.iconType
+    if (isPurchase(iconType, label)) {
       return
     }
-    actions.push({
-      id: renderer.icon?.iconType ?? `held-${index}`,
+    out.push({
+      id: iconType ?? `${prefix}-${index}`,
       label,
-      destructive: isDestructive(renderer.icon?.iconType, label),
+      // The Show/Hide toggle is reversible (no confirm); per-author actions confirm by icon/label.
+      destructive: perAuthor && isDestructive(iconType, label),
       token: encodeHeldToken(endpoint)
     })
   })
-  return actions
 }
 
 /**

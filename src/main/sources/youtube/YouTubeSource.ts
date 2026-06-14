@@ -425,6 +425,15 @@ export class YouTubeSource extends BaseChatSource {
           this.emitMessage(message)
         }
       },
+      onReplacements: (replacements) => {
+        if (this.#isStale(generation)) {
+          return
+        }
+        for (const message of replacements) {
+          message.fragments = this.#emotes.tokenize(message.fragments, 'youtube', this.#channelId)
+          this.emitReplace(message)
+        }
+      },
       onClears: (clears) => {
         if (this.#isStale(generation)) {
           return

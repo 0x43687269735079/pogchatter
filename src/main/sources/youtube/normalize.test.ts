@@ -516,6 +516,27 @@ describe('YouTube membership messages', () => {
   })
 })
 
+// Mirrors the real auto-mod renderer (capture auto-moderation/1-...-response): Show/Hide carry a
+// `text`, while the per-author inline buttons carry only an icon + accessibility label, and the
+// wrapped item (not the outer renderer) holds the ⋮ context menu.
+function modButton(label: string, params: string): unknown {
+  return {
+    buttonRenderer: {
+      text: { simpleText: label },
+      serviceEndpoint: { moderateLiveChatEndpoint: { params } }
+    }
+  }
+}
+function inlineButton(iconType: string, label: string, params: string): unknown {
+  return {
+    buttonRenderer: {
+      icon: { iconType },
+      accessibility: { label },
+      tooltip: label,
+      serviceEndpoint: { moderateLiveChatEndpoint: { params } }
+    }
+  }
+}
 function heldAction(overrides: Record<string, unknown> = {}): RawAction {
   return {
     addChatItemAction: {
@@ -523,32 +544,22 @@ function heldAction(overrides: Record<string, unknown> = {}): RawAction {
         liveChatAutoModMessageRenderer: {
           id: 'held-1',
           timestampUsec: '1700000000000000',
-          headerText: { simpleText: 'Held for review' },
-          contextMenuEndpoint: { liveChatItemContextMenuEndpoint: { params: 'MENU' } },
+          headerText: { runs: [{ text: 'This message is held for review.' }] },
           autoModeratedItem: {
             liveChatTextMessageRenderer: {
-              id: 'inner-1',
+              id: 'held-1',
               authorName: { simpleText: 'Spammer' },
               authorExternalChannelId: 'UCspam',
               timestampUsec: '1700000000000000',
-              message: { runs: [{ text: 'questionable' }] }
+              message: { runs: [{ text: 'questionable' }] },
+              contextMenuEndpoint: { liveChatItemContextMenuEndpoint: { params: 'MENU' } }
             }
           },
-          moderationButtons: [
-            {
-              buttonRenderer: {
-                text: { simpleText: 'Allow' },
-                icon: { iconType: 'CHECK' },
-                serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APPROVE' } }
-              }
-            },
-            {
-              buttonRenderer: {
-                text: { simpleText: 'Remove' },
-                icon: { iconType: 'DELETE' },
-                serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REMOVE' } }
-              }
-            }
+          moderationButtons: [modButton('Show', 'APPROVE'), modButton('Hide', 'KEEPHIDDEN')],
+          inlineActionButtons: [
+            inlineButton('DELETE', 'Remove', 'REMOVE'),
+            inlineButton('HOURGLASS', 'Put user in timeout', 'TIMEOUT'),
+            inlineButton('REMOVE_CIRCLE', 'Hide user on this channel', 'BAN')
           ],
           ...overrides
         }
@@ -558,21 +569,25 @@ function heldAction(overrides: Record<string, unknown> = {}): RawAction {
 }
 
 describe('YouTube held-for-review messages', () => {
-  it('surfaces the wrapped message with the review header and inline actions', () => {
+  it('surfaces the wrapped message, the review header, and all inline actions', () => {
     const { messages } = normalizeAction('src', heldAction())
     expect(messages).toHaveLength(1)
     const message = messages[0]
-    // The held container owns the id and the moderation menu; the author/text come from the wrapped item.
+    // The held container owns the id; the author/text/menu come from the wrapped item.
     expect(message?.id).toBe('held-1')
     expect(message?.menuToken).toBe('MENU')
     expect(message?.author.displayName).toBe('Spammer')
     expect(message?.fragments).toEqual([{ type: 'text', text: 'questionable' }])
-    expect(message?.held?.headerText).toBe('Held for review')
+    expect(message?.held?.headerText).toBe('This message is held for review.')
+    // Review toggle (Show/Hide) is reversible → not destructive; the per-author actions confirm.
     expect(
       message?.held?.actions.map((action) => [action.label, action.destructive, action.id])
     ).toEqual([
-      ['Allow', false, 'CHECK'],
-      ['Remove', true, 'DELETE']
+      ['Show', false, 'review-0'],
+      ['Hide', false, 'review-1'],
+      ['Remove', true, 'DELETE'],
+      ['Put user in timeout', true, 'HOURGLASS'],
+      ['Hide user on this channel', true, 'REMOVE_CIRCLE']
     ])
     expect(message?.held?.actions.every((action) => action.token.length > 0)).toBe(true)
   })
@@ -582,8 +597,66 @@ describe('YouTube held-for-review messages', () => {
   })
 
   it('still surfaces the held message when YouTube omits the inline buttons', () => {
-    const { messages } = normalizeAction('src', heldAction({ moderationButtons: undefined }))
+    const { messages } = normalizeAction(
+      'src',
+      heldAction({ moderationButtons: undefined, inlineActionButtons: undefined })
+    )
     expect(messages[0]?.held?.actions).toEqual([])
     expect(messages[0]?.author.displayName).toBe('Spammer')
+  })
+})
+
+describe('YouTube replaceChatItemAction', () => {
+  it('approves a held message into a normal message keyed to the held id', () => {
+    const action = {
+      replaceChatItemAction: {
+        targetItemId: 'held-1',
+        replacementItem: {
+          liveChatTextMessageRenderer: {
+            id: 'held-1',
+            authorName: { simpleText: 'Spammer' },
+            timestampUsec: '1700000000000000',
+            message: { runs: [{ text: 'questionable' }] }
+          }
+        }
+      }
+    } as RawAction
+    const { messages, replacements, clears } = normalizeAction('src', action)
+    expect(messages).toEqual([])
+    expect(clears).toEqual([])
+    expect(replacements).toHaveLength(1)
+    expect(replacements[0]?.id).toBe('held-1')
+    expect(replacements[0]?.held).toBeUndefined()
+    expect(replacements[0]?.deleted).toBeUndefined()
+  })
+
+  it('hides a held message into a deleted-state replacement', () => {
+    const action = {
+      replaceChatItemAction: {
+        targetItemId: 'held-1',
+        replacementItem: {
+          liveChatTextMessageRenderer: {
+            id: 'held-1',
+            authorName: { simpleText: 'Spammer' },
+            timestampUsec: '1700000000000000',
+            message: { runs: [{ text: 'questionable' }] },
+            deletedStateMessage: { runs: [{ text: 'hidden by @mod' }] }
+          }
+        }
+      }
+    } as RawAction
+    const { replacements } = normalizeAction('src', action)
+    expect(replacements[0]?.deleted).toBe(true)
+    expect(replacements[0]?.fragments).toEqual([{ type: 'text', text: 'questionable' }])
+  })
+
+  it('is a recognized action, not a parse-health unknown', () => {
+    const action = {
+      replaceChatItemAction: {
+        targetItemId: 'x',
+        replacementItem: { liveChatTextMessageRenderer: { id: 'x' } }
+      }
+    } as RawAction
+    expect(unknownActionKeys(action)).toEqual([])
   })
 })

@@ -71,6 +71,8 @@ interface RawLiveChatResponse {
 
 export interface LiveChatHandlers {
   onMessages: (messages: ChatMessage[]) => void
+  /** In-place message replacements (held → approved/hidden), keyed by message id. */
+  onReplacements: (replacements: ChatMessage[]) => void
   onClears: (clears: ClearTarget[]) => void
   onEnd: () => void
   /** Fired once after several consecutive poll failures, so the source can surface an error. */
@@ -453,6 +455,7 @@ export class LiveChatReader {
   /** Normalize and emit the batch; returns the number of chat messages produced. */
   #dispatch(actions: RawAction[]): number {
     const messages: ChatMessage[] = []
+    const replacements: ChatMessage[] = []
     const clears: ClearTarget[] = []
     const newUnknownTypes: string[] = []
     let batchKnown = 0
@@ -465,12 +468,16 @@ export class LiveChatReader {
       }
       const result = normalizeAction(this.#sourceId, action)
       messages.push(...result.messages)
+      replacements.push(...result.replacements)
       clears.push(...result.clears)
     }
     this.#warnUnknownTypes(newUnknownTypes)
     this.#trackDegradation(batchKnown, batchUnknown)
     if (messages.length > 0) {
       this.#handlers.onMessages(messages)
+    }
+    if (replacements.length > 0) {
+      this.#handlers.onReplacements(replacements)
     }
     if (clears.length > 0) {
       this.#handlers.onClears(clears)

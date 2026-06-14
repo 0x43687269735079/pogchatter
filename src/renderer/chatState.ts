@@ -57,6 +57,15 @@ export function applyEventsToMessages(
       next[event.channelId] = [...(next[event.channelId] ?? []), event.message]
       touched.add(event.channelId)
       changed = true
+    } else if (event.kind === 'replace') {
+      // Update a buffered row in place (held → approved/hidden) without moving it. Ignore a
+      // replacement whose target is no longer buffered (already trimmed).
+      const list = next[event.channelId]
+      if (list === undefined || !list.some((m) => m.id === event.message.id)) {
+        continue
+      }
+      next[event.channelId] = list.map((m) => (m.id === event.message.id ? event.message : m))
+      changed = true
     } else if (event.kind === 'clear') {
       const list = next[event.channelId]
       if (!list) {

@@ -325,68 +325,95 @@ describe('timeoutOptions / timeoutParams', () => {
 })
 
 describe('parseHeldActions', () => {
-  const buttons = [
-    {
-      buttonRenderer: {
-        text: { simpleText: 'Allow' },
-        icon: { iconType: 'CHECK' },
-        serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
-      }
-    },
-    {
-      buttonRenderer: {
-        text: { simpleText: 'Remove' },
-        icon: { iconType: 'DELETE' },
-        // The moderate endpoint may be wrapped (e.g. in a command executor) — deepModerationParams finds it.
-        serviceEndpoint: {
-          commandExecutorCommand: { commands: [{ moderateLiveChatEndpoint: { params: 'REM' } }] }
-        }
-      }
-    }
-  ]
-
-  it('parses label/destructive/id and round-trips the endpoint through the token', () => {
-    const actions = parseHeldActions(buttons)
-    expect(actions.map((action) => [action.label, action.destructive, action.id])).toEqual([
-      ['Allow', false, 'CHECK'],
-      ['Remove', true, 'DELETE']
-    ])
-    expect(deepModerationParams(decodeHeldToken(actions[0]?.token ?? ''))).toBe('APP')
-    expect(deepModerationParams(decodeHeldToken(actions[1]?.token ?? ''))).toBe('REM')
-  })
-
-  it('flags a destructive action by its locale-independent icon, not just an English label', () => {
-    // A non-English moderator account gets a localized "Remove" label; the DELETE icon is stable.
-    const actions = parseHeldActions([
+  // The real held renderer (capture auto-moderation/1): Show/Hide carry a `text`; the per-author
+  // inline buttons carry only an icon + accessibility label.
+  const renderer = {
+    moderationButtons: [
       {
         buttonRenderer: {
-          text: { simpleText: 'Entfernen' },
-          icon: { iconType: 'DELETE' },
-          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REM' } }
+          text: { simpleText: 'Show' },
+          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
+        }
+      },
+      {
+        buttonRenderer: {
+          text: { simpleText: 'Hide' },
+          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'KEEP' } }
         }
       }
+    ],
+    inlineActionButtons: [
+      {
+        buttonRenderer: {
+          icon: { iconType: 'DELETE' },
+          accessibility: { label: 'Remove' },
+          tooltip: 'Remove',
+          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REM' } }
+        }
+      },
+      {
+        buttonRenderer: {
+          icon: { iconType: 'REMOVE_CIRCLE' },
+          accessibility: { label: 'Hide user on this channel' },
+          // The moderate endpoint may be wrapped (command executor) — deepModerationParams finds it.
+          serviceEndpoint: {
+            commandExecutorCommand: { commands: [{ moderateLiveChatEndpoint: { params: 'BAN' } }] }
+          }
+        }
+      }
+    ]
+  }
+
+  it('parses the review toggle and per-author actions with labels, ids, and destructive flags', () => {
+    const actions = parseHeldActions(renderer)
+    expect(actions.map((action) => [action.label, action.destructive, action.id])).toEqual([
+      // Show/Hide come from moderationButtons (reversible → not destructive, index ids).
+      ['Show', false, 'review-0'],
+      ['Hide', false, 'review-1'],
+      // Remove/ban come from inlineActionButtons (icon ids, destructive, accessibility labels).
+      ['Remove', true, 'DELETE'],
+      ['Hide user on this channel', true, 'REMOVE_CIRCLE']
     ])
+    expect(deepModerationParams(decodeHeldToken(actions[0]?.token ?? ''))).toBe('APP')
+    expect(deepModerationParams(decodeHeldToken(actions[3]?.token ?? ''))).toBe('BAN')
+  })
+
+  it('keeps a per-author action destructive by its icon even with a localized label', () => {
+    // A non-English moderator account gets a localized "Remove" label; the DELETE icon is stable.
+    const actions = parseHeldActions({
+      inlineActionButtons: [
+        {
+          buttonRenderer: {
+            icon: { iconType: 'DELETE' },
+            accessibility: { label: 'Entfernen' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REM' } }
+          }
+        }
+      ]
+    })
     expect(actions[0]?.destructive).toBe(true)
   })
 
-  it('falls back to an index id, replays a non-moderate endpoint verbatim, and drops endpoint-less buttons', () => {
-    const actions = parseHeldActions([
-      {},
-      { buttonRenderer: { text: { simpleText: 'No endpoint' } } },
-      {
-        buttonRenderer: {
-          text: { simpleText: 'Open' },
-          navigationEndpoint: { urlEndpoint: { url: 'x' } }
+  it('drops endpoint-less buttons and replays a non-moderate endpoint verbatim', () => {
+    const actions = parseHeldActions({
+      moderationButtons: [
+        {},
+        { buttonRenderer: { text: { simpleText: 'No endpoint' } } },
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Open' },
+            navigationEndpoint: { urlEndpoint: { url: 'x' } }
+          }
         }
-      }
-    ])
+      ]
+    })
     expect(actions).toHaveLength(1)
-    expect(actions[0]?.id).toBe('held-2')
+    expect(actions[0]?.id).toBe('review-2')
     // No moderate params → the executor replays the endpoint verbatim.
     expect(deepModerationParams(decodeHeldToken(actions[0]?.token ?? ''))).toBeUndefined()
   })
 
-  it('ignores a non-array and never throws', () => {
+  it('ignores a non-object renderer and never throws', () => {
     expect(parseHeldActions(undefined)).toEqual([])
     expect(parseHeldActions({})).toEqual([])
   })

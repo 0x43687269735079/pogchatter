@@ -248,20 +248,6 @@ function HeldCard({
             {confirming === action.id ? `confirm — ${action.label}?` : action.label}
           </button>
         ))}
-        {onContextMenu !== undefined ? (
-          <button
-            type="button"
-            className="more"
-            title="More moderation actions (hide, ban, timeout)"
-            aria-label="More moderation actions"
-            onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect()
-              onContextMenu(message, rect.left, rect.bottom)
-            }}
-          >
-            ⋮
-          </button>
-        ) : null}
       </div>
       {error !== undefined ? <div className="pc-held-err">{error}</div> : null}
     </div>

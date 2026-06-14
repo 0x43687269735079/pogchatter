@@ -287,6 +287,10 @@ function debugLogChatEvent(event: ChatEvent): void {
     debugMessageCounts.set(event.channelId, (debugMessageCounts.get(event.channelId) ?? 0) + 1)
     return
   }
+  if (event.kind === 'replace') {
+    debugLog('replace', event.channelId, { id: event.message.id })
+    return
+  }
   if (event.kind === 'status') {
     const { status } = event
     debugLog('status', event.channelId, {

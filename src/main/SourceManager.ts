@@ -44,6 +44,9 @@ export class SourceManager {
     const onMessage = (message: ChatMessage): void => {
       this.#onEvent({ kind: 'message', channelId: source.id, message })
     }
+    const onReplace = (message: ChatMessage): void => {
+      this.#onEvent({ kind: 'replace', channelId: source.id, message })
+    }
     const onStatus = (status: SourceStatus): void => {
       this.#onEvent({ kind: 'status', channelId: source.id, status })
     }
@@ -69,6 +72,7 @@ export class SourceManager {
       this.#onEvent({ kind: 'authorUpdate', channelId: source.id, login, avatarUrl })
     }
     source.on('message', onMessage)
+    source.on('replace', onReplace)
     source.on('status', onStatus)
     source.on('clear', onClear)
     source.on('restriction', onRestriction)
@@ -77,6 +81,7 @@ export class SourceManager {
     source.on('authorUpdate', onAuthorUpdate)
     this.#detachers.set(source.id, () => {
       source.off('message', onMessage)
+      source.off('replace', onReplace)
       source.off('status', onStatus)
       source.off('clear', onClear)
       source.off('restriction', onRestriction)

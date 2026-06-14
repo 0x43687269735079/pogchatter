@@ -1,5 +1,4 @@
 import {
-  type FormEvent,
   type ReactElement,
   useCallback,
   useEffect,
@@ -79,7 +78,7 @@ export function ChannelColumn({
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const emoteButtonRef = useRef<HTMLButtonElement>(null)
   // Pin to bottom only when the user is already there, so scrolling up to read
   // history isn't yanked back down by incoming messages.
@@ -208,6 +207,28 @@ export function ChannelColumn({
     }
   }, [])
 
+  // Auto-grow the composer with the draft: reset to measure, then size to content (the `.pc-inrow
+  // textarea` max-height caps it at four lines and scrolls beyond). A taller composer shrinks the
+  // message viewport, so re-pin to the bottom when the user was already there.
+  const resizeInput = useCallback(() => {
+    const el = inputRef.current
+    if (el === null) {
+      return
+    }
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+    const body = bodyRef.current
+    if (body !== null && atBottomRef.current) {
+      body.scrollTop = body.scrollHeight
+    }
+  }, [])
+
+  // Resize whenever the draft changes — typing, send (cleared back to one line), emoji insertion,
+  // and reply-mention prepend all flow through `draft`. Layout effect avoids a one-frame flicker.
+  useLayoutEffect(() => {
+    resizeInput()
+  }, [draft, resizeInput])
+
   // Stable so the memoized MessageRow list isn't invalidated every render (e.g. on each keystroke).
   const openContextMenu = useCallback((message: ChatMessage, x: number, y: number) => {
     setMenu({ message, x, y })
@@ -243,8 +264,7 @@ export function ChannelColumn({
     inputRef.current?.focus()
   }
 
-  async function handleSubmit(event: FormEvent): Promise<void> {
-    event.preventDefault()
+  async function submit(): Promise<void> {
     const text = draft.trim()
     if (text === '' || !canSend) {
       return
@@ -438,12 +458,14 @@ export function ChannelColumn({
         <form
           className={canSend ? 'pc-inrow' : 'pc-inrow ro'}
           onSubmit={(event) => {
-            void handleSubmit(event)
+            event.preventDefault()
+            void submit()
           }}
         >
           <span className="prompt">{canSend ? '›' : '✕'}</span>
-          <input
+          <textarea
             ref={inputRef}
+            rows={1}
             value={draft}
             disabled={!canSend}
             placeholder={canSend ? `message ${channel.label}` : readOnlyHint}
@@ -458,6 +480,13 @@ export function ChannelColumn({
             }}
             onKeyDown={(event) => {
               if (emoji.onKeyDown(event)) {
+                return
+              }
+              // Enter sends; Shift+Enter inserts a newline (the textarea's default). Don't send
+              // mid-IME-composition, where Enter only commits the candidate.
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                void submit()
                 return
               }
               // Escape layers: autocomplete first (above), then the open picker (picking

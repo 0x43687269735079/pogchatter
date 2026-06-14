@@ -1214,26 +1214,34 @@ body,
 }
 .pc-inrow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 0 var(--gut);
-  height: 42px;
+  padding: 11px var(--gut);
 }
 .pc-inrow .prompt {
   color: var(--accent);
   font-weight: 700;
   flex: 0 0 auto;
+  line-height: 1.4;
 }
-.pc-inrow input {
+/* Auto-growing composer: one line by default, expands with the draft, then scrolls. The four-line
+   cap lives entirely here in `max-height` below (line-height × 4); ChannelColumn's resizeInput only
+   sets height to scrollHeight and lets this max-height clamp it. */
+.pc-inrow textarea {
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
   color: var(--fg);
   font: inherit;
-  height: 100%;
+  line-height: 1.4;
+  resize: none;
+  padding: 0;
+  margin: 0;
+  max-height: calc(1.4em * 4);
+  overflow-y: auto;
 }
-.pc-inrow input::placeholder {
+.pc-inrow textarea::placeholder {
   color: var(--dimmer);
 }
 .pc-inrow.ro .prompt {

@@ -37,6 +37,14 @@ interface RawMenuItem {
  * confirmation dialog YouTube's own UI would show.
  */
 const DESTRUCTIVE = /\b(remove|delete|ban|hide|block|timeout|time out)\b/i
+// Locale-independent destructive icon types (held-message buttons are labelled in the moderator's
+// account language, so the English label regex alone would miss a non-English "Remove").
+const DESTRUCTIVE_ICON = /DELETE|REMOVE|BAN|HIDE|BLOCK|TRASH|SLASH/i
+
+/** Whether an action is destructive — by its locale-independent icon first, then its label. */
+function isDestructive(iconType: string | undefined, label: string): boolean {
+  return (iconType !== undefined && DESTRUCTIVE_ICON.test(iconType)) || DESTRUCTIVE.test(label)
+}
 
 /**
  * A purchase call-to-action YouTube mixes into a Super Chat / paid message's menu ("Buy your own
@@ -308,7 +316,7 @@ export function parseHeldActions(buttons: unknown): HeldAction[] {
     actions.push({
       id: renderer.icon?.iconType ?? `held-${index}`,
       label,
-      destructive: DESTRUCTIVE.test(label),
+      destructive: isDestructive(renderer.icon?.iconType, label),
       token: encodeHeldToken(endpoint)
     })
   })

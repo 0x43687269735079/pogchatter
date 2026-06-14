@@ -285,16 +285,25 @@ export function App(): ReactElement {
   }, [auth.youtube.loggedIn])
 
   // The built-in flagged-messages view exists whenever the moderation watchlist has a configured
-  // term, or a YouTube automod "held for review" message is present (only moderators receive those).
+  // term, or a YouTube automod "held for review" message has appeared (only moderators receive
+  // those).
   const hasModerationRules = settings.moderation.rules.some((rule) => rule.pattern.trim() !== '')
-  // Short-circuits when rules already make it visible; otherwise `.some` stops at the first held
-  // message, so the held scan only runs (and only fully) when there are no watchlist terms.
-  const flaggedVisible = useMemo(
-    () =>
-      hasModerationRules ||
-      Object.values(messages).some((list) => list.some((message) => message.held !== undefined)),
-    [hasModerationRules, messages]
-  )
+  // Latch on the first held message and stay visible for the session, rather than recomputing from
+  // current buffer contents — otherwise the column would unmount mid-review once the last held row
+  // ages out of the buffers (and mirrors how it stays open while rules exist). The scan runs only
+  // until it latches and only when no watchlist term already shows the view.
+  const [heldSeen, setHeldSeen] = useState(false)
+  useEffect(() => {
+    if (heldSeen || hasModerationRules) {
+      return
+    }
+    if (
+      Object.values(messages).some((list) => list.some((message) => message.held !== undefined))
+    ) {
+      setHeldSeen(true)
+    }
+  }, [messages, heldSeen, hasModerationRules])
+  const flaggedVisible = hasModerationRules || heldSeen
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
 

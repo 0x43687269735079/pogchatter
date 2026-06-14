@@ -355,6 +355,20 @@ describe('parseHeldActions', () => {
     expect(deepModerationParams(decodeHeldToken(actions[1]?.token ?? ''))).toBe('REM')
   })
 
+  it('flags a destructive action by its locale-independent icon, not just an English label', () => {
+    // A non-English moderator account gets a localized "Remove" label; the DELETE icon is stable.
+    const actions = parseHeldActions([
+      {
+        buttonRenderer: {
+          text: { simpleText: 'Entfernen' },
+          icon: { iconType: 'DELETE' },
+          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REM' } }
+        }
+      }
+    ])
+    expect(actions[0]?.destructive).toBe(true)
+  })
+
   it('falls back to an index id, replays a non-moderate endpoint verbatim, and drops endpoint-less buttons', () => {
     const actions = parseHeldActions([
       {},

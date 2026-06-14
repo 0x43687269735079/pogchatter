@@ -119,17 +119,18 @@ export function applyEventsToMessages(
 }
 
 /**
- * Trim a buffer to its newest `limit` rows, but carry flagged rows (watchlist hits awaiting
- * review) across the cut — newest {@link FLAGGED_RETENTION} of them — so the Flagged view doesn't
- * lose evidence to ordinary buffer turnover. Retained rows keep their chronological position
- * ahead of the kept tail.
+ * Trim a buffer to its newest `limit` rows, but carry rows awaiting a moderator's review across the
+ * cut — newest {@link FLAGGED_RETENTION} of them — so the Flagged view doesn't lose evidence to
+ * ordinary buffer turnover. That's watchlist hits (`flagged`) and YouTube automod "held for review"
+ * messages (`held`), the two categories the Flagged view surfaces. Retained rows keep their
+ * chronological position ahead of the kept tail.
  */
 function trimRetainingFlagged(list: ChatMessage[], limit: number): ChatMessage[] {
   const cut = list.length - limit
   const flagged: ChatMessage[] = []
   for (let i = 0; i < cut; i += 1) {
     const message = list[i]
-    if (message !== undefined && message.flagged === true) {
+    if (message !== undefined && (message.flagged === true || message.held !== undefined)) {
       flagged.push(message)
     }
   }

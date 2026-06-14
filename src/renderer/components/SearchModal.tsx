@@ -13,7 +13,6 @@ interface SearchModalProps {
   /** Most recent matches to keep (the configured per-chat buffer size). */
   cap: number
   palette: readonly string[]
-  revealDeleted: boolean
   /** Monitored authors (`<platform>:<authorId>`); the Set's identity changes only on toggle. */
   monitoredKeys?: ReadonlySet<string> | undefined
   /** Jump to a message's own column (also closes search). */
@@ -39,7 +38,6 @@ export function SearchModal({
   messagesByChannel,
   cap,
   palette,
-  revealDeleted,
   monitoredKeys,
   onJump,
   onUserActivity,
@@ -139,7 +137,6 @@ export function SearchModal({
                 key={`${message.channelId} ${message.id}`}
                 message={message}
                 palette={palette}
-                revealDeleted={revealDeleted}
                 onContextMenu={(target, x, y) => {
                   setMenu({ message: target, x, y })
                 }}

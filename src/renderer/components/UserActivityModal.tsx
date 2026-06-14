@@ -15,7 +15,6 @@ interface UserActivityModalProps {
   /** This author's messages in that chat (oldest first, including deleted), kept current by the parent. */
   messages: ChatMessage[]
   palette: readonly string[]
-  revealDeleted: boolean
   /** Monitored authors (`<platform>:<authorId>`), so this list accents their rows too. */
   monitoredKeys: ReadonlySet<string>
   /** Whether this card's author is currently monitored (drives the Monitor toggle). */
@@ -46,7 +45,6 @@ export function UserActivityModal({
   channelLabel,
   messages,
   palette,
-  revealDeleted,
   monitoredKeys,
   monitored,
   onToggleMonitor,
@@ -153,7 +151,6 @@ export function UserActivityModal({
               key={message.id}
               message={message}
               palette={palette}
-              revealDeleted={revealDeleted}
               monitoredKeys={monitoredKeys}
               onContextMenu={(target, x, y) => {
                 setMenu({ message: target, x, y })

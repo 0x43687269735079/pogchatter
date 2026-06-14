@@ -24,8 +24,6 @@ interface ChannelColumnProps {
   channel: ChannelInfo
   messages: ChatMessage[]
   canSend: boolean
-  /** Show deleted messages' original text (dimmed + struck) instead of "message removed". */
-  revealDeleted: boolean
   /** Timestamp of the last highlight in this column; a change briefly flashes the column. */
   pingedAt: number | undefined
   active: boolean
@@ -60,7 +58,6 @@ export function ChannelColumn({
   channel,
   messages,
   canSend,
-  revealDeleted,
   pingedAt,
   active,
   palette,
@@ -230,13 +227,12 @@ export function ChannelColumn({
           key={message.id}
           message={message}
           palette={palette}
-          revealDeleted={revealDeleted}
           onContextMenu={openContextMenu}
           onHeldAction={runHeldAction}
           monitoredKeys={monitoredKeys}
         />
       )),
-    [messages, palette, revealDeleted, openContextMenu, runHeldAction, monitoredKeys]
+    [messages, palette, openContextMenu, runHeldAction, monitoredKeys]
   )
 
   function startReply(message: ChatMessage): void {

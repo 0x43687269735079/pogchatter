@@ -13,7 +13,6 @@ interface DonationThreadModalProps {
   /** Donor handle for the header (the reply chip's title). */
   parentAuthor: string
   palette: readonly string[]
-  revealDeleted: boolean
   /** Monitored authors (`<platform>:<authorId>`); the Set's identity changes only on toggle. */
   monitoredKeys?: ReadonlySet<string> | undefined
   /** Jump to the source chat's column (also closes this view). */
@@ -37,7 +36,6 @@ export function DonationThreadModal({
   threadToken,
   parentAuthor,
   palette,
-  revealDeleted,
   monitoredKeys,
   onJump,
   onClose
@@ -89,7 +87,6 @@ export function DonationThreadModal({
               key={message.id}
               message={message}
               palette={palette}
-              revealDeleted={revealDeleted}
               monitoredKeys={monitoredKeys}
               onContextMenu={(target, x, y) => {
                 setMenu({ message: target, x, y })

@@ -137,8 +137,6 @@ function bitsColor(count: number): string {
 interface MessageRowProps {
   message: ChatMessage
   palette: readonly string[]
-  /** Show a deleted message's original text (dimmed + struck) instead of "message removed". */
-  revealDeleted: boolean
   onContextMenu?: ((message: ChatMessage, x: number, y: number) => void) | undefined
   /** Replay a held-for-review message's inline action (approve/remove); resolves with the outcome. */
   onHeldAction?: ((channelId: string, token: string) => Promise<SendResult>) | undefined
@@ -263,7 +261,6 @@ function HeldCard({
 export const MessageRow = memo(function MessageRow({
   message,
   palette,
-  revealDeleted,
   onContextMenu,
   onHeldAction,
   originLabel,
@@ -462,19 +459,19 @@ export const MessageRow = memo(function MessageRow({
               ⚑
             </span>
           ) : null}
-          {message.deleted === true ? <span className="pc-del-tag">⌀</span> : null}
+          {message.deleted === true ? (
+            <span className="pc-del-tag" title="Hidden by a moderator — visible to you only">
+              HIDDEN
+            </span>
+          ) : null}
           <Badges badges={message.author.badges} />
           <span className="pc-user" style={{ color }}>
             {message.self === true ? name : atName(name)}
           </span>
           <span className="pc-colon">:</span>
-          <span className="pc-text">
-            {message.deleted === true && !revealDeleted ? (
-              <s>message removed by a moderator</s>
-            ) : (
-              renderFragments(message.fragments)
-            )}
-          </span>
+          {/* A hidden/removed message always shows its content (a moderator can act on it either
+              way); the tinted `.del` row + the HIDDEN tag mark it clearly. */}
+          <span className="pc-text">{renderFragments(message.fragments)}</span>
         </span>
       </div>
     </Fragment>

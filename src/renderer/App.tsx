@@ -623,7 +623,6 @@ export function App(): ReactElement {
                 channel={column.channel}
                 messages={messages[column.id] ?? []}
                 canSend={canSendTo(column.channel, auth)}
-                revealDeleted={settings.revealDeleted}
                 pingedAt={pingedAt[column.id]}
                 active={column.id === activeId}
                 palette={palette}
@@ -654,7 +653,6 @@ export function App(): ReactElement {
                   .filter((channel): channel is ChannelInfo => channel !== undefined)}
                 messagesByChannel={messages}
                 cap={settings.bufferSize}
-                revealDeleted={settings.revealDeleted}
                 active={column.id === activeId}
                 palette={palette}
                 width={widths[column.id] ?? DEFAULT_COL_WIDTH}
@@ -682,7 +680,6 @@ export function App(): ReactElement {
                 messagesByChannel={messages}
                 cap={settings.bufferSize}
                 flaggedOnly
-                revealDeleted={settings.revealDeleted}
                 active={column.id === activeId}
                 palette={palette}
                 width={widths[column.id] ?? DEFAULT_COL_WIDTH}
@@ -786,7 +783,6 @@ export function App(): ReactElement {
             (message) => message.author.id === userActivity.author.id
           )}
           palette={palette}
-          revealDeleted={settings.revealDeleted}
           monitoredKeys={monitoredKeys}
           monitored={monitoredKeys.has(`${userActivity.platform}:${userActivity.author.id}`)}
           onToggleMonitor={() => {
@@ -811,7 +807,6 @@ export function App(): ReactElement {
           threadToken={donationThread.threadToken}
           parentAuthor={donationThread.parentAuthor}
           palette={palette}
-          revealDeleted={settings.revealDeleted}
           monitoredKeys={monitoredKeys}
           onJump={(channelId) => {
             jumpToChannel(channelId)
@@ -828,7 +823,6 @@ export function App(): ReactElement {
           messagesByChannel={messages}
           cap={settings.bufferSize}
           palette={palette}
-          revealDeleted={settings.revealDeleted}
           monitoredKeys={monitoredKeys}
           onJump={jumpToChannel}
           onUserActivity={openUserActivity}

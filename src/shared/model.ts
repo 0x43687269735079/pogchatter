@@ -410,8 +410,6 @@ export const FONT_SIZE_OPTIONS = [11, 12, 13, 14, 15, 16] as const
 export interface AppSettings {
   /** Reveals the Developer section — the home for experimental features and debug toggles. */
   devMode: boolean
-  /** Keep deleted messages readable (dimmed + struck) instead of hiding their text. */
-  revealDeleted: boolean
   /**
    * Messages kept per chat (scrollback, and the pool the monitor/flagged/search views draw from).
    * A bigger buffer holds more history at the cost of memory — clamped to
@@ -474,7 +472,6 @@ export const BUFFER_SIZE_OPTIONS = [100, 500, 1000, 2000, 5000] as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
   devMode: false,
-  revealDeleted: true,
   bufferSize: DEFAULT_BUFFER_SIZE,
   highlights: [],
   monitors: [],

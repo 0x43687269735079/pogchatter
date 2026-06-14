@@ -91,23 +91,6 @@ export function SettingsModal({
       <div className="mb">
         <label className="pc-setting">
           <span className="pc-setting-meta">
-            <span className="pc-setting-name">reveal deleted messages</span>
-            <span className="pc-setting-desc">
-              Keep removed messages readable (dimmed and struck) instead of hiding their text.
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className="pc-switch"
-            checked={settings.revealDeleted}
-            onChange={(event) => {
-              onChange({ revealDeleted: event.target.checked })
-            }}
-          />
-        </label>
-
-        <label className="pc-setting">
-          <span className="pc-setting-meta">
             <span className="pc-setting-name">message history per chat</span>
             <span className="pc-setting-desc">
               How many messages each chat keeps for scrollback, and for the monitor, flagged, and

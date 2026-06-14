@@ -28,7 +28,6 @@ interface CombinedColumnProps {
   cap: number
   /** Show only moderation-flagged messages (the flagged view) instead of every message (a monitor). */
   flaggedOnly?: boolean
-  revealDeleted: boolean
   active: boolean
   palette: readonly string[]
   width: number
@@ -75,7 +74,6 @@ export function CombinedColumn({
   messagesByChannel,
   cap,
   flaggedOnly,
-  revealDeleted,
   active,
   palette,
   width,
@@ -271,7 +269,6 @@ export function CombinedColumn({
                   key={`${message.channelId} ${message.id}`}
                   message={message}
                   palette={palette}
-                  revealDeleted={revealDeleted}
                   onContextMenu={openContextMenu}
                   onHeldAction={runHeldAction}
                   originLabel={origin?.label}

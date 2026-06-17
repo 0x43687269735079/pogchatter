@@ -95,6 +95,18 @@ export interface ReplyContext {
    * replies, which carry the parent inline.
    */
   threadToken?: string
+  /**
+   * Twitch only: the id of the thread's root message (twurple `threadMessageId`). Distinct from
+   * {@link parentId} (the message directly replied to). The thread is rebuilt from the renderer's
+   * per-column buffer (Twitch has no chat-history API), unlike YouTube's fetched {@link threadToken}.
+   */
+  threadId?: string
+  /**
+   * Twitch only: the thread starter's display name, when derivable (the parent is also the root).
+   * IRC carries only the root's id + user id, so this is often absent — the renderer then resolves
+   * the name from the buffered root message.
+   */
+  threadAuthor?: string
 }
 
 export interface ChatMessage {

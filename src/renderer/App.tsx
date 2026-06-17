@@ -470,6 +470,36 @@ export function App(): ReactElement {
         setSearchOpen(true)
         return
       }
+      // Tabs layout: ⌘/Ctrl + 1–9 jumps to a tab (9 = last), ⌘/Ctrl+Tab cycles — handled before the
+      // input-focus bail so they work while a composer is focused, like ⌘F.
+      if (
+        layoutRef.current === 'tabs' &&
+        (event.metaKey || event.ctrlKey) &&
+        (event.key === 'Tab' || /^[1-9]$/.test(event.key))
+      ) {
+        if (modalOpen) {
+          return
+        }
+        event.preventDefault()
+        const ids = orderedColumns.map((column) => column.id)
+        if (ids.length === 0) {
+          return
+        }
+        if (event.key === 'Tab') {
+          const current = activeId !== undefined ? ids.indexOf(activeId) : 0
+          const base = current < 0 ? 0 : current
+          const next = ids[(base + (event.shiftKey ? -1 : 1) + ids.length) % ids.length]
+          if (next !== undefined) {
+            selectTab(next)
+          }
+          return
+        }
+        const target = event.key === '9' ? ids[ids.length - 1] : ids[Number(event.key) - 1]
+        if (target !== undefined) {
+          selectTab(target)
+        }
+        return
+      }
       const el = document.activeElement
       if (
         el instanceof HTMLInputElement ||
@@ -496,7 +526,13 @@ export function App(): ReactElement {
       const current = activeId !== undefined ? ids.indexOf(activeId) : -1
       const target = ids[Math.max(0, Math.min(ids.length - 1, current + direction))]
       if (target !== undefined) {
-        setActiveId(target)
+        // In tabs mode go through selectTab (clears the tab's unread + persists it); in scroll mode
+        // just move the in-session focus.
+        if (layoutRef.current === 'tabs') {
+          selectTab(target)
+        } else {
+          setActiveId(target)
+        }
       }
     }
     window.addEventListener('keydown', onKey)

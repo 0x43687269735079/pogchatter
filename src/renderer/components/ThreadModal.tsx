@@ -1,6 +1,6 @@
 import { type ReactElement, useRef, useState } from 'react'
-import type { ChatMessage } from '@shared/model'
-import { atName } from '@renderer/format'
+import type { ChatMessage, SendReply } from '@shared/model'
+import { atName, plainText } from '@renderer/format'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { ModalShell } from '@renderer/components/ModalShell'
@@ -35,10 +35,10 @@ interface ContextMenuState {
 /** A compact composer that posts a reply into the thread (targeting its root so it stays in-thread). */
 function ThreadReplyBox({
   channelId,
-  rootId
+  reply
 }: {
   channelId: string
-  rootId: string
+  reply: SendReply
 }): ReactElement {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [draft, setDraft] = useState('')
@@ -53,7 +53,7 @@ function ThreadReplyBox({
     setBusy(true)
     setError(undefined)
     try {
-      const result = await window.chat.send(channelId, text, rootId)
+      const result = await window.chat.send(channelId, text, reply)
       if (result.ok) {
         setDraft('')
       } else {
@@ -70,16 +70,15 @@ function ThreadReplyBox({
     <>
       {error !== undefined ? <div className="pc-col-err">{error}</div> : null}
       <form
-        className="pc-inrow"
+        className="pc-thread-reply"
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
         }}
       >
-        <span className="prompt">›</span>
         <textarea
           ref={inputRef}
-          rows={1}
+          rows={2}
           value={draft}
           placeholder="reply to this thread"
           aria-label="Reply to this thread"
@@ -128,6 +127,18 @@ export function ThreadModal({
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
   const replyCount = rootBuffered ? Math.max(0, messages.length - 1) : messages.length
 
+  // A reply posts to the thread root so it stays in this thread; carry the root's author/text so the
+  // local echo renders the same quote + thread indicator as everyone else's thread replies.
+  const root = messages.find((message) => message.id === rootId)
+  const replyTarget: SendReply = { parentId: rootId, threadId: rootId }
+  if (rootAuthor !== undefined) {
+    replyTarget.parentAuthor = rootAuthor
+    replyTarget.threadAuthor = rootAuthor
+  }
+  if (root !== undefined) {
+    replyTarget.parentText = plainText(root.fragments)
+  }
+
   return (
     <ModalShell className="pc-modal-wide" onClose={onClose}>
       <div className="mh">
@@ -154,7 +165,7 @@ export function ThreadModal({
         )}
       </div>
       <div className="mf pc-thread-foot">
-        {canSend ? <ThreadReplyBox channelId={channelId} rootId={rootId} /> : null}
+        {canSend ? <ThreadReplyBox channelId={channelId} reply={replyTarget} /> : null}
         <button type="button" className="pc-mbtn" onClick={onClose}>
           close
         </button>

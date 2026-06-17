@@ -544,45 +544,20 @@ body,
 .pc-tab-x:hover {
   color: var(--err);
 }
-/* Compact "+" add control at the end of the tab bar, opening the add form as a popover. */
-.pc-tabadd-wrap {
-  position: relative;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: stretch;
-}
+/* Compact "+" add button at the end of the tab bar; opens the add-channel modal. */
 .pc-tabadd {
+  flex: 0 0 auto;
   border: none;
   background: transparent;
   color: var(--dim);
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
-  padding: 0 9px;
+  padding: 0 10px;
 }
 .pc-tabadd:hover {
   color: var(--fg);
   background: var(--sel);
-}
-.pc-addpop-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-}
-.pc-addpop {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 41;
-  width: 248px;
-  background: var(--bgElev);
-  border: 1px solid var(--rule);
-}
-.pc-addpop .pc-ghostbox {
-  margin: 0;
-  width: 100%;
-  border: none;
-  padding: 10px;
 }
 
 .pc-colhead {

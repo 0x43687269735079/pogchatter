@@ -21,6 +21,7 @@ import {
   type Platform,
   type SendResult
 } from '@shared/model'
+import { AddChannelModal } from '@renderer/components/AddChannelModal'
 import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
@@ -452,6 +453,7 @@ export function App(): ReactElement {
     // Mirrors the render condition below: the picker only exists while logged in, and a gate
     // term with no visible overlay would silently disable every global shortcut.
     (channelModalOpen && auth.youtube.loggedIn) ||
+    addOpen ||
     composerOpen ||
     searchOpen ||
     settingsOpen ||
@@ -797,18 +799,9 @@ export function App(): ReactElement {
 
   const addColumn = (
     <AddColumn
-      open={addOpen}
       variant={settings.layout === 'tabs' ? 'compact' : 'column'}
       onOpen={() => {
         setAddOpen(true)
-      }}
-      onClose={() => {
-        setAddOpen(false)
-      }}
-      onAdd={(platform, target) => window.chat.addChannel(platform, target)}
-      onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
-      onCompose={() => {
-        setComposerOpen(true)
       }}
     />
   )
@@ -821,7 +814,7 @@ export function App(): ReactElement {
       <Titlebar
         auth={auth}
         onAdd={() => {
-          setAddOpen((open) => !open)
+          setAddOpen(true)
         }}
         onSearch={() => {
           setSearchOpen(true)
@@ -917,6 +910,19 @@ export function App(): ReactElement {
             </button>
           </div>
         </ModalShell>
+      ) : null}
+      {addOpen ? (
+        <AddChannelModal
+          onClose={() => {
+            setAddOpen(false)
+          }}
+          onAdd={(platform, target) => window.chat.addChannel(platform, target)}
+          onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
+          onCompose={() => {
+            setAddOpen(false)
+            setComposerOpen(true)
+          }}
+        />
       ) : null}
       {composerOpen ? (
         <MonitorComposer

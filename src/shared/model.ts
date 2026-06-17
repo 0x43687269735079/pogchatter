@@ -429,6 +429,12 @@ export const DEFAULT_FONT_SIZE = 13
 export const FONT_SIZE_OPTIONS = [11, 12, 13, 14, 15, 16] as const
 
 /** Persisted app preferences, surfaced in the Settings panel. */
+/**
+ * Chat arrangement. `scroll` is the original side-by-side row of resizable columns; `tabs` collapses
+ * every column to a top tab bar and shows only the active column's chat full-width (Chatterino-style).
+ */
+export type ChatLayout = 'scroll' | 'tabs'
+
 export interface AppSettings {
   /** Reveals the Developer section — the home for experimental features and debug toggles. */
   devMode: boolean
@@ -460,6 +466,13 @@ export interface AppSettings {
    * listed slot in by the default rule: flagged view, then monitor views, then chats.
    */
   columnOrder: string[]
+  /** Chat arrangement: side-by-side columns (`scroll`) or a tab bar with one visible chat (`tabs`). */
+  layout: ChatLayout
+  /**
+   * The last-active tab's column id, restored on launch in `tabs` layout so the same chat reopens.
+   * Absent until a tab has been selected; ignored if the column no longer exists.
+   */
+  activeTabId?: string
   /** Chat-to-disk logging. */
   chatLog: ChatLogSettings
   /**
@@ -504,6 +517,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSize: DEFAULT_FONT_SIZE,
   emoteProviders: { sevenTv: true, bttv: true, ffz: true },
   columnOrder: [],
+  layout: 'scroll',
   chatLog: { enabled: false, directory: '' },
   allowPlaintextCredentials: false,
   keepAwake: true

@@ -53,6 +53,11 @@ interface CombinedColumnProps {
   onScrollPause: (id: string, channelIds: readonly string[]) => void
   /** Monitored authors (`<platform>:<authorId>`); the Set's identity changes only on toggle. */
   monitoredKeys?: ReadonlySet<string> | undefined
+  /**
+   * Tab layout: render as the single full-width pane — no fixed width, and the move/resize/remove
+   * chrome is suppressed (those live on the tab). Defaults to a scroll-layout column.
+   */
+  inTab?: boolean
 }
 
 interface ContextMenuState {
@@ -90,7 +95,8 @@ export function CombinedColumn({
   onRemove,
   onResize,
   onScrollPause,
-  monitoredKeys
+  monitoredKeys,
+  inTab = false
 }: CombinedColumnProps): ReactElement {
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -199,8 +205,8 @@ export function CombinedColumn({
   return (
     <section
       ref={sectionRef}
-      className={`pc-col mon${flaggedOnly === true ? ' flagged' : ''}${active ? ' active' : ''}`}
-      style={{ width: `${width}px`, flex: `0 0 ${width}px` }}
+      className={`pc-col mon${flaggedOnly === true ? ' flagged' : ''}${active ? ' active' : ''}${inTab ? ' pc-pane' : ''}`}
+      style={inTab ? undefined : { width: `${width}px`, flex: `0 0 ${width}px` }}
       onMouseDown={() => {
         onActivate(id)
       }}
@@ -212,42 +218,46 @@ export function CombinedColumn({
         <span className="chan">{label}</span>
         <span className="pc-streamnote">{members.length} chats</span>
         <span className="pc-colbtns">
-          <button
-            type="button"
-            className="pc-icbtn"
-            disabled={!canMoveLeft}
-            title="Move left"
-            aria-label="Move left"
-            onClick={() => {
-              onMove(id, -1)
-            }}
-          >
-            ◂
-          </button>
-          <button
-            type="button"
-            className="pc-icbtn"
-            disabled={!canMoveRight}
-            title="Move right"
-            aria-label="Move right"
-            onClick={() => {
-              onMove(id, 1)
-            }}
-          >
-            ▸
-          </button>
-          {onRemove !== undefined ? (
-            <button
-              type="button"
-              className="pc-icbtn x"
-              title="Remove monitor"
-              aria-label="Remove monitor"
-              onClick={() => {
-                onRemove(id)
-              }}
-            >
-              ✕
-            </button>
+          {!inTab ? (
+            <>
+              <button
+                type="button"
+                className="pc-icbtn"
+                disabled={!canMoveLeft}
+                title="Move left"
+                aria-label="Move left"
+                onClick={() => {
+                  onMove(id, -1)
+                }}
+              >
+                ◂
+              </button>
+              <button
+                type="button"
+                className="pc-icbtn"
+                disabled={!canMoveRight}
+                title="Move right"
+                aria-label="Move right"
+                onClick={() => {
+                  onMove(id, 1)
+                }}
+              >
+                ▸
+              </button>
+              {onRemove !== undefined ? (
+                <button
+                  type="button"
+                  className="pc-icbtn x"
+                  title="Remove monitor"
+                  aria-label="Remove monitor"
+                  onClick={() => {
+                    onRemove(id)
+                  }}
+                >
+                  ✕
+                </button>
+              ) : null}
+            </>
           ) : null}
         </span>
       </header>
@@ -294,13 +304,15 @@ export function CombinedColumn({
         />
       ) : null}
 
-      <div
-        className="pc-col-resize"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize column"
-        onMouseDown={startResize}
-      />
+      {!inTab ? (
+        <div
+          className="pc-col-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize column"
+          onMouseDown={startResize}
+        />
+      ) : null}
     </section>
   )
 }

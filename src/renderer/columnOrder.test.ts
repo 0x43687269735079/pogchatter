@@ -1,7 +1,41 @@
 import { describe, expect, it } from 'vitest'
-import { FLAGGED_COLUMN_ID, rankInsert, reconcileColumnOrder } from '@renderer/columnOrder'
+import {
+  FLAGGED_COLUMN_ID,
+  moveColumnBy,
+  moveColumnTo,
+  rankInsert,
+  reconcileColumnOrder
+} from '@renderer/columnOrder'
 
 const MONITORS = new Set(['mon-1', 'mon-2'])
+
+describe('moveColumnBy', () => {
+  it('swaps a column one step left or right', () => {
+    expect(moveColumnBy(['a', 'b', 'c'], 'b', -1)).toEqual(['b', 'a', 'c'])
+    expect(moveColumnBy(['a', 'b', 'c'], 'b', 1)).toEqual(['a', 'c', 'b'])
+  })
+
+  it('returns the same array reference when it cannot move (edge or absent)', () => {
+    const order = ['a', 'b', 'c']
+    expect(moveColumnBy(order, 'a', -1)).toBe(order) // already leftmost
+    expect(moveColumnBy(order, 'c', 1)).toBe(order) // already rightmost
+    expect(moveColumnBy(order, 'gone', -1)).toBe(order) // not present
+  })
+})
+
+describe('moveColumnTo', () => {
+  it('moves a column to a target index (position once removed)', () => {
+    expect(moveColumnTo(['a', 'b', 'c', 'd'], 'a', 2)).toEqual(['b', 'c', 'a', 'd'])
+    expect(moveColumnTo(['a', 'b', 'c', 'd'], 'd', 0)).toEqual(['d', 'a', 'b', 'c'])
+    expect(moveColumnTo(['a', 'b', 'c'], 'b', 99)).toEqual(['a', 'c', 'b']) // clamped to the end
+  })
+
+  it('returns the same array reference on a no-op (absent or unchanged position)', () => {
+    const order = ['a', 'b', 'c']
+    expect(moveColumnTo(order, 'gone', 1)).toBe(order)
+    expect(moveColumnTo(order, 'b', 1)).toBe(order) // already at index 1 once removed
+  })
+})
 
 describe('rankInsert', () => {
   it('puts the flagged view leftmost and a monitor after the flagged/monitor block', () => {

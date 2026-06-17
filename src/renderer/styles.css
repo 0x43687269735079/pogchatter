@@ -412,6 +412,154 @@ body,
   background: linear-gradient(180deg, var(--sel), transparent 120px);
 }
 
+/* Tab layout: the active chat fills a single full-width pane under the tab bar. */
+.pc-body-tabs {
+  overflow: hidden;
+}
+.pc-col.pc-pane {
+  flex: 1;
+  width: 100%;
+  border-right: none;
+}
+
+/* Top tab bar (the `tabs` layout): one tab per column, scrolling on overflow. */
+.pc-tabbar {
+  flex: 0 0 34px;
+  display: flex;
+  align-items: stretch;
+  height: 34px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--bgElev);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-tab {
+  flex: 0 1 auto;
+  min-width: 44px;
+  max-width: 170px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 8px;
+  border-right: 1px solid var(--rule);
+  cursor: pointer;
+  position: relative;
+  color: var(--dim);
+  user-select: none;
+}
+.pc-tab::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
+}
+.pc-tab.tw::before {
+  background: var(--tw);
+  opacity: 0.5;
+}
+.pc-tab.yt::before {
+  background: var(--yt);
+  opacity: 0.5;
+}
+.pc-tab.mon::before {
+  background: var(--accent);
+  opacity: 0.5;
+}
+.pc-tab.flagged::before {
+  background: var(--err);
+  opacity: 0.5;
+}
+.pc-tab.active {
+  background: var(--sel);
+  color: var(--fg);
+}
+.pc-tab.active::before {
+  opacity: 1;
+}
+.pc-tab-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-emph);
+  font-weight: 600;
+}
+.pc-tab-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dimmer);
+}
+.pc-tab-dot.on {
+  background: var(--ok);
+}
+.pc-tab-dot.wait {
+  background: var(--accent);
+}
+.pc-tab-dot.err {
+  background: var(--err);
+}
+/* Unread indicators: a dot for new messages, a brighter ring + label for an alert (ping/flag/held). */
+.pc-tab.activity .pc-tab-label,
+.pc-tab.alert .pc-tab-label {
+  color: var(--fg);
+}
+.pc-tab-unread {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 2px;
+}
+.pc-tab-unread.activity {
+  background: var(--dim);
+}
+.pc-tab-unread.alert {
+  background: var(--err);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--err) 35%, transparent);
+}
+.pc-tab.alert::before {
+  background: var(--err);
+  opacity: 1;
+}
+.pc-tab-x {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  opacity: 0;
+}
+.pc-tab:hover .pc-tab-x,
+.pc-tab.active .pc-tab-x {
+  opacity: 1;
+}
+.pc-tab-x:hover {
+  color: var(--err);
+}
+/* Compact "+" add button at the end of the tab bar; opens the add-channel modal. */
+.pc-tabadd {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 10px;
+}
+.pc-tabadd:hover {
+  color: var(--fg);
+  background: var(--sel);
+}
+
 .pc-colhead {
   display: flex;
   align-items: center;

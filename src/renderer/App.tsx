@@ -18,11 +18,10 @@ import {
   type BanRule,
   type HighlightRule,
   type ModerationRule,
-  type MonitorView,
   type Platform,
-  type SendResult,
-  type SourceStatus
+  type SendResult
 } from '@shared/model'
+import { AddChannelModal } from '@renderer/components/AddChannelModal'
 import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
@@ -45,8 +44,17 @@ import {
   type MessageMap,
   resolveHeldMessage
 } from '@renderer/chatState'
-import { FLAGGED_COLUMN_ID, reconcileColumnOrder } from '@renderer/columnOrder'
+import {
+  FLAGGED_COLUMN_ID,
+  moveColumnBy,
+  moveColumnTo,
+  reconcileColumnOrder,
+  type Column
+} from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
+import { isOnline } from '@renderer/status'
+import { clearUnread, foldUnread, type UnreadLevel } from '@renderer/unread'
+import { TabBar } from '@renderer/components/TabBar'
 import { THEME_PALETTES } from '@renderer/theme'
 
 const DEFAULT_COL_WIDTH = 340
@@ -64,22 +72,6 @@ function canSendTo(channel: ChannelInfo, auth: AuthState): boolean {
   }
   return auth.youtube.loggedIn && channel.sendRestriction === undefined
 }
-
-/** A source is "online" (LED lit) once its chat is reachable. */
-function isOnline(status: SourceStatus): boolean {
-  return (
-    status.state === 'connected' ||
-    status.state === 'live' ||
-    status.state === 'waiting' ||
-    status.state === 'replay'
-  )
-}
-
-/** A rendered column: a chat channel, a combined monitor view, or the built-in flagged view. */
-type Column =
-  | { kind: 'channel'; id: string; channel: ChannelInfo }
-  | { kind: 'monitor'; id: string; monitor: MonitorView }
-  | { kind: 'flagged'; id: string }
 
 export function App(): ReactElement {
   const [channels, setChannels] = useState<ChannelInfo[]>([])
@@ -107,6 +99,12 @@ export function App(): ReactElement {
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  // Refs the stable onEvents handler reads for tab-bar unread tracking — it's set up once in a
+  // []-effect, so these must be refs (a closure would capture the first render's values).
+  const layoutRef = useRef(settings.layout)
+  layoutRef.current = settings.layout
+  const activeIdRef = useRef<string | undefined>(undefined)
+  const flaggedVisibleRef = useRef(false)
   // Settings keys the user edited before the persisted settings finished loading, so hydration
   // can adopt the stored values without clobbering those early edits (and an early edit can't
   // pin the whole session to defaults).
@@ -120,6 +118,8 @@ export function App(): ReactElement {
   const [order, setOrder] = useState<string[]>([])
   const [widths, setWidths] = useState<Record<string, number>>({})
   const [activeIdState, setActiveId] = useState<string | undefined>(undefined)
+  // Per-column unread level for the tabs layout (none/activity/alert); transient, never persisted.
+  const [unread, setUnread] = useState<ReadonlyMap<string, UnreadLevel>>(new Map())
 
   // Total messages received; StatusBar samples it at 1 Hz for the msg/s rate, so the per-second
   // re-render stays scoped there instead of cascading through the whole column tree.
@@ -182,6 +182,18 @@ export function App(): ReactElement {
         seenIdCapacity(settingsRef.current.bufferSize)
       )
       const batch = processEvents(fresh, settingsRef.current)
+      // Tab bar unread/alert (tabs layout only): fold the already-tagged batch into per-column levels.
+      if (layoutRef.current === 'tabs') {
+        setUnread((prev) =>
+          foldUnread({
+            prev,
+            events: fresh,
+            activeId: activeIdRef.current,
+            flaggedColumnId: FLAGGED_COLUMN_ID,
+            flaggedVisible: flaggedVisibleRef.current
+          })
+        )
+      }
       if (batch.auth !== undefined) {
         setAuth(batch.auth)
       }
@@ -310,6 +322,7 @@ export function App(): ReactElement {
     }
   }, [messages, heldSeen, hasModerationRules])
   const flaggedVisible = hasModerationRules || heldSeen
+  flaggedVisibleRef.current = flaggedVisible
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
 
@@ -366,29 +379,69 @@ export function App(): ReactElement {
   const orderedChannels = orderedColumns.flatMap((column) =>
     column.kind === 'channel' ? [column.channel] : []
   )
+  // The selected column: this session's pick if still present, else the tab restored from the last
+  // session (tabs layout), else the leftmost column.
+  const exists = (id: string | undefined): id is string =>
+    id !== undefined && orderedColumns.some((column) => column.id === id)
   const activeId =
-    activeIdState !== undefined && orderedColumns.some((column) => column.id === activeIdState)
-      ? activeIdState
-      : orderedColumns[0]?.id
+    (exists(activeIdState) ? activeIdState : undefined) ??
+    (exists(settings.activeTabId) ? settings.activeTabId : undefined) ??
+    orderedColumns[0]?.id
+  const activeColumn = orderedColumns.find((column) => column.id === activeId)
+  activeIdRef.current = activeId
+
+  // Switching into the tabs layout starts with a clean slate — nothing is "unread" the moment you
+  // arrive (every column was visible in scroll mode).
+  useEffect(() => {
+    if (settings.layout === 'tabs') {
+      setUnread(new Map())
+    }
+  }, [settings.layout])
+
+  // An explicit move persists the whole arrangement, so it survives restarts; unmoved columns keep
+  // slotting in by the default rule. Both the ±1 step (buttons / Alt+Arrow) and the drag-to-index
+  // (tab bar) route through here so scroll and tabs share one ordering source of truth.
+  function commitOrder(next: string[]): void {
+    if (next === order) {
+      return
+    }
+    setOrder(next)
+    updateSettings({ columnOrder: next })
+  }
 
   function moveColumn(id: string, direction: -1 | 1): void {
-    const i = order.indexOf(id)
-    const j = i + direction
-    if (i < 0 || j < 0 || j >= order.length) {
-      return
+    commitOrder(moveColumnBy(order, id, direction))
+  }
+
+  /** Drag-to-reorder a tab to a target index (its position once removed). */
+  function moveColumnToIndex(id: string, toIndex: number): void {
+    commitOrder(moveColumnTo(order, id, toIndex))
+  }
+
+  /** Select a tab, clear its unread indicator, and remember it across restarts (tabs reopen it). */
+  function selectTab(id: string): void {
+    setActiveId(id)
+    setUnread((prev) => clearUnread(prev, id))
+    updateSettings({ activeTabId: id })
+  }
+
+  /** Remove a column from its tab (a chat or a monitor; the flagged view is pinned). */
+  function removeColumn(id: string): void {
+    if (id === activeId) {
+      // Move to the right neighbour (else the left) so the pane doesn't jump to the leftmost tab.
+      const ids = orderedColumns.map((column) => column.id)
+      const i = ids.indexOf(id)
+      const neighbour = ids[i + 1] ?? ids[i - 1]
+      if (neighbour !== undefined) {
+        selectTab(neighbour)
+      }
     }
-    const a = order[i]
-    const b = order[j]
-    if (a === undefined || b === undefined) {
-      return
+    const column = orderedColumns.find((c) => c.id === id)
+    if (column?.kind === 'monitor') {
+      removeMonitor(id)
+    } else if (column?.kind === 'channel') {
+      void window.chat.removeChannel(id)
     }
-    const next = [...order]
-    next[i] = b
-    next[j] = a
-    setOrder(next)
-    // An explicit move persists the whole arrangement, so it survives restarts; unmoved columns
-    // keep slotting in by the default rule.
-    updateSettings({ columnOrder: next })
   }
 
   // Whether any overlay is open — the global shortcuts below stand down so keystrokes can't
@@ -400,6 +453,7 @@ export function App(): ReactElement {
     // Mirrors the render condition below: the picker only exists while logged in, and a gate
     // term with no visible overlay would silently disable every global shortcut.
     (channelModalOpen && auth.youtube.loggedIn) ||
+    addOpen ||
     composerOpen ||
     searchOpen ||
     settingsOpen ||
@@ -416,6 +470,36 @@ export function App(): ReactElement {
         }
         event.preventDefault()
         setSearchOpen(true)
+        return
+      }
+      // Tabs layout: ⌘/Ctrl + 1–9 jumps to a tab (9 = last), ⌘/Ctrl+Tab cycles — handled before the
+      // input-focus bail so they work while a composer is focused, like ⌘F.
+      if (
+        layoutRef.current === 'tabs' &&
+        (event.metaKey || event.ctrlKey) &&
+        (event.key === 'Tab' || /^[1-9]$/.test(event.key))
+      ) {
+        if (modalOpen) {
+          return
+        }
+        event.preventDefault()
+        const ids = orderedColumns.map((column) => column.id)
+        if (ids.length === 0) {
+          return
+        }
+        if (event.key === 'Tab') {
+          const current = activeId !== undefined ? ids.indexOf(activeId) : 0
+          const base = current < 0 ? 0 : current
+          const next = ids[(base + (event.shiftKey ? -1 : 1) + ids.length) % ids.length]
+          if (next !== undefined) {
+            selectTab(next)
+          }
+          return
+        }
+        const target = event.key === '9' ? ids[ids.length - 1] : ids[Number(event.key) - 1]
+        if (target !== undefined) {
+          selectTab(target)
+        }
         return
       }
       const el = document.activeElement
@@ -444,7 +528,13 @@ export function App(): ReactElement {
       const current = activeId !== undefined ? ids.indexOf(activeId) : -1
       const target = ids[Math.max(0, Math.min(ids.length - 1, current + direction))]
       if (target !== undefined) {
-        setActiveId(target)
+        // In tabs mode go through selectTab (clears the tab's unread + persists it); in scroll mode
+        // just move the in-session focus.
+        if (layoutRef.current === 'tabs') {
+          selectTab(target)
+        } else {
+          setActiveId(target)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -606,6 +696,116 @@ export function App(): ReactElement {
   const theme = settings.theme
   const palette = THEME_PALETTES[theme]
 
+  // One column (chat / monitor / flagged), rendered as a scroll-layout column or, with `inTab`, as
+  // the single full-width tab pane (its move/resize/remove chrome suppressed — that lives on the tab).
+  function renderColumn(column: Column, index: number, inTab: boolean): ReactElement {
+    const canMoveLeft = !inTab && index > 0
+    const canMoveRight = !inTab && index < orderedColumns.length - 1
+    const active = column.id === activeId
+    const width = widths[column.id] ?? DEFAULT_COL_WIDTH
+    if (column.kind === 'channel') {
+      return (
+        <ChannelColumn
+          key={column.id}
+          channel={column.channel}
+          messages={messages[column.id] ?? []}
+          canSend={canSendTo(column.channel, auth)}
+          pingedAt={pingedAt[column.id]}
+          active={active}
+          palette={palette}
+          width={width}
+          canMoveLeft={canMoveLeft}
+          canMoveRight={canMoveRight}
+          inTab={inTab}
+          onActivate={setActiveId}
+          onRemove={(channelId) => {
+            void window.chat.removeChannel(channelId)
+          }}
+          onMove={moveColumn}
+          onResize={(channelId, value) => {
+            setWidths((prev) => ({ ...prev, [channelId]: value }))
+          }}
+          onUserActivity={openUserActivity}
+          onDonationReplies={openDonationThread}
+          onHeldAction={handleHeldAction}
+          onScrollPause={reportScrollPause}
+          monitoredKeys={monitoredKeys}
+        />
+      )
+    }
+    if (column.kind === 'monitor') {
+      return (
+        <CombinedColumn
+          key={column.id}
+          id={column.monitor.id}
+          label={column.monitor.label}
+          memberIds={column.monitor.members}
+          members={column.monitor.members
+            .map((id) => channels.find((channel) => channel.id === id))
+            .filter((channel): channel is ChannelInfo => channel !== undefined)}
+          messagesByChannel={messages}
+          cap={settings.bufferSize}
+          active={active}
+          palette={palette}
+          width={width}
+          canMoveLeft={canMoveLeft}
+          canMoveRight={canMoveRight}
+          inTab={inTab}
+          onActivate={setActiveId}
+          onJump={jumpToChannel}
+          onUserActivity={openUserActivity}
+          onDonationReplies={openDonationThread}
+          onHeldAction={handleHeldAction}
+          onMove={moveColumn}
+          onRemove={removeMonitor}
+          onResize={(monitorId, value) => {
+            setWidths((prev) => ({ ...prev, [monitorId]: value }))
+          }}
+          onScrollPause={reportScrollPause}
+          monitoredKeys={monitoredKeys}
+        />
+      )
+    }
+    return (
+      <CombinedColumn
+        key={column.id}
+        id={column.id}
+        label="messages flagged for moderation"
+        memberIds={allChannelIds}
+        members={channels}
+        messagesByChannel={messages}
+        cap={settings.bufferSize}
+        flaggedOnly
+        active={active}
+        palette={palette}
+        width={width}
+        canMoveLeft={canMoveLeft}
+        canMoveRight={canMoveRight}
+        inTab={inTab}
+        onActivate={setActiveId}
+        onJump={jumpToChannel}
+        onUserActivity={openUserActivity}
+        onDonationReplies={openDonationThread}
+        onHeldAction={handleHeldAction}
+        onMove={moveColumn}
+        onResize={(viewId, value) => {
+          setWidths((prev) => ({ ...prev, [viewId]: value }))
+        }}
+        onScrollPause={reportScrollPause}
+        monitoredKeys={monitoredKeys}
+      />
+    )
+  }
+
+  const addColumn = (
+    <AddColumn
+      variant={settings.layout === 'tabs' ? 'compact' : 'column'}
+      onOpen={() => {
+        setAddOpen(true)
+      }}
+    />
+  )
+
   return (
     <div
       className={`pc-app theme-${theme}`}
@@ -614,7 +814,7 @@ export function App(): ReactElement {
       <Titlebar
         auth={auth}
         onAdd={() => {
-          setAddOpen((open) => !open)
+          setAddOpen(true)
         }}
         onSearch={() => {
           setSearchOpen(true)
@@ -640,107 +840,28 @@ export function App(): ReactElement {
         }}
       />
       <div className="pc-screen">
-        <div className="pc-body">
-          {orderedColumns.map((column, index) =>
-            column.kind === 'channel' ? (
-              <ChannelColumn
-                key={column.id}
-                channel={column.channel}
-                messages={messages[column.id] ?? []}
-                canSend={canSendTo(column.channel, auth)}
-                pingedAt={pingedAt[column.id]}
-                active={column.id === activeId}
-                palette={palette}
-                width={widths[column.id] ?? DEFAULT_COL_WIDTH}
-                canMoveLeft={index > 0}
-                canMoveRight={index < orderedColumns.length - 1}
-                onActivate={setActiveId}
-                onRemove={(channelId) => {
-                  void window.chat.removeChannel(channelId)
-                }}
-                onMove={moveColumn}
-                onResize={(channelId, value) => {
-                  setWidths((prev) => ({ ...prev, [channelId]: value }))
-                }}
-                onUserActivity={openUserActivity}
-                onDonationReplies={openDonationThread}
-                onHeldAction={handleHeldAction}
-                onScrollPause={reportScrollPause}
-                monitoredKeys={monitoredKeys}
-              />
-            ) : column.kind === 'monitor' ? (
-              <CombinedColumn
-                key={column.id}
-                id={column.monitor.id}
-                label={column.monitor.label}
-                memberIds={column.monitor.members}
-                members={column.monitor.members
-                  .map((id) => channels.find((channel) => channel.id === id))
-                  .filter((channel): channel is ChannelInfo => channel !== undefined)}
-                messagesByChannel={messages}
-                cap={settings.bufferSize}
-                active={column.id === activeId}
-                palette={palette}
-                width={widths[column.id] ?? DEFAULT_COL_WIDTH}
-                canMoveLeft={index > 0}
-                canMoveRight={index < orderedColumns.length - 1}
-                onActivate={setActiveId}
-                onJump={jumpToChannel}
-                onUserActivity={openUserActivity}
-                onDonationReplies={openDonationThread}
-                onHeldAction={handleHeldAction}
-                onMove={moveColumn}
-                onRemove={removeMonitor}
-                onResize={(monitorId, value) => {
-                  setWidths((prev) => ({ ...prev, [monitorId]: value }))
-                }}
-                onScrollPause={reportScrollPause}
-                monitoredKeys={monitoredKeys}
-              />
-            ) : (
-              <CombinedColumn
-                key={column.id}
-                id={column.id}
-                label="messages flagged for moderation"
-                memberIds={allChannelIds}
-                members={channels}
-                messagesByChannel={messages}
-                cap={settings.bufferSize}
-                flaggedOnly
-                active={column.id === activeId}
-                palette={palette}
-                width={widths[column.id] ?? DEFAULT_COL_WIDTH}
-                canMoveLeft={index > 0}
-                canMoveRight={index < orderedColumns.length - 1}
-                onActivate={setActiveId}
-                onJump={jumpToChannel}
-                onUserActivity={openUserActivity}
-                onDonationReplies={openDonationThread}
-                onHeldAction={handleHeldAction}
-                onMove={moveColumn}
-                onResize={(viewId, value) => {
-                  setWidths((prev) => ({ ...prev, [viewId]: value }))
-                }}
-                onScrollPause={reportScrollPause}
-                monitoredKeys={monitoredKeys}
-              />
-            )
-          )}
-          <AddColumn
-            open={addOpen}
-            onOpen={() => {
-              setAddOpen(true)
-            }}
-            onClose={() => {
-              setAddOpen(false)
-            }}
-            onAdd={(platform, target) => window.chat.addChannel(platform, target)}
-            onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
-            onCompose={() => {
-              setComposerOpen(true)
-            }}
-          />
-        </div>
+        {settings.layout === 'tabs' ? (
+          <>
+            <TabBar
+              columns={orderedColumns}
+              channels={channels}
+              activeId={activeId}
+              unread={unread}
+              onSelect={selectTab}
+              onRemove={removeColumn}
+              onReorder={moveColumnToIndex}
+              trailing={addColumn}
+            />
+            <div className="pc-body pc-body-tabs">
+              {activeColumn !== undefined ? renderColumn(activeColumn, 0, true) : null}
+            </div>
+          </>
+        ) : (
+          <div className="pc-body">
+            {orderedColumns.map((column, index) => renderColumn(column, index, false))}
+            {addColumn}
+          </div>
+        )}
       </div>
       <StatusBar
         channelCount={channels.length}
@@ -789,6 +910,19 @@ export function App(): ReactElement {
             </button>
           </div>
         </ModalShell>
+      ) : null}
+      {addOpen ? (
+        <AddChannelModal
+          onClose={() => {
+            setAddOpen(false)
+          }}
+          onAdd={(platform, target) => window.chat.addChannel(platform, target)}
+          onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
+          onCompose={() => {
+            setAddOpen(false)
+            setComposerOpen(true)
+          }}
+        />
       ) : null}
       {composerOpen ? (
         <MonitorComposer

@@ -1,5 +1,4 @@
 import {
-  type FormEvent,
   type ReactElement,
   useCallback,
   useEffect,
@@ -8,7 +7,7 @@ import {
   useRef,
   useState
 } from 'react'
-import type { ChannelInfo, ChatMessage } from '@shared/model'
+import type { ChannelInfo, ChatMessage, HeldActionHandler } from '@shared/model'
 import { EmojiAutocomplete } from '@renderer/components/EmojiAutocomplete'
 import { EmojiPicker } from '@renderer/components/EmojiPicker'
 import { atName } from '@renderer/format'
@@ -39,6 +38,8 @@ interface ChannelColumnProps {
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */
   onDonationReplies: (message: ChatMessage) => void
+  /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
+  onHeldAction: HeldActionHandler
   /**
    * Report which channels this column wants buffer-trimming paused for (scrolled up, reading
    * history); an empty list clears the pause. Keyed by this column's id.
@@ -70,13 +71,14 @@ export function ChannelColumn({
   onResize,
   onUserActivity,
   onDonationReplies,
+  onHeldAction,
   onScrollPause,
   monitoredKeys
 }: ChannelColumnProps): ReactElement {
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const emoteButtonRef = useRef<HTMLButtonElement>(null)
   // Pin to bottom only when the user is already there, so scrolling up to read
   // history isn't yanked back down by incoming messages.
@@ -205,16 +207,42 @@ export function ChannelColumn({
     }
   }, [])
 
+  // Auto-grow the composer with the draft: reset to measure, then size to content (the `.pc-inrow
+  // textarea` max-height caps it at four lines and scrolls beyond). A taller composer shrinks the
+  // message viewport, so re-pin to the bottom when the user was already there.
+  const resizeInput = useCallback(() => {
+    const el = inputRef.current
+    if (el === null) {
+      return
+    }
+    el.style.height = 'auto'
+    if (el.value === '') {
+      // Empty: stay one line (the rows=1 default). A long placeholder (the stream title) must not
+      // grow the box or — the bug this fixes — trigger a scrollbar; it's simply clipped.
+      el.style.height = ''
+      el.style.overflowY = 'hidden'
+    } else {
+      el.style.height = `${el.scrollHeight}px`
+      // Only scroll once the message overflows the four-line cap: clientHeight is the (clamped)
+      // visible height, so scrollHeight exceeds it exactly when there are more than four lines.
+      el.style.overflowY = el.scrollHeight > el.clientHeight ? 'auto' : 'hidden'
+    }
+    const body = bodyRef.current
+    if (body !== null && atBottomRef.current) {
+      body.scrollTop = body.scrollHeight
+    }
+  }, [])
+
+  // Resize whenever the draft changes — typing, send (cleared back to one line), emoji insertion,
+  // and reply-mention prepend all flow through `draft`. Layout effect avoids a one-frame flicker.
+  useLayoutEffect(() => {
+    resizeInput()
+  }, [draft, resizeInput])
+
   // Stable so the memoized MessageRow list isn't invalidated every render (e.g. on each keystroke).
   const openContextMenu = useCallback((message: ChatMessage, x: number, y: number) => {
     setMenu({ message, x, y })
   }, [])
-
-  // Replay a held-for-review message's inline action (approve/remove). Stable for the same reason.
-  const runHeldAction = useCallback(
-    (channelId: string, token: string) => window.chat.runHeldAction(channelId, token),
-    []
-  )
 
   // Render the rows once per message/identity change, not on every keystroke or status update —
   // on a fast, full chat this keeps typing from re-rendering the whole list (see MessageRow memo).
@@ -228,11 +256,11 @@ export function ChannelColumn({
           message={message}
           palette={palette}
           onContextMenu={openContextMenu}
-          onHeldAction={runHeldAction}
+          onHeldAction={onHeldAction}
           monitoredKeys={monitoredKeys}
         />
       )),
-    [messages, palette, openContextMenu, runHeldAction, monitoredKeys]
+    [messages, palette, openContextMenu, onHeldAction, monitoredKeys]
   )
 
   function startReply(message: ChatMessage): void {
@@ -246,8 +274,7 @@ export function ChannelColumn({
     inputRef.current?.focus()
   }
 
-  async function handleSubmit(event: FormEvent): Promise<void> {
-    event.preventDefault()
+  async function submit(): Promise<void> {
     const text = draft.trim()
     if (text === '' || !canSend) {
       return
@@ -441,12 +468,14 @@ export function ChannelColumn({
         <form
           className={canSend ? 'pc-inrow' : 'pc-inrow ro'}
           onSubmit={(event) => {
-            void handleSubmit(event)
+            event.preventDefault()
+            void submit()
           }}
         >
           <span className="prompt">{canSend ? '›' : '✕'}</span>
-          <input
+          <textarea
             ref={inputRef}
+            rows={1}
             value={draft}
             disabled={!canSend}
             placeholder={canSend ? `message ${channel.label}` : readOnlyHint}
@@ -461,6 +490,13 @@ export function ChannelColumn({
             }}
             onKeyDown={(event) => {
               if (emoji.onKeyDown(event)) {
+                return
+              }
+              // Enter sends; Shift+Enter inserts a newline (the textarea's default). Don't send
+              // mid-IME-composition, where Enter only commits the candidate.
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                void submit()
                 return
               }
               // Escape layers: autocomplete first (above), then the open picker (picking

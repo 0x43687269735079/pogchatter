@@ -908,35 +908,56 @@ body,
   font-weight: 600;
 }
 
-/* held-for-review card (YouTube automod) — a distinct amber-edged block needing a moderator's call */
+/* held-for-review card (YouTube automod) — a compact amber-edged block needing a moderator's call.
+   Only the Show / keep-Hidden review buttons live on the card; per-author moderation is on right-click. */
 .pc-held {
-  margin: 4px 10px;
-  border: 1px solid var(--warn);
-  border-left-width: 2px;
-  border-radius: var(--radius);
+  margin: 2px 10px;
+  border-left: 2px solid var(--warn);
   background: var(--overlay);
-  font-size: 12px;
 }
 .pc-held-head {
-  padding: 3px 10px;
+  padding: 2px 10px 0;
   font-size: var(--fs-small);
   letter-spacing: 0.3px;
   color: var(--warn);
-  border-bottom: 1px solid var(--rule);
 }
+/* Body: the message content (user/time line + flagged text) takes the room; the Show/Hide buttons
+   sit stacked on the right so the text gets the full width. */
 .pc-held-body {
-  padding: 6px 10px;
-  line-height: 1.45;
-  word-break: break-word;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 1px 10px 5px;
 }
-.pc-held-body .pc-user {
+.pc-held-content {
+  flex: 1;
+  min-width: 0;
+}
+.pc-held-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-small);
+  line-height: 1.4;
+}
+.pc-held-meta .pc-user {
   font-weight: 600;
+}
+.pc-held-meta .pc-time {
+  color: var(--dimmer);
+}
+.pc-held-text {
+  margin-top: 2px;
+  font-size: var(--fs-emph);
+  line-height: 1.5;
+  word-break: break-word;
+  color: var(--fg);
 }
 .pc-held-actions {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px 7px;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
 }
 .pc-held-actions button {
   font: inherit;
@@ -944,23 +965,20 @@ body,
   color: var(--dim);
   background: transparent;
   border: 1px solid var(--rule);
-  padding: 3px 8px;
+  padding: 2px 10px;
+  min-width: 56px;
   cursor: pointer;
 }
 .pc-held-actions button:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent);
 }
-.pc-held-actions button.danger:hover:not(:disabled) {
-  color: var(--err);
-  border-color: var(--err);
-}
 .pc-held-actions button:disabled {
   color: var(--dimmer);
   cursor: default;
 }
 .pc-held-err {
-  padding: 0 10px 6px;
+  padding: 0 10px 4px;
   color: var(--err);
   font-size: var(--fs-small);
 }
@@ -1284,26 +1302,35 @@ body,
 }
 .pc-inrow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 0 var(--gut);
-  height: 42px;
+  padding: 11px var(--gut);
 }
 .pc-inrow .prompt {
   color: var(--accent);
   font-weight: 700;
   flex: 0 0 auto;
+  line-height: 1.4;
 }
-.pc-inrow input {
+/* Auto-growing composer: one line by default, expands with the draft, then scrolls. The four-line
+   cap lives entirely here in `max-height` below (line-height × 4); ChannelColumn's resizeInput sets
+   height to scrollHeight (clamped by this max-height) and toggles overflow-y to `auto` only once the
+   message overflows the cap — so a wrapped placeholder never shows a scrollbar. */
+.pc-inrow textarea {
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
   color: var(--fg);
   font: inherit;
-  height: 100%;
+  line-height: 1.4;
+  resize: none;
+  padding: 0;
+  margin: 0;
+  max-height: calc(1.4em * 4);
+  overflow-y: hidden;
 }
-.pc-inrow input::placeholder {
+.pc-inrow textarea::placeholder {
   color: var(--dimmer);
 }
 .pc-inrow.ro .prompt {

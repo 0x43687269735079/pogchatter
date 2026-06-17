@@ -144,7 +144,7 @@ const twitchEmotes = {
 } as unknown as TwitchEmoteProvider
 
 function makeAuth(overrides: Record<string, unknown> = {}): TwitchAuthManager {
-  return {
+  const auth: Record<string, unknown> = {
     isLoggedIn: true,
     userId: 'u1',
     userName: 'modlogin',
@@ -153,7 +153,17 @@ function makeAuth(overrides: Record<string, unknown> = {}): TwitchAuthManager {
     getAuthProvider: () => ({}),
     handleAuthFailure: vi.fn().mockResolvedValue(undefined),
     ...overrides
-  } as unknown as TwitchAuthManager
+  }
+  // Mirror the real helixFetch: no client id / no token → no request; otherwise the room-id lookup
+  // and emote/badge providers go through the mocked proxiedFetch (id 500).
+  auth['helixFetch'] ??= vi.fn(async (url: string) => {
+    const token = await (auth['accessToken'] as () => Promise<string | undefined>)()
+    if (auth['clientId'] === undefined || token === undefined) {
+      return undefined
+    }
+    return proxiedFetch(url)
+  })
+  return auth as unknown as TwitchAuthManager
 }
 
 const loggedOutAuth = {
@@ -162,7 +172,8 @@ const loggedOutAuth = {
   userName: undefined,
   clientId: 'client-id',
   accessToken: vi.fn().mockResolvedValue(undefined),
-  getAuthProvider: () => undefined
+  getAuthProvider: () => undefined,
+  helixFetch: vi.fn().mockResolvedValue(undefined)
 } as unknown as TwitchAuthManager
 
 function makeSource(auth: TwitchAuthManager): TwitchSource {

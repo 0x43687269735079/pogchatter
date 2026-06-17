@@ -37,14 +37,6 @@ interface RawMenuItem {
  * confirmation dialog YouTube's own UI would show.
  */
 const DESTRUCTIVE = /\b(remove|delete|ban|hide|block|timeout|time out)\b/i
-// Locale-independent destructive icon types (held-message buttons are labelled in the moderator's
-// account language, so the English label regex alone would miss a non-English "Remove").
-const DESTRUCTIVE_ICON = /DELETE|REMOVE|BAN|HIDE|BLOCK|TRASH|SLASH/i
-
-/** Whether an action is destructive — by its locale-independent icon first, then its label. */
-function isDestructive(iconType: string | undefined, label: string): boolean {
-  return (iconType !== undefined && DESTRUCTIVE_ICON.test(iconType)) || DESTRUCTIVE.test(label)
-}
 
 /**
  * A purchase call-to-action YouTube mixes into a Super Chat / paid message's menu ("Buy your own
@@ -222,7 +214,11 @@ export function findActionEndpoint(data: unknown, actionId: string): RawEndpoint
       if (isPurchase(actionId, menuText(renderer.text))) {
         return undefined
       }
-      return renderer.serviceEndpoint ?? renderer.navigationEndpoint
+      const endpoint = renderer.serviceEndpoint ?? renderer.navigationEndpoint
+      // Enforce the same actionable-endpoint allowlist the menu display used, so a request can't
+      // reach a navigation/report endpoint {@link parseMenuActions} would have hidden — the main
+      // process must not trust the renderer to only send ids that were surfaced as real actions.
+      return hasActionableEndpoint(endpoint) ? endpoint : undefined
     }
   }
   return undefined
@@ -279,9 +275,8 @@ function buttonEndpoint(renderer: RawButtonRenderer): RawEndpoint | undefined {
 }
 
 /**
- * A button's label. The held message's Show/Hide buttons carry a `text`; its inline per-author
- * buttons (Remove / timeout / hide-user) carry only an accessibility label + tooltip, so fall back
- * to those rather than dropping the button for an empty label.
+ * A button's label. The held message's Show/Hide buttons carry a `text`; fall back to an
+ * accessibility label or tooltip rather than dropping a button that has an endpoint but no text.
  */
 function buttonLabel(renderer: RawButtonRenderer): string {
   return menuText(renderer.text) || (renderer.accessibility?.label ?? renderer.tooltip ?? '')
@@ -303,30 +298,45 @@ export function decodeHeldToken(token: string): RawEndpoint | undefined {
 }
 
 /**
- * The actions on a YouTube automod "held for review" message, from the raw renderer. Two groups:
- * `moderationButtons` is the review decision (Show / keep Hidden) — reversible, so not destructive;
- * `inlineActionButtons` is the per-author moderation YouTube hands the held item (Remove / put in
- * timeout / hide user) — destructive, gated behind a confirm. Each button's endpoint is replayed
- * verbatim later (see {@link decodeHeldToken} + the manager), so this never constructs a moderation
- * call. A purchase CTA (should one ever appear) is dropped, like the context menu.
+ * The review-decision actions on a YouTube automod "held for review" message — the `moderationButtons`
+ * (Show / keep Hidden), a reversible toggle. Each button's endpoint is replayed verbatim later (see
+ * {@link decodeHeldToken} + the manager), so this never constructs a moderation call. The renderer's
+ * `inlineActionButtons` (per-author Remove / timeout / hide-user) are deliberately not surfaced here:
+ * the held card carries the same `menuToken` as any message, so those actions are reached by
+ * right-clicking the message — repeating them on the card only enlarges it. A purchase CTA (should one
+ * ever appear) is dropped, like the context menu.
  */
 export function parseHeldActions(renderer: unknown): HeldAction[] {
   if (!isObject(renderer)) {
     return []
   }
   const actions: HeldAction[] = []
-  // Review toggle first (Show, then Hide), then the per-author moderation buttons.
-  collectHeldButtons(renderer['moderationButtons'], 'review', false, actions)
-  collectHeldButtons(renderer['inlineActionButtons'], 'mod', true, actions)
+  collectHeldButtons(renderer['moderationButtons'], actions)
   return actions
 }
 
-function collectHeldButtons(
-  buttons: unknown,
-  prefix: string,
-  perAuthor: boolean,
-  out: HeldAction[]
-): void {
+/**
+ * Whether a held-review button HIDES the message (keep hidden) rather than SHOWS it (publish) — used
+ * to optimistically resolve the row to struck-vs-regular. YouTube gives no icon and no distinct
+ * endpoint to tell Show from Hide apart (both carry a bare `moderateLiveChatEndpoint` with no icon),
+ * so classify by the localized label first (robust to the buttons being reordered), and fall back to
+ * YouTube's documented [Show, Hide] order only for the exact two-button set. A genuinely
+ * unrecognized shape returns undefined, so the renderer leaves the row pending until the server echo.
+ */
+const HELD_HIDE_LABEL = /\b(hide|remove|delete|deny|reject|keep hidden)\b/i
+const HELD_SHOW_LABEL = /\b(show|approve|publish|allow|unhide)\b/i
+
+function heldHides(label: string, index: number, count: number): boolean | undefined {
+  if (HELD_HIDE_LABEL.test(label)) {
+    return true
+  }
+  if (HELD_SHOW_LABEL.test(label)) {
+    return false
+  }
+  return count === 2 ? index > 0 : undefined
+}
+
+function collectHeldButtons(buttons: unknown, out: HeldAction[]): void {
   if (!Array.isArray(buttons)) {
     return
   }
@@ -341,11 +351,17 @@ function collectHeldButtons(
     if (isPurchase(iconType, label)) {
       return
     }
+    // A held review button must replay a moderation endpoint — Show and Hide both carry one. Drop
+    // anything else rather than encoding a non-moderation endpoint into a replayable token: the
+    // manager refuses to run such a token (see runHeldAction), so surfacing it would only mislead.
+    if (deepModerationParams(endpoint) === undefined) {
+      return
+    }
+    const hides = heldHides(label, index, buttons.length)
     out.push({
-      id: iconType ?? `${prefix}-${index}`,
+      id: iconType ?? `review-${index}`,
       label,
-      // The Show/Hide toggle is reversible (no confirm); per-author actions confirm by icon/label.
-      destructive: perAuthor && isDestructive(iconType, label),
+      ...(hides !== undefined && { hides }),
       token: encodeHeldToken(endpoint)
     })
   })

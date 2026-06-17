@@ -1,5 +1,6 @@
 import type { AuthProvider } from '@twurple/auth'
 import type { AuthStore } from '@main/auth/AuthStore'
+import { proxiedFetch } from '@main/net/proxy'
 import { ManagedAuthProvider } from '@main/sources/twitch/ManagedAuthProvider'
 import {
   pollDeviceToken,
@@ -35,6 +36,13 @@ function wait(ms: number): Promise<void> {
 }
 
 /**
+ * An authenticated Helix GET that recovers once from a revoked-but-unexpired token. Returns the
+ * `Response` (the caller checks `.ok`), or undefined when logged out / unconfigured / the request
+ * throws. Injected into the badge/emote/cheermote providers so they don't juggle tokens themselves.
+ */
+export type HelixFetch = (url: string) => Promise<Response | undefined>
+
+/**
  * Holds Twitch user credentials (device-code flow, public client) and hands out
  * a `StaticAuthProvider` for sending. `onChange` fires when login state changes,
  * so the app can reconnect Twitch sources and refresh the UI.
@@ -48,7 +56,11 @@ export class TwitchAuthManager {
   #loginAttempt = 0
   #lastRefreshCompleted = 0
   #refreshing: Promise<void> | undefined
-  // Bumped by logout() so an in-flight refresh can't resurrect cleared credentials.
+  // The token a reconnect was last announced for, so concurrent auth-failure callers that observe
+  // the same rotated token fire onChange once between them, not once each.
+  #lastReconnectedTokens: TwitchTokens | undefined
+  // Bumped by logout() and a successful login() so an in-flight refresh (which snapshots it) can't
+  // resurrect cleared credentials or overwrite a newer account the user just logged into.
   #epoch = 0
 
   constructor(clientId: string | undefined, store: AuthStore, onChange: () => void) {
@@ -91,6 +103,41 @@ export class TwitchAuthManager {
     return this.#tokens?.accessToken
   }
 
+  /**
+   * Authenticated Helix GET with one-shot recovery: `ensureValid()` covers an expired token, and a
+   * 401/403 (a revoked-but-unexpired token) forces {@link handleAuthFailure}, re-reads the token, and
+   * retries once. Centralizes the auth handling the badge/emote/cheermote providers and room-id
+   * lookup would otherwise each have to repeat — without it a revoked token makes them fail silently
+   * until expiry. Returns the `Response` (caller checks `.ok`), or undefined when logged out / the
+   * client id is unset / the request throws.
+   */
+  async helixFetch(url: string): Promise<Response | undefined> {
+    const clientId = this.#clientId
+    if (clientId === undefined) {
+      return undefined
+    }
+    const send = async (): Promise<Response | undefined> => {
+      const token = await this.accessToken()
+      if (token === undefined) {
+        return undefined
+      }
+      return proxiedFetch(url, {
+        headers: { Authorization: `Bearer ${token}`, 'Client-Id': clientId }
+      })
+    }
+    try {
+      const response = await send()
+      if (response === undefined || (response.status !== 401 && response.status !== 403)) {
+        return response
+      }
+      // Revoked-but-unexpired token: force recovery and retry once with the fresh token.
+      await this.handleAuthFailure()
+      return await send()
+    } catch {
+      return undefined
+    }
+  }
+
   getAuthProvider(): AuthProvider | undefined {
     if (this.#tokens === undefined || this.#clientId === undefined) {
       return undefined
@@ -128,7 +175,7 @@ export class TwitchAuthManager {
     try {
       const refreshed = await refreshTokens(clientId, tokens)
       if (epoch !== this.#epoch) {
-        // The user logged out while this refresh was in flight; the logout wins.
+        // The user logged out (or logged in afresh) while this refresh was in flight; that wins.
         return
       }
       this.#tokens = refreshed
@@ -159,8 +206,11 @@ export class TwitchAuthManager {
     const inFlight = this.#refreshing
     if (inFlight !== undefined) {
       // The failure predates the pending refresh's outcome — share it rather than
-      // double-spending the rotated refresh token with a second request.
+      // double-spending the rotated refresh token with a second request. A routine refresh writes
+      // new tokens without firing onChange, so reconnect here if it rotated them — otherwise the
+      // source that failed auth stays disconnected despite fresh credentials.
       await inFlight
+      this.#reconnectIfRotated(tokens)
       return
     }
     if (Date.now() - this.#lastRefreshCompleted < FORCE_REFRESH_GUARD_MS) {
@@ -171,8 +221,22 @@ export class TwitchAuthManager {
     const refresh = this.#refresh(clientId, tokens)
     this.#refreshing = refresh
     await refresh
-    if (this.#tokens !== undefined && this.#tokens !== tokens) {
-      // The forced refresh produced a new token; reconnect sources so they pick it up.
+    // The forced refresh produced a new token; reconnect sources so they pick it up.
+    this.#reconnectIfRotated(tokens)
+  }
+
+  /**
+   * Reconnect sources after a forced refresh if the token actually rotated away from `previous` —
+   * but only once per rotation, so concurrent auth-failure callers (one owning the refresh, the rest
+   * joining it) don't each fire a redundant reconnect for the same fresh token.
+   */
+  #reconnectIfRotated(previous: TwitchTokens): void {
+    if (
+      this.#tokens !== undefined &&
+      this.#tokens !== previous &&
+      this.#tokens !== this.#lastReconnectedTokens
+    ) {
+      this.#lastReconnectedTokens = this.#tokens
       this.#onChange()
     }
   }
@@ -219,6 +283,9 @@ export class TwitchAuthManager {
         }
         this.#tokens = result
         this.#store.set(STORE_KEY, result)
+        // Supersede any refresh still in flight: it snapshotted the old epoch, so the bump makes its
+        // commit a no-op and stops it overwriting this freshly-logged-in account.
+        this.#epoch += 1
         this.#onChange()
         return
       }

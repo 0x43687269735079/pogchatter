@@ -1,5 +1,6 @@
 import type { Innertube } from 'youtubei.js'
 import type { ChatMessage, ClearTarget } from '@shared/model'
+import { isAuthError } from '@main/sources/youtube/authError'
 import { normalizeAction, unknownActionKeys, type RawAction } from '@main/sources/youtube/normalize'
 
 const MIN_TIMEOUT_MS = 1000
@@ -69,6 +70,62 @@ interface RawLiveChatResponse {
   continuationContents?: { liveChatContinuation?: RawLiveChatContinuation }
 }
 
+/**
+ * The moderator "Moderation activity" continuation embedded in the `live_chat` page's ytInitialData,
+ * or undefined. The chat's overflow ("⋮") menu carries a toggle (icon `SHIELD_OVERFLOW`) whose
+ * "turn on" action is a `reloadContinuationData` continuation that, when polled, makes get_live_chat
+ * return the standing held-for-review queue and keep delivering moderation activity — the default
+ * "Top chat"/"Live chat" continuations omit it. The held items are not reachable via extra POST
+ * params; they ride on this continuation. Identified by the toggle icon (locale-independent), then
+ * the reload continuation nested inside it.
+ */
+export function findModerationActivityContinuation(snapshot: unknown): string | undefined {
+  const toggle = findNode(
+    snapshot,
+    (record) => hasShieldIcon(record['defaultIcon']) || hasShieldIcon(record['toggledIcon'])
+  )
+  if (toggle === undefined) {
+    return undefined
+  }
+  const reload = findNode(toggle, (record) => typeof asReloadContinuation(record) === 'string')
+  return reload === undefined ? undefined : asReloadContinuation(reload)
+}
+
+function hasShieldIcon(icon: unknown): boolean {
+  return isRecord(icon) && icon['iconType'] === 'SHIELD_OVERFLOW'
+}
+
+function asReloadContinuation(record: Record<string, unknown>): string | undefined {
+  const reload = record['reloadContinuationData']
+  const token = isRecord(reload) ? reload['continuation'] : undefined
+  return typeof token === 'string' && token !== '' ? token : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
+/** Depth-first search for the first object node satisfying `match`. */
+function findNode(
+  root: unknown,
+  match: (record: Record<string, unknown>) => boolean
+): Record<string, unknown> | undefined {
+  const stack: unknown[] = [root]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!isRecord(current)) {
+      continue
+    }
+    if (match(current)) {
+      return current
+    }
+    for (const value of Object.values(current)) {
+      stack.push(value)
+    }
+  }
+  return undefined
+}
+
 export interface LiveChatHandlers {
   onMessages: (messages: ChatMessage[]) => void
   /** In-place message replacements (held → approved/hidden), keyed by message id. */
@@ -79,6 +136,13 @@ export interface LiveChatHandlers {
   onStall?: () => void
   /** Fired when polling recovers after a stall. */
   onResume?: () => void
+  /**
+   * Fired when a poll fails with an auth error (401/403 — the authed session's rotating cookie aged
+   * out). The owner should recover the session (rotate + rebuild + reconnect); distinct from
+   * {@link onStall} so a stale session isn't mistaken for an ordinary network blip and left to back
+   * off forever. May fire on each auth-failed poll; the owner is expected to debounce recovery.
+   */
+  onAuthError?: () => void
   /**
    * Fired once after {@link BROKEN_THRESHOLD} consecutive poll failures: the continuation is
    * presumed unusable, and the owner should stop this reader and bootstrap a fresh one (via a new
@@ -134,8 +198,14 @@ export class LiveChatReader {
   #pushBehind = false
   /** From a signal frame: forwarded to the next poll as `invalidationPayloadLastPublishAtUsec`. */
   #pendingPublishUsec: string | undefined
-  /** Whether we've already switched from the default Top-chat continuation to Live chat. */
+  /** Whether we've already switched from the default snapshot continuation (to Live or Moderation). */
   #switchedToLive = false
+  /**
+   * The moderator "Moderation activity" continuation from the `live_chat` page snapshot, if it
+   * offered one — polling it makes get_live_chat include the held-for-review queue the default
+   * continuation omits (see {@link findModerationActivityContinuation}). Set once in {@link start}.
+   */
+  #moderationContinuation: string | undefined
   /** Diagnostic: whether the continuation mode has been logged for this reader yet. */
   #loggedMode = false
   /** Parse-health: actions whose type the normalizer recognized (even if they produced no output). */
@@ -181,6 +251,10 @@ export class LiveChatReader {
     }
     this.#running = true
     if (initialResponse !== undefined) {
+      // The page snapshot may carry the moderator's "Moderation activity" toggle; if so, switch the
+      // poll to its continuation (below) so the held-for-review queue keeps arriving, not just the
+      // one-time snapshot.
+      this.#moderationContinuation = findModerationActivityContinuation(initialResponse)
       const delay = this.#handleResponse(initialResponse as RawLiveChatResponse, false)
       // A confirmed end (undefined) stops the reader; otherwise schedule polling from the
       // continuation the snapshot advanced us to (0 when it triggered the Top→Live switch).
@@ -252,9 +326,13 @@ export class LiveChatReader {
     try {
       // Match the browser's get_live_chat body: `webClientInfo` always, and (on a signal-driven
       // poll) the signal's publish timestamp so the server returns the freshly-published items.
+      // `isDocumentHidden: false` is required, not cosmetic: with `true` (tab backgrounded) YouTube
+      // sends the held-for-review automod items as content-less `liveChatPlaceholderItemRenderer`
+      // stubs (which we'd drop), instead of full `liveChatAutoModMessageRenderer`s. The browser
+      // always sends `false` and gets the real held content; we must too.
       const payload: Record<string, unknown> = {
         continuation: this.#continuation,
-        webClientInfo: { isDocumentHidden: true },
+        webClientInfo: { isDocumentHidden: false },
         parse: false
       }
       if (publishUsec !== undefined) {
@@ -270,9 +348,15 @@ export class LiveChatReader {
         return
       }
       timeout = delay
-    } catch {
+    } catch (error) {
       if (!this.#running) {
         return
+      }
+      // A 401/403 means the authed session's rotating cookie aged out — ask the owner to recover the
+      // session (rotate/rebuild/reconnect) rather than just backing off. Still register the failure:
+      // recovery is debounced and may not run this poll, so the stall/broken machinery must continue.
+      if (isAuthError(error)) {
+        this.#handlers.onAuthError?.()
       }
       // Transient network/parse failure — back off, and surface a stall after a few in a row.
       timeout = this.#registerFailure()
@@ -302,21 +386,20 @@ export class LiveChatReader {
     if (live === undefined) {
       return this.#confirmEnd() ? undefined : this.#registerFailure()
     }
-    // CUB-7: getInfo's continuation defaults to "Top chat" (filtered). Switch to "Live chat" (all
-    // messages) once, from the first response's view selector, then re-poll from that continuation.
-    const liveContinuation = this.#liveChatContinuation(live)
-    if (liveContinuation !== undefined) {
-      // This first ("Top chat") response is a snapshot: it already carries the chat's pending state,
-      // including the automod "held for review" backlog a moderator sees on open. The "Live chat"
-      // reload we switch to is not guaranteed to replay that backlog, so surface this snapshot's
-      // actions before switching instead of discarding them. The renderer dedups by id, so any
-      // overlap when the Live reload re-sends the same items is absorbed.
+    // First response is a snapshot on the default continuation. Switch once to the stream we actually
+    // want: the moderator's "Moderation activity" continuation (which keeps delivering the held-for-
+    // review queue) when the page offered it, else the unfiltered "Live chat" view (getInfo's
+    // continuation defaults to filtered "Top chat"). Either way, surface the snapshot's actions first
+    // — it already carries the chat's pending state, and the reload we switch to is not guaranteed to
+    // replay it; the renderer dedups by id, so any overlap is absorbed.
+    const switchTo = this.#initialSwitchContinuation(live)
+    if (switchTo !== undefined) {
       const snapshot = live.actions ?? []
       this.#dispatch(snapshot)
       this.#unreadable = 0
       this.#switchedToLive = true
-      this.#continuation = liveContinuation
-      this.#logSwitch(snapshot.length)
+      this.#continuation = switchTo.continuation
+      this.#logSwitch(snapshot.length, switchTo.kind)
       return 0
     }
     const hadMessages = this.#dispatch(live.actions ?? []) > 0
@@ -444,14 +527,31 @@ export class LiveChatReader {
   }
 
   /**
-   * The "Live chat" continuation to switch to, or undefined. getInfo's continuation defaults to the
-   * "Top chat" view (item 0, selected, message-filtered); the second view-selector item is the
-   * unfiltered "Live chat". Switch once, only while still on the selected-Top default.
+   * The continuation to switch to on the first snapshot and which stream it selects, or undefined.
+   * Prefers the moderator "Moderation activity" continuation (the held-for-review queue) the page
+   * offered; otherwise the unfiltered "Live chat" view. Only once, never on replay.
    */
-  #liveChatContinuation(live: RawLiveChatContinuation): string | undefined {
+  #initialSwitchContinuation(
+    live: RawLiveChatContinuation
+  ): { continuation: string; kind: string } | undefined {
     if (this.#isReplay || this.#switchedToLive) {
       return undefined
     }
+    if (this.#moderationContinuation !== undefined) {
+      return { continuation: this.#moderationContinuation, kind: 'moderation' }
+    }
+    const liveContinuation = this.#liveChatContinuation(live)
+    return liveContinuation === undefined
+      ? undefined
+      : { continuation: liveContinuation, kind: 'live' }
+  }
+
+  /**
+   * The "Live chat" continuation from the view selector, or undefined. getInfo's continuation defaults
+   * to the "Top chat" view (item 0, selected, message-filtered); the second view-selector item is the
+   * unfiltered "Live chat".
+   */
+  #liveChatContinuation(live: RawLiveChatContinuation): string | undefined {
     const items =
       live.header?.liveChatHeaderRenderer?.viewSelector?.sortFilterSubMenuRenderer?.subMenuItems
     if (!Array.isArray(items) || items.length < 2 || items[0]?.selected !== true) {
@@ -460,13 +560,14 @@ export class LiveChatReader {
     return items[1]?.continuation?.reloadContinuationData?.continuation
   }
 
-  #logSwitch(snapshotActions: number): void {
+  #logSwitch(snapshotActions: number, kind: string): void {
     if (!SIGNALER_DEBUG) {
       return
     }
     const time = new Date().toISOString().slice(11, 23)
+    const target = kind === 'moderation' ? 'Moderation activity' : 'Live'
     process.stdout.write(
-      `[${time}] [reader] ${this.#sourceId}: switched Top chat → Live chat (surfaced ${snapshotActions} snapshot actions)\n`
+      `[${time}] [reader] ${this.#sourceId}: switched to ${target} chat (surfaced ${snapshotActions} snapshot actions)\n`
     )
   }
 

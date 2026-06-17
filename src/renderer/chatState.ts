@@ -54,7 +54,15 @@ export function applyEventsToMessages(
         continue // already shown — a re-send or replayed history line
       }
       ids.add(event.message.id)
-      next[event.channelId] = [...(next[event.channelId] ?? []), event.message]
+      // A held-for-review message carries its original send time. The standing moderation backlog a
+      // moderator receives on connect predates the live messages, so slot it into chat order by
+      // timestamp instead of appending it to the bottom. Live messages append (they arrive in order,
+      // so insertByTimestamp would land them at the end anyway — appending keeps that path O(1)).
+      const list = next[event.channelId] ?? []
+      next[event.channelId] =
+        event.message.held !== undefined
+          ? insertByTimestamp(list, event.message)
+          : [...list, event.message]
       touched.add(event.channelId)
       changed = true
     } else if (event.kind === 'replace') {
@@ -85,11 +93,9 @@ export function applyEventsToMessages(
       }
       const { messageId, userId } = event.target
       if (messageId !== undefined) {
-        next[event.channelId] = list.map((m) => (m.id === messageId ? { ...m, deleted: true } : m))
+        next[event.channelId] = list.map((m) => (m.id === messageId ? markDeleted(m) : m))
       } else if (userId !== undefined) {
-        next[event.channelId] = list.map((m) =>
-          m.author.id === userId ? { ...m, deleted: true } : m
-        )
+        next[event.channelId] = list.map((m) => (m.author.id === userId ? markDeleted(m) : m))
       } else {
         next[event.channelId] = []
         idCache.delete(event.channelId) // whole-chat clear: forget the seen ids too
@@ -137,6 +143,49 @@ export function applyEventsToMessages(
     }
   }
   return next
+}
+
+/**
+ * Mark a message deleted (moderator hid/removed it). Also clears any `held` review state: a held
+ * message that's been deleted has been decided, so it should render as a struck "removed" line, not
+ * keep its "awaiting review" card.
+ */
+function markDeleted(message: ChatMessage): ChatMessage {
+  const { held: _held, ...rest } = message
+  return { ...rest, deleted: true }
+}
+
+/**
+ * Resolve a held-for-review row to its decided state right after a moderator acts on it, without
+ * waiting for YouTube to echo the change back through polling: drop the `held` card and render the
+ * message hidden (struck) or published (regular) per the chosen action. Idempotent — a later server
+ * echo for the same id replaces the row in place consistently. Returns `prev` unchanged if the
+ * message isn't buffered, or if `hides` is undefined — an unclassifiable action, left pending so the
+ * server echo (a replace) resolves it rather than an optimistic guess.
+ */
+export function resolveHeldMessage(
+  prev: MessageMap,
+  channelId: string,
+  messageId: string,
+  hides: boolean | undefined
+): MessageMap {
+  if (hides === undefined) {
+    return prev
+  }
+  const list = prev[channelId]
+  if (list === undefined || !list.some((m) => m.id === messageId && m.held !== undefined)) {
+    return prev
+  }
+  return {
+    ...prev,
+    [channelId]: list.map((m) => {
+      if (m.id !== messageId) {
+        return m
+      }
+      const { held: _held, ...rest } = m
+      return { ...rest, deleted: hides }
+    })
+  }
 }
 
 /**

@@ -7,7 +7,7 @@ import {
   useRef,
   useState
 } from 'react'
-import type { ChannelInfo, ChatMessage } from '@shared/model'
+import type { ChannelInfo, ChatMessage, HeldActionHandler } from '@shared/model'
 import { type MessageMap, PAUSED_TRIM_HEADROOM } from '@renderer/chatState'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
@@ -40,6 +40,8 @@ interface CombinedColumnProps {
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */
   onDonationReplies: (message: ChatMessage) => void
+  /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
+  onHeldAction: HeldActionHandler
   onMove: (id: string, direction: -1 | 1) => void
   /** Remove the view; omitted for the built-in flagged view, which the rule set manages. */
   onRemove?: (id: string) => void
@@ -83,6 +85,7 @@ export function CombinedColumn({
   onJump,
   onUserActivity,
   onDonationReplies,
+  onHeldAction,
   onMove,
   onRemove,
   onResize,
@@ -115,12 +118,6 @@ export function CombinedColumn({
   const openContextMenu = useCallback((message: ChatMessage, x: number, y: number) => {
     setMenu({ message, x, y })
   }, [])
-
-  // Held-for-review messages appear here too (the flagged view); replay their inline actions.
-  const runHeldAction = useCallback(
-    (channelId: string, token: string) => window.chat.runHeldAction(channelId, token),
-    []
-  )
 
   function handleScroll(): void {
     const el = bodyRef.current
@@ -270,7 +267,7 @@ export function CombinedColumn({
                   message={message}
                   palette={palette}
                   onContextMenu={openContextMenu}
-                  onHeldAction={runHeldAction}
+                  onHeldAction={onHeldAction}
                   originLabel={origin?.label}
                   originColor={origin?.color}
                   onOriginClick={onJump}

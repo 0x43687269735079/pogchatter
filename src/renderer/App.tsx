@@ -20,6 +20,7 @@ import {
   type ModerationRule,
   type MonitorView,
   type Platform,
+  type SendResult,
   type SourceStatus
 } from '@shared/model'
 import { AddColumn } from '@renderer/components/AddColumn'
@@ -38,7 +39,12 @@ import { YouTubeChannelModal } from '@renderer/components/YouTubeChannelModal'
 import { YouTubeLoginModal } from '@renderer/components/YouTubeLoginModal'
 import { processEvents, seenIdCapacity, SeenMessageIds } from '@renderer/chatEvents'
 import { BacklogGate } from '@renderer/backlogGate'
-import { applyEventsToChannels, applyEventsToMessages, type MessageMap } from '@renderer/chatState'
+import {
+  applyEventsToChannels,
+  applyEventsToMessages,
+  type MessageMap,
+  resolveHeldMessage
+} from '@renderer/chatState'
 import { FLAGGED_COLUMN_ID, reconcileColumnOrder } from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
 import { THEME_PALETTES } from '@renderer/theme'
@@ -558,6 +564,25 @@ export function App(): ReactElement {
     })
   }, [])
 
+  // Run a held message's Show/Hide review action, then resolve the row locally to its decided state
+  // (struck if hidden, regular if shown) so the moderation card clears immediately rather than only
+  // when YouTube echoes the change back. Left in place on failure so the moderator can retry.
+  const handleHeldAction = useCallback(
+    async (
+      channelId: string,
+      messageId: string,
+      token: string,
+      hides: boolean | undefined
+    ): Promise<SendResult> => {
+      const result = await window.chat.runHeldAction(channelId, token)
+      if (result.ok) {
+        setMessages((prev) => resolveHeldMessage(prev, channelId, messageId, hides))
+      }
+      return result
+    },
+    []
+  )
+
   function createMonitor(label: string, members: string[]): void {
     const monitor = { id: `mon-${Date.now()}`, label, members }
     updateSettings({ monitors: [...settingsRef.current.monitors, monitor] })
@@ -639,6 +664,7 @@ export function App(): ReactElement {
                 }}
                 onUserActivity={openUserActivity}
                 onDonationReplies={openDonationThread}
+                onHeldAction={handleHeldAction}
                 onScrollPause={reportScrollPause}
                 monitoredKeys={monitoredKeys}
               />
@@ -662,6 +688,7 @@ export function App(): ReactElement {
                 onJump={jumpToChannel}
                 onUserActivity={openUserActivity}
                 onDonationReplies={openDonationThread}
+                onHeldAction={handleHeldAction}
                 onMove={moveColumn}
                 onRemove={removeMonitor}
                 onResize={(monitorId, value) => {
@@ -689,6 +716,7 @@ export function App(): ReactElement {
                 onJump={jumpToChannel}
                 onUserActivity={openUserActivity}
                 onDonationReplies={openDonationThread}
+                onHeldAction={handleHeldAction}
                 onMove={moveColumn}
                 onResize={(viewId, value) => {
                   setWidths((prev) => ({ ...prev, [viewId]: value }))

@@ -1,7 +1,6 @@
 import { ApiClient } from '@twurple/api'
 import { ChatClient, type ChatClientOptions } from '@twurple/chat'
 import type { ChatAction, ChatMessage, Platform, UserProfile } from '@shared/model'
-import { proxiedFetch } from '@main/net/proxy'
 import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import {
@@ -15,7 +14,7 @@ import {
 } from '@main/sources/twitch/normalize'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
-import type { TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
+import type { HelixFetch, TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
 import type { TwitchBadgeProvider } from '@main/sources/twitch/TwitchBadgeProvider'
 import type { TwitchCheermoteProvider } from '@main/sources/twitch/TwitchCheermoteProvider'
 import type { TwitchEmoteProvider } from '@main/sources/twitch/TwitchEmoteProvider'
@@ -652,24 +651,25 @@ export class TwitchSource extends BaseChatSource {
     return this.#api
   }
 
+  /** A Helix fetcher bound to this source's auth manager (fresh token + one-shot 401/403 recovery). */
+  #helix(): HelixFetch {
+    return (url) => this.#auth.helixFetch(url)
+  }
+
   /** Load Twitch badge images from Helix once logged in (global now; channel art when the room id is known). */
   async #loadBadges(): Promise<void> {
     if (!this.#auth.isLoggedIn) {
       return
     }
-    const clientId = this.#auth.clientId
-    const token = await this.#auth.accessToken()
-    if (clientId === undefined || token === undefined) {
-      return
-    }
-    await this.#badges.ensureGlobal(token, clientId)
-    await this.#cheermotes.ensureGlobal(token, clientId)
+    const helix = this.#helix()
+    await this.#badges.ensureGlobal(helix)
+    await this.#cheermotes.ensureGlobal(helix)
     // Resolve the room id from Helix up front rather than waiting for the first message, so a
     // quiet channel (e.g. a Twitch streamer simulcasting on YouTube) still loads its emotes.
     await this.#ensureRoomId()
     if (this.#roomId !== undefined) {
-      await this.#badges.ensureChannel(this.#roomId, token, clientId)
-      await this.#cheermotes.ensureChannel(this.#roomId, token, clientId)
+      await this.#badges.ensureChannel(this.#roomId, helix)
+      await this.#cheermotes.ensureChannel(this.#roomId, helix)
       void this.#loadChannelEmotes(this.#roomId)
     }
   }
@@ -679,12 +679,7 @@ export class TwitchSource extends BaseChatSource {
     if (this.#roomId !== undefined) {
       return this.#roomId
     }
-    const clientId = this.#auth.clientId
-    const token = await this.#auth.accessToken()
-    if (clientId === undefined || token === undefined) {
-      return undefined
-    }
-    const resolved = await this.#resolveRoomId(token, clientId)
+    const resolved = await this.#resolveRoomId()
     // A chat message may have set the id while the lookup was in flight; keep the first one.
     if (resolved !== undefined && this.#roomId === undefined) {
       this.#roomId = resolved
@@ -694,13 +689,12 @@ export class TwitchSource extends BaseChatSource {
   }
 
   /** Look up this channel's numeric user/room id via Helix (needed by the emote providers). */
-  async #resolveRoomId(token: string, clientId: string): Promise<string | undefined> {
+  async #resolveRoomId(): Promise<string | undefined> {
     try {
-      const response = await proxiedFetch(
-        `https://api.twitch.tv/helix/users?login=${encodeURIComponent(this.#login)}`,
-        { headers: { Authorization: `Bearer ${token}`, 'Client-Id': clientId } }
+      const response = await this.#auth.helixFetch(
+        `https://api.twitch.tv/helix/users?login=${encodeURIComponent(this.#login)}`
       )
-      if (!response.ok) {
+      if (response === undefined || !response.ok) {
         return undefined
       }
       const body = (await response.json()) as { data?: Array<{ id?: string }> }
@@ -715,23 +709,14 @@ export class TwitchSource extends BaseChatSource {
    * connect (first message in a quiet channel), past the connect-time token's ~4h expiry.
    */
   async #loadChannelBadges(roomId: string): Promise<void> {
-    const clientId = this.#auth.clientId
-    const token = await this.#auth.accessToken()
-    if (clientId === undefined || token === undefined) {
-      return
-    }
-    await this.#badges.ensureChannel(roomId, token, clientId)
-    await this.#cheermotes.ensureChannel(roomId, token, clientId)
+    const helix = this.#helix()
+    await this.#badges.ensureChannel(roomId, helix)
+    await this.#cheermotes.ensureChannel(roomId, helix)
   }
 
   /** Fetch this channel's Twitch native emotes into the engine (for the input picker). */
   async #loadChannelEmotes(roomId: string): Promise<void> {
-    const clientId = this.#auth.clientId
-    const token = await this.#auth.accessToken()
-    if (clientId === undefined || token === undefined) {
-      return
-    }
-    const emotes = await this.#twitchEmotes.fetchChannel(roomId, token, clientId)
+    const emotes = await this.#twitchEmotes.fetchChannel(roomId, this.#helix())
     if (emotes.length > 0) {
       this.#emotes.setTwitchChannel(roomId, emotes)
     }

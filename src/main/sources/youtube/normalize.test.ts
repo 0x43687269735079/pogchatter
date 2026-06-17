@@ -427,6 +427,17 @@ describe('unknownActionKeys (parse health)', () => {
     expect(unknownActionKeys(known)).toEqual([])
     expect(unknownActionKeys(unknown)).toEqual(['someNewAction'])
   })
+
+  it('treats the Moderation activity stream control actions as known (no false alarm)', () => {
+    // Arrive once when the reader enters the "Moderation activity" continuation: the mode
+    // acknowledgement and its "Moderation activity on" toast. Neither is a chat item.
+    const toggle = {
+      toggleLiveChatModerationActivityCommand: { hack: true, filtered: false }
+    } as unknown as RawAction
+    const toast = { liveChatAddToToastAction: { item: {} } } as unknown as RawAction
+    expect(unknownActionKeys(toggle)).toEqual([])
+    expect(unknownActionKeys(toast)).toEqual([])
+  })
 })
 
 function membership(renderer: Record<string, unknown>): RawAction {
@@ -569,7 +580,7 @@ function heldAction(overrides: Record<string, unknown> = {}): RawAction {
 }
 
 describe('YouTube held-for-review messages', () => {
-  it('surfaces the wrapped message, the review header, and all inline actions', () => {
+  it('surfaces the wrapped message, the review header, and only the Show/Hide review buttons', () => {
     const { messages } = normalizeAction('src', heldAction())
     expect(messages).toHaveLength(1)
     const message = messages[0]
@@ -579,15 +590,11 @@ describe('YouTube held-for-review messages', () => {
     expect(message?.author.displayName).toBe('Spammer')
     expect(message?.fragments).toEqual([{ type: 'text', text: 'questionable' }])
     expect(message?.held?.headerText).toBe('This message is held for review.')
-    // Review toggle (Show/Hide) is reversible → not destructive; the per-author actions confirm.
-    expect(
-      message?.held?.actions.map((action) => [action.label, action.destructive, action.id])
-    ).toEqual([
-      ['Show', false, 'review-0'],
-      ['Hide', false, 'review-1'],
-      ['Remove', true, 'DELETE'],
-      ['Put user in timeout', true, 'HOURGLASS'],
-      ['Hide user on this channel', true, 'REMOVE_CIRCLE']
+    // Only the Show/Hide review toggle is surfaced on the card; the per-author inlineActionButtons
+    // (Remove / timeout / hide-user) are dropped — they're on the message's right-click menu.
+    expect(message?.held?.actions.map((action) => [action.label, action.id])).toEqual([
+      ['Show', 'review-0'],
+      ['Hide', 'review-1']
     ])
     expect(message?.held?.actions.every((action) => action.token.length > 0)).toBe(true)
   })
@@ -619,6 +626,7 @@ describe('YouTube held-for-review messages', () => {
             authorExternalChannelId: 'UCspam',
             message: { runs: [{ text: 'questionable' }] },
             headerText: { runs: [{ text: 'This message is held for review.' }] },
+            moderationButtons: [modButton('Show', 'APPROVE'), modButton('Hide', 'KEEPHIDDEN')],
             inlineActionButtons: [inlineButton('DELETE', 'Remove', 'REMOVE')]
           }
         }
@@ -631,7 +639,8 @@ describe('YouTube held-for-review messages', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0]?.held?.headerText).toBe('This message is held for review.')
     expect(messages[0]?.fragments).toEqual([{ type: 'text', text: 'questionable' }])
-    expect(messages[0]?.held?.actions.map((action) => action.label)).toEqual(['Remove'])
+    // Only the Show/Hide review buttons; the inline Remove is dropped (it's on the right-click menu).
+    expect(messages[0]?.held?.actions.map((action) => action.label)).toEqual(['Show', 'Hide'])
   })
 
   it('marks a held replacement when it arrives as a plain text renderer with a held header', () => {

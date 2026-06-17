@@ -65,8 +65,6 @@ interface RawRenderer {
   autoModeratedItem?: RawItem
   /** On a held renderer: YouTube's Show/Hide review buttons (raw JSON). */
   moderationButtons?: unknown
-  /** On a held (and now any moderated) renderer: per-author Remove/timeout/hide buttons (raw JSON). */
-  inlineActionButtons?: unknown
   /** On a `liveChatAutoModMessageRenderer`: the "held for review" explanatory line. */
   headerText?: RawText
   /** On a replaced message that was hidden ("Message … hidden by @mod") — present = deleted state. */
@@ -416,8 +414,14 @@ const KNOWN_ACTION_KEYS = new Set([
 const ACTION_METADATA_KEYS = new Set(['clickTrackingParams'])
 // Actions we recognize and deliberately skip — they carry no chat content. Classified so they
 // don't trip the parse-health warning: `liveChatReportModerationStateCommand` accompanies a
-// moderator's own actions to sync the report/hold state, with nothing to render.
-const IGNORED_ACTION_KEYS = new Set(['liveChatReportModerationStateCommand'])
+// moderator's own actions to sync the report/hold state; `toggleLiveChatModerationActivityCommand`
+// and `liveChatAddToToastAction` arrive once when the "Moderation activity" stream is entered (the
+// mode acknowledgement + its "Moderation activity on" toast) — neither is a chat item.
+const IGNORED_ACTION_KEYS = new Set([
+  'liveChatReportModerationStateCommand',
+  'toggleLiveChatModerationActivityCommand',
+  'liveChatAddToToastAction'
+])
 // The item renderers collect() consumes from an addChatItemAction — must mirror RawItem.
 const KNOWN_ITEM_KEYS = new Set([
   'liveChatTextMessageRenderer',

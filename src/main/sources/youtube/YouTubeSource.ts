@@ -461,6 +461,13 @@ export class YouTubeSource extends BaseChatSource {
           this.#refreshStatus()
         }
       },
+      onAuthError: () => {
+        // The authed read session's rotating cookie aged out: recover it (rotate/rebuild) and
+        // reconnect so this reader re-binds to the rebuilt instance. Debounced inside the manager.
+        if (!this.#isStale(generation)) {
+          void this.#auth.recoverReads()
+        }
+      },
       onDegraded: (degraded) => {
         if (!this.#isStale(generation)) {
           this.#chatDegraded = degraded
@@ -495,7 +502,9 @@ export class YouTubeSource extends BaseChatSource {
   ): Promise<void> {
     let initial: unknown
     try {
-      initial = isReplay ? undefined : await this.#auth.fetchLiveChatBootstrap(continuation)
+      initial = isReplay
+        ? undefined
+        : await this.#auth.fetchLiveChatBootstrap(continuation, this.#videoId)
     } catch {
       // The page snapshot is a best-effort enhancement; never let it block ordinary polling.
       initial = undefined
@@ -604,6 +613,10 @@ export class YouTubeSource extends BaseChatSource {
     const generation = this.#begin()
     this.#stopChat()
     this.#clearTimers()
+    // Drop the cached instance so #open re-acquires the current authed reader: a write- or read-path
+    // auth recovery may have rebuilt it, and reusing the superseded instance would keep the reader
+    // bound to the old session.
+    this.#yt = undefined
     await this.#open(generation)
   }
 

@@ -136,21 +136,43 @@ export interface ChatMessage {
 export interface HeldReview {
   /** YouTube's explanatory line, e.g. "Held for review". */
   headerText?: string
-  /** The inline actions YouTube offers on the held message (typically Allow and Remove). */
+  /** The review-decision buttons YouTube offers on the held message (Show / keep Hidden). */
   actions: HeldAction[]
 }
 
-/** One inline action on a held-for-review message; its `token` is replayed by the main process. */
+/**
+ * One review-decision action on a held-for-review message (Show / keep Hidden); its `token` is
+ * replayed by the main process. Per-author moderation (remove/timeout/hide) isn't here — it's on the
+ * message's right-click menu (see {@link ChatMessage.menuToken}).
+ */
 export interface HeldAction {
   /** Stable id for the action (the button's icon type, or its index when none). */
   id: string
-  /** Human label as YouTube names it (e.g. "Allow", "Remove"). */
+  /** Human label as YouTube names it (e.g. "Show", "Hide"). */
   label: string
-  /** Remove/reject-style actions — the UI confirms before running. */
-  destructive: boolean
+  /**
+   * Whether running this action keeps the message hidden (Hide) rather than publishing it (Show) —
+   * so the UI can resolve the held row to its decided state (struck/hidden vs. a regular message)
+   * without waiting for YouTube to echo the change back. Omitted when the action can't be classified
+   * as Show or Hide (a non-standard button shape); the renderer then leaves the row pending until the
+   * server echo resolves it.
+   */
+  hides?: boolean
   /** Opaque token the main process replays to perform the action (see ChatApi.runHeldAction). */
   token: string
 }
+
+/**
+ * Runs a held message's Show/Hide review action and resolves the row to its decided state. `hides`
+ * is the chosen action's {@link HeldAction.hides} (undefined when unclassifiable — the row is left
+ * pending for the server echo); `messageId` identifies the row to resolve.
+ */
+export type HeldActionHandler = (
+  channelId: string,
+  messageId: string,
+  token: string,
+  hides: boolean | undefined
+) => Promise<SendResult>
 
 /**
  * One right-click action available on a chat message for the signed-in account. The set reflects

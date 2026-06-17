@@ -582,16 +582,15 @@ void app
     // into the engine on login, and clear it on logout. Personal emotes need the
     // user:read:emotes scope; a pre-scope login simply yields global emotes only.
     async function loadTwitchEmotes(): Promise<void> {
-      const token = await twitchAuth.accessToken()
-      const clientId = twitchAuth.clientId
-      if (token === undefined || clientId === undefined) {
+      if (!twitchAuth.isLoggedIn || twitchAuth.clientId === undefined) {
         emotes.clearTwitch()
         return
       }
+      const helix = (url: string): Promise<Response | undefined> => twitchAuth.helixFetch(url)
       const userId = twitchAuth.userId
       const [global, user] = await Promise.all([
-        twitchEmotes.fetchGlobal(token, clientId),
-        userId === undefined ? Promise.resolve([]) : twitchEmotes.fetchUser(userId, token, clientId)
+        twitchEmotes.fetchGlobal(helix),
+        userId === undefined ? Promise.resolve([]) : twitchEmotes.fetchUser(userId, helix)
       ])
       emotes.setTwitchGlobal([...global, ...user])
     }
@@ -655,6 +654,14 @@ void app
     // (sending is unavailable until it finishes, reading is unaffected).
     void ytAuth.init().then(() => {
       broadcastAuth()
+      // A startup restore (logged in via stored cookies) doesn't go through the onChange reconnect
+      // that a fresh login/channel-switch does — so YouTube channels opened during the logged-out
+      // startup window keep the ANONYMOUS reader, which can't see moderator-only content (the
+      // held-for-review queue). Reconnect them to re-acquire the authed reader, exactly as a fresh
+      // login would. (No-op when nothing's open yet, or when not logged in.)
+      if (ytAuth.isLoggedIn) {
+        void sourceManager.reconnectByPlatform('youtube')
+      }
     })
 
     // The anonymous YouTube reader, created lazily on the first YouTube channel and used only when

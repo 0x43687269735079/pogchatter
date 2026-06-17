@@ -1,5 +1,5 @@
-import { proxiedFetch } from '@main/net/proxy'
 import type { ResolvedEmote } from '@main/emotes/types'
+import type { HelixFetch } from '@main/sources/twitch/TwitchAuthManager'
 
 const HELIX = 'https://api.twitch.tv/helix'
 const USER_EMOTE_PAGES = 20
@@ -39,23 +39,23 @@ export function emoteFromHelix(raw: HelixEmote, template: string): ResolvedEmote
  * so callers pass them in; any failure (including a missing scope → 401) yields `[]`.
  */
 export class TwitchEmoteProvider {
-  fetchGlobal(token: string, clientId: string): Promise<ResolvedEmote[]> {
-    return this.#fetchPage(`${HELIX}/chat/emotes/global`, token, clientId)
+  fetchGlobal(helix: HelixFetch): Promise<ResolvedEmote[]> {
+    return this.#fetchPage(`${HELIX}/chat/emotes/global`, helix)
   }
 
-  fetchChannel(roomId: string, token: string, clientId: string): Promise<ResolvedEmote[]> {
+  fetchChannel(roomId: string, helix: HelixFetch): Promise<ResolvedEmote[]> {
     const url = `${HELIX}/chat/emotes?broadcaster_id=${encodeURIComponent(roomId)}`
-    return this.#fetchPage(url, token, clientId)
+    return this.#fetchPage(url, helix)
   }
 
   /** All emotes the account can send (paginated). Returns `[]` if the scope wasn't granted. */
-  async fetchUser(userId: string, token: string, clientId: string): Promise<ResolvedEmote[]> {
+  async fetchUser(userId: string, helix: HelixFetch): Promise<ResolvedEmote[]> {
     const out: ResolvedEmote[] = []
     let cursor: string | undefined
     for (let page = 0; page < USER_EMOTE_PAGES; page += 1) {
       const base = `${HELIX}/chat/emotes/user?user_id=${encodeURIComponent(userId)}`
       const url = cursor === undefined ? base : `${base}&after=${encodeURIComponent(cursor)}`
-      const body = await this.#fetchRaw(url, token, clientId)
+      const body = await this.#fetchRaw(url, helix)
       if (body === undefined) {
         break
       }
@@ -71,8 +71,8 @@ export class TwitchEmoteProvider {
     return out
   }
 
-  async #fetchPage(url: string, token: string, clientId: string): Promise<ResolvedEmote[]> {
-    const body = await this.#fetchRaw(url, token, clientId)
+  async #fetchPage(url: string, helix: HelixFetch): Promise<ResolvedEmote[]> {
+    const body = await this.#fetchRaw(url, helix)
     if (body === undefined) {
       return []
     }
@@ -80,16 +80,10 @@ export class TwitchEmoteProvider {
     return (body.data ?? []).map((raw) => emoteFromHelix(raw, template))
   }
 
-  async #fetchRaw(
-    url: string,
-    token: string,
-    clientId: string
-  ): Promise<HelixEmoteResponse | undefined> {
+  async #fetchRaw(url: string, helix: HelixFetch): Promise<HelixEmoteResponse | undefined> {
     try {
-      const response = await proxiedFetch(url, {
-        headers: { Authorization: `Bearer ${token}`, 'Client-Id': clientId }
-      })
-      if (!response.ok) {
+      const response = await helix(url)
+      if (response === undefined || !response.ok) {
         return undefined
       }
       return (await response.json()) as HelixEmoteResponse

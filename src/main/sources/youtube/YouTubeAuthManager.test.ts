@@ -543,6 +543,28 @@ describe('YouTubeAuthManager send resilience', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('reconnects readers after a rebuild even when the retried send fails non-auth (F3-5)', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create
+      .mockResolvedValueOnce(sendInstance(() => Promise.reject(AUTH_401)) as never)
+      // After the rebuild, the retry reaches YouTube but is held (a non-auth application failure).
+      .mockResolvedValueOnce(
+        sendInstance(() =>
+          Promise.resolve(rawResponse({ actions: [{ dimChatItemAction: { itemId: 'x' } }] }))
+        ) as never
+      )
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    await expect(manager.sendMessage('vid12345678', undefined, 'hello')).rejects.toThrow(
+      /held your message/
+    )
+    // The session was rebuilt, so readers reconnect onto it even though the retry failed non-auth.
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(manager.isLoggedIn).toBe(true)
+  })
+
   it('does not retry a non-auth send failure', async () => {
     const store = new FakeStore()
     const manager = newManager(store)
@@ -955,6 +977,43 @@ describe('YouTubeAuthManager.fetchLiveChatBootstrap', () => {
       ok: true
     })
     expect(liveChatHits).toBe(2)
+  })
+
+  it('a debounced recoverReads after a bootstrap rebuild still reconnects open readers (F3-2)', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create
+      .mockResolvedValueOnce(session(true) as never) // login
+      .mockResolvedValueOnce(session(true) as never) // rebuild during the bootstrap recovery
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    const html = '<script>window["ytInitialData"] = {"ok":true};</script>'
+    let liveChatHits = 0
+    vi.stubGlobal('fetch', (input: unknown) => {
+      const url = String(input)
+      if (url.includes('/live_chat?')) {
+        liveChatHits += 1
+        return Promise.resolve(
+          liveChatHits === 1
+            ? new Response('', { status: 401 })
+            : new Response(html, { status: 200 })
+        )
+      }
+      if (url.includes('RotateCookiesPage')) {
+        return Promise.resolve(new Response("init('-1', 0.0)", { status: 200 }))
+      }
+      return Promise.resolve(new Response('', { status: 200 }))
+    })
+
+    // Bootstrap recovery rebuilds auth without reconnecting (it runs inside a connect).
+    await manager.fetchLiveChatBootstrap('cont-token', 'vid12345678')
+    expect(onChange).not.toHaveBeenCalled()
+
+    // The reader's first poll 401s → recoverReads. Its rotation is debounced (the bootstrap just
+    // rotated), but the pending reconnect from that rebuild still fires so the reader rebinds.
+    await manager.recoverReads()
+    expect(onChange).toHaveBeenCalledTimes(1)
   })
 })
 

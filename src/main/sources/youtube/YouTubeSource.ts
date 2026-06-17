@@ -3,6 +3,7 @@ import type { ChatAction, ChatMessage, Platform, SourceStatus, UserProfile } fro
 import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
+import { isAuthError } from '@main/sources/youtube/authError'
 import { LiveChatReader } from '@main/sources/youtube/liveChatReader'
 import { parseReplyThread } from '@main/sources/youtube/normalize'
 import { liveUrl } from '@main/sources/youtube/urls'
@@ -288,9 +289,16 @@ export class YouTubeSource extends BaseChatSource {
     let info: YT.VideoInfo
     try {
       info = await yt.getInfo(videoId)
-    } catch {
+    } catch (error) {
       if (this.#isStale(generation)) {
         return
+      }
+      if (isAuthError(error)) {
+        // A stale authed session 401'd before the live-chat reader exists to recover it on its own.
+        // Drop the cached (stale) instance and rotate/rebuild/reconnect so the next open re-acquires
+        // the rebuilt authed reader instead of looping offline on the dead instance.
+        this.#yt = undefined
+        void this.#auth.recoverReads()
       }
       this.#setStreamStatus({ state: 'offline' })
       this.#scheduleResolve(generation)

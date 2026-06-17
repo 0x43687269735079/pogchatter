@@ -105,11 +105,14 @@ export class TwitchAuthManager {
 
   /**
    * Authenticated Helix GET with one-shot recovery: `ensureValid()` covers an expired token, and a
-   * 401/403 (a revoked-but-unexpired token) forces {@link handleAuthFailure}, re-reads the token, and
+   * 401 (a revoked-but-unexpired token) forces {@link handleAuthFailure}, re-reads the token, and
    * retries once. Centralizes the auth handling the badge/emote/cheermote providers and room-id
    * lookup would otherwise each have to repeat — without it a revoked token makes them fail silently
-   * until expiry. Returns the `Response` (caller checks `.ok`), or undefined when logged out / the
-   * client id is unset / the request throws.
+   * until expiry. A 403 is deliberately NOT recovered: Twitch returns 403 for a forbidden resource or
+   * a missing scope (e.g. a login without `user:read:emotes` hitting the user-emotes endpoint), which
+   * a token refresh can't fix — forcing recovery there would spend the rotation and could log the user
+   * out over an optional-scope read. Such reads degrade to their fallback instead. Returns the
+   * `Response` (caller checks `.ok`), or undefined when logged out / the client id is unset / it throws.
    */
   async helixFetch(url: string): Promise<Response | undefined> {
     const clientId = this.#clientId
@@ -127,7 +130,7 @@ export class TwitchAuthManager {
     }
     try {
       const response = await send()
-      if (response === undefined || (response.status !== 401 && response.status !== 403)) {
+      if (response === undefined || response.status !== 401) {
         return response
       }
       // Revoked-but-unexpired token: force recovery and retry once with the fresh token.

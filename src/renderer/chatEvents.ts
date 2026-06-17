@@ -35,13 +35,13 @@ export class SeenMessageIds {
         if (ids.has(event.message.id)) {
           continue
         }
-        ids.add(event.message.id)
-        while (ids.size > capacity) {
-          const oldest = ids.values().next().value
-          if (oldest === undefined) {
-            break
-          }
-          ids.delete(oldest)
+        this.#remember(ids, event.message.id, capacity)
+      } else if (event.kind === 'replace') {
+        // A replace can surface an unbuffered held/hidden row (the standing moderation backlog), so
+        // record its id — otherwise a later same-id `message` would pass the filter and the alert
+        // pipeline would count/sound/notify for a row that's already shown.
+        if (event.message.held !== undefined || event.message.deleted === true) {
+          this.#remember(this.#idsFor(event.channelId), event.message.id, capacity)
         }
       } else if (event.kind === 'clear') {
         if (event.target.messageId === undefined && event.target.userId === undefined) {
@@ -67,6 +67,18 @@ export class SeenMessageIds {
       this.#byChannel.set(channelId, ids)
     }
     return ids
+  }
+
+  /** Record `id` as seen, evicting the oldest ids past `capacity` (FIFO). */
+  #remember(ids: Set<string>, id: string, capacity: number): void {
+    ids.add(id)
+    while (ids.size > capacity) {
+      const oldest = ids.values().next().value
+      if (oldest === undefined) {
+        break
+      }
+      ids.delete(oldest)
+    }
   }
 }
 

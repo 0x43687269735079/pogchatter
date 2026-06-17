@@ -315,6 +315,13 @@ export class YouTubeAuthManager {
   #epoch = 0
   /** Last read-recovery time (epoch ms), so repeated read 401s debounce the single-use rotation. */
   #lastReadRecovery = 0
+  /**
+   * A read recovery rebuilt `#authed` without reconnecting open readers (the bootstrap path, which
+   * runs inside a connect). The next reconnect-requesting recovery fires `#onChange` even if its
+   * rotation is debounced, so the open reader rebinds to the rebuilt instance without waiting out the
+   * debounce/backoff window.
+   */
+  #reconnectPending = false
 
   constructor(
     store: AuthStore,
@@ -786,6 +793,10 @@ export class YouTubeAuthManager {
           this.logout()
           throw new Error('Your YouTube session expired — please log in to YouTube again')
         }
+        // The session was rebuilt, but the retried write failed for a non-auth reason (slow mode, a
+        // held/rejected send, an unavailable action). Still reconnect readers onto the rebuilt
+        // instance before propagating, so they don't keep polling the superseded one.
+        this.#onChange()
         throw retryError
       }
     }
@@ -816,6 +827,13 @@ export class YouTubeAuthManager {
     }
     const now = Date.now()
     if (now - this.#lastReadRecovery < READ_RECOVERY_DEBOUNCE_MS) {
+      // Rotation is debounced, but if an earlier recovery rebuilt auth without reconnecting (the
+      // bootstrap path), still reconnect now so the open reader rebinds to the already-rebuilt
+      // instance instead of polling the superseded one until the debounce window passes.
+      if (reconnect && this.#reconnectPending) {
+        this.#reconnectPending = false
+        this.#onChange()
+      }
       return
     }
     this.#lastReadRecovery = now
@@ -827,7 +845,12 @@ export class YouTubeAuthManager {
       return
     }
     if (reconnect) {
+      this.#reconnectPending = false
       this.#onChange()
+    } else {
+      // Rebuilt the session but left the open readers on the old instance (we're inside a connect);
+      // remember that a reconnect is owed so the reader's next auth-error recovery fires it.
+      this.#reconnectPending = true
     }
   }
 

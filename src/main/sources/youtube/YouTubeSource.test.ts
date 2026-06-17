@@ -134,6 +134,52 @@ describe('YouTubeSource reader bootstrap retry', () => {
   })
 })
 
+describe('YouTubeSource pre-reader auth recovery (F3-1)', () => {
+  it('recovers and re-acquires the reader when getInfo 401s before the reader exists', async () => {
+    vi.useFakeTimers()
+    try {
+      const auth401 = new Error(
+        'Request to https://www.youtube.com/youtubei/v1/next failed with status code 401'
+      )
+      const yt = {
+        // First open's getInfo 401s on a stale authed session; the rebuilt instance succeeds.
+        getInfo: vi.fn().mockRejectedValueOnce(auth401).mockResolvedValue(liveInfo()),
+        getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
+        actions: { execute: vi.fn().mockResolvedValue(emptyChatResponse()) }
+      }
+      const recoverReads = vi.fn().mockResolvedValue(undefined)
+      const recoveringAuth = {
+        sendMessage: vi.fn(),
+        checkSendRestriction: vi.fn().mockResolvedValue(undefined),
+        getEmojiCatalog: vi.fn().mockResolvedValue([]),
+        fetchLiveChatBootstrap: vi.fn().mockResolvedValue(undefined),
+        recoverReads
+      } as unknown as YouTubeAuthManager
+      const getReader = vi.fn().mockResolvedValue(yt)
+      const source = new YouTubeSource(
+        'aaaaaaaaaaa',
+        getReader as unknown as () => Promise<never>,
+        idleFetch,
+        emotes,
+        recoveringAuth
+      )
+
+      await source.connect()
+      // The 401 triggered a read-session recovery instead of looping on the stale instance.
+      expect(recoverReads).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(60_000) // the rescheduled open re-acquires the reader
+      // #yt was cleared, so the reader was re-acquired (a second getReader) rather than reused.
+      expect(getReader.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(source.status()).toEqual({ state: 'live' })
+
+      await source.disconnect()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('YouTubeSource post-live handling', () => {
   it('treats a channel target resolving to a post-live replay as ended and finds the next stream', async () => {
     vi.useFakeTimers()

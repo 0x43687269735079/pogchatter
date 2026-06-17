@@ -119,6 +119,22 @@ describe('helixFetch (S2-3)', () => {
     expect(proxiedFetch).toHaveBeenCalledTimes(1)
     expect(twitchAuth.refreshTokens).not.toHaveBeenCalled()
   })
+
+  it('does not force recovery on a 403 (missing scope), keeping the login (F3-3)', async () => {
+    const { store, data } = fakeStore(makeTokens())
+    const manager = new TwitchAuthManager('client-id', store, vi.fn())
+    // A login without `user:read:emotes` 403s on the user-emotes endpoint — that's a missing scope,
+    // not a dead token, so it must degrade (return the 403) rather than refresh/log the user out.
+    proxiedFetch.mockResolvedValueOnce({ status: 403, ok: false })
+
+    const response = await manager.helixFetch('https://api.twitch.tv/helix/chat/emotes/user')
+
+    expect(response?.status).toBe(403)
+    expect(proxiedFetch).toHaveBeenCalledTimes(1)
+    expect(twitchAuth.refreshTokens).not.toHaveBeenCalled()
+    expect(manager.isLoggedIn).toBe(true)
+    expect(data.has('twitch')).toBe(true)
+  })
 })
 
 describe('ensureValid', () => {

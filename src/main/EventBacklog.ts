@@ -19,6 +19,8 @@ export class EventBacklog {
         list.splice(0, list.length - BACKLOG_MESSAGES_PER_CHANNEL)
       }
       this.#byChannel.set(event.channelId, list)
+    } else if (event.kind === 'replace') {
+      this.#applyReplace(event.channelId, event.message)
     } else if (event.kind === 'clear') {
       this.#applyClear(event.channelId, event.target)
     } else if (event.kind === 'authorUpdate') {
@@ -54,6 +56,35 @@ export class EventBacklog {
       }
     }
     return events
+  }
+
+  /**
+   * Apply a YouTube `replaceChatItemAction` to the retained ring, mirroring the renderer
+   * ({@link applyEventsToMessages}): update a buffered id in place (a held card decided to
+   * approved/hidden), so a replay shows its decided state rather than the stale pending card; retain
+   * an unbuffered held or hidden replacement (the standing moderation backlog, whose original add
+   * predates this ring) so it isn't lost; ignore a plain unbuffered approved/edited replacement
+   * (nothing to moderate). Retained held items re-sort into chat order on replay (the renderer folds
+   * the snapshot's `message` events through its by-timestamp insert).
+   */
+  #applyReplace(channelId: string, message: ChatMessage): void {
+    const list = this.#byChannel.get(channelId)
+    if (list?.some((m) => m.id === message.id) === true) {
+      this.#byChannel.set(
+        channelId,
+        list.map((m) => (m.id === message.id ? message : m))
+      )
+      return
+    }
+    if (message.held === undefined && message.deleted !== true) {
+      return
+    }
+    const next = list ?? []
+    next.push(message)
+    if (next.length > BACKLOG_MESSAGES_PER_CHANNEL) {
+      next.splice(0, next.length - BACKLOG_MESSAGES_PER_CHANNEL)
+    }
+    this.#byChannel.set(channelId, next)
   }
 
   #applyClear(channelId: string, target: ClearTarget): void {

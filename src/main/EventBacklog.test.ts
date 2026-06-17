@@ -102,6 +102,53 @@ describe('EventBacklog', () => {
     backlog.record({ kind: 'sendRestriction', channelId: 'youtube:c', reason: undefined })
     expect(snapshotMessages(backlog).map((entry) => entry.id)).toEqual(['a'])
   })
+
+  it('replaces a buffered row in place so a decided held card does not resurrect (F3-4)', () => {
+    const backlog = new EventBacklog()
+    backlog.record({
+      kind: 'message',
+      channelId: 'youtube:c',
+      message: { ...message('a'), held: { actions: [] } }
+    })
+    // The held card is decided (hidden) — the ring must show the decided state on replay.
+    backlog.record({
+      kind: 'replace',
+      channelId: 'youtube:c',
+      message: { ...message('a'), deleted: true }
+    })
+    const replayed = backlog
+      .snapshot()
+      .flatMap((event) => (event.kind === 'message' ? [event.message] : []))
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0]?.held).toBeUndefined()
+    expect(replayed[0]?.deleted).toBe(true)
+  })
+
+  it('retains an unbuffered held replacement so the moderation backlog survives a reload (F3-4)', () => {
+    const backlog = new EventBacklog()
+    backlog.record({
+      kind: 'replace',
+      channelId: 'youtube:c',
+      message: { ...message('held-1'), held: { actions: [] } }
+    })
+    const replayed = backlog
+      .snapshot()
+      .flatMap((event) => (event.kind === 'message' ? [event.message] : []))
+    expect(replayed.map((m) => m.id)).toEqual(['held-1'])
+    expect(replayed[0]?.held).toBeDefined()
+  })
+
+  it('retains an unbuffered hidden replacement, and ignores a plain approved one (F3-4)', () => {
+    const backlog = new EventBacklog()
+    backlog.record({
+      kind: 'replace',
+      channelId: 'youtube:c',
+      message: { ...message('rm-1'), deleted: true }
+    })
+    // A plain unbuffered approved/edited replacement is nothing to moderate — dropped.
+    backlog.record({ kind: 'replace', channelId: 'youtube:c', message: message('appr-1') })
+    expect(snapshotMessages(backlog).map((entry) => entry.id)).toEqual(['rm-1'])
+  })
 })
 
 it('back-fills retained messages when an author update arrives', () => {

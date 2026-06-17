@@ -216,6 +216,28 @@ describe('SeenMessageIds', () => {
     expect(muted.notify).toBeUndefined()
   })
 
+  it('records a held/hidden replacement id so a later same-id message raises no alert (F3-6)', () => {
+    const seen = new SeenMessageIds()
+    // An unbuffered held replacement surfaces a visible row; its id must be remembered.
+    const replace: ChatEvent = {
+      kind: 'replace',
+      channelId: 'c',
+      message: message({ held: { actions: [] } })
+    }
+    expect(seen.filter([replace], 100)).toHaveLength(1) // the replace itself passes through
+
+    const live = seen.filter([messageEvent()], 100)
+    expect(live).toEqual([]) // a later same-id message is dropped before the alert policy
+    expect(processEvents(live, alerting).sound).toBe(false)
+  })
+
+  it('does not record a plain (approved/edited) replacement id (F3-6)', () => {
+    const seen = new SeenMessageIds()
+    // A plain replacement creates no row in the renderer, so it must not pre-empt a real message.
+    seen.filter([{ kind: 'replace', channelId: 'c', message: message() }], 100)
+    expect(seen.filter([messageEvent()], 100)).toHaveLength(1)
+  })
+
   it('marks backlog ids as seen so the overlapping live delivery raises no alerts', () => {
     const seen = new SeenMessageIds()
     // Backlog fold: filter marks the ids; the caller tags via processEvents but ignores alerts.

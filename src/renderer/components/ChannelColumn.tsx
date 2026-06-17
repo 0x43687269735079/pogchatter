@@ -47,6 +47,11 @@ interface ChannelColumnProps {
   onScrollPause: (columnId: string, channelIds: readonly string[]) => void
   /** Monitored authors (`<platform>:<authorId>`); the Set's identity changes only on toggle. */
   monitoredKeys?: ReadonlySet<string> | undefined
+  /**
+   * Tab layout: render as the single full-width pane — no fixed width, and the move/resize/remove
+   * chrome is suppressed (those live on the tab). Defaults to a scroll-layout column.
+   */
+  inTab?: boolean
 }
 
 interface ContextMenuState {
@@ -73,7 +78,8 @@ export function ChannelColumn({
   onDonationReplies,
   onHeldAction,
   onScrollPause,
-  monitoredKeys
+  monitoredKeys,
+  inTab = false
 }: ChannelColumnProps): ReactElement {
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -350,8 +356,8 @@ export function ChannelColumn({
     <section
       ref={sectionRef}
       data-colid={channel.id}
-      className={`pc-col ${tag}${active ? ' active' : ''}${flashing ? ' flash' : ''}`}
-      style={{ width: `${width}px`, flex: `0 0 ${width}px` }}
+      className={`pc-col ${tag}${active ? ' active' : ''}${flashing ? ' flash' : ''}${inTab ? ' pc-pane' : ''}`}
+      style={inTab ? undefined : { width: `${width}px`, flex: `0 0 ${width}px` }}
       onMouseDown={() => {
         onActivate(channel.id)
       }}
@@ -380,41 +386,45 @@ export function ChannelColumn({
               {streamsBusy ? '…' : '⤓'}
             </button>
           ) : null}
-          <button
-            type="button"
-            className="pc-icbtn"
-            disabled={!canMoveLeft}
-            title="Move left"
-            aria-label="Move left"
-            onClick={() => {
-              onMove(channel.id, -1)
-            }}
-          >
-            ◂
-          </button>
-          <button
-            type="button"
-            className="pc-icbtn"
-            disabled={!canMoveRight}
-            title="Move right"
-            aria-label="Move right"
-            onClick={() => {
-              onMove(channel.id, 1)
-            }}
-          >
-            ▸
-          </button>
-          <button
-            type="button"
-            className="pc-icbtn x"
-            title="Remove channel"
-            aria-label="Remove channel"
-            onClick={() => {
-              onRemove(channel.id)
-            }}
-          >
-            ✕
-          </button>
+          {!inTab ? (
+            <>
+              <button
+                type="button"
+                className="pc-icbtn"
+                disabled={!canMoveLeft}
+                title="Move left"
+                aria-label="Move left"
+                onClick={() => {
+                  onMove(channel.id, -1)
+                }}
+              >
+                ◂
+              </button>
+              <button
+                type="button"
+                className="pc-icbtn"
+                disabled={!canMoveRight}
+                title="Move right"
+                aria-label="Move right"
+                onClick={() => {
+                  onMove(channel.id, 1)
+                }}
+              >
+                ▸
+              </button>
+              <button
+                type="button"
+                className="pc-icbtn x"
+                title="Remove channel"
+                aria-label="Remove channel"
+                onClick={() => {
+                  onRemove(channel.id)
+                }}
+              >
+                ✕
+              </button>
+            </>
+          ) : null}
         </span>
       </header>
 
@@ -558,13 +568,15 @@ export function ChannelColumn({
         />
       ) : null}
 
-      <div
-        className="pc-col-resize"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize column"
-        onMouseDown={startResize}
-      />
+      {!inTab ? (
+        <div
+          className="pc-col-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize column"
+          onMouseDown={startResize}
+        />
+      ) : null}
     </section>
   )
 }

@@ -19,8 +19,7 @@ import {
   type HighlightRule,
   type ModerationRule,
   type Platform,
-  type SendResult,
-  type SourceStatus
+  type SendResult
 } from '@shared/model'
 import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
@@ -47,10 +46,13 @@ import {
 import {
   FLAGGED_COLUMN_ID,
   moveColumnBy,
+  moveColumnTo,
   reconcileColumnOrder,
   type Column
 } from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
+import { isOnline } from '@renderer/status'
+import { TabBar } from '@renderer/components/TabBar'
 import { THEME_PALETTES } from '@renderer/theme'
 
 const DEFAULT_COL_WIDTH = 340
@@ -67,16 +69,6 @@ function canSendTo(channel: ChannelInfo, auth: AuthState): boolean {
     return auth.twitch.loggedIn
   }
   return auth.youtube.loggedIn && channel.sendRestriction === undefined
-}
-
-/** A source is "online" (LED lit) once its chat is reachable. */
-function isOnline(status: SourceStatus): boolean {
-  return (
-    status.state === 'connected' ||
-    status.state === 'live' ||
-    status.state === 'waiting' ||
-    status.state === 'replay'
-  )
 }
 
 export function App(): ReactElement {
@@ -364,10 +356,15 @@ export function App(): ReactElement {
   const orderedChannels = orderedColumns.flatMap((column) =>
     column.kind === 'channel' ? [column.channel] : []
   )
+  // The selected column: this session's pick if still present, else the tab restored from the last
+  // session (tabs layout), else the leftmost column.
+  const exists = (id: string | undefined): id is string =>
+    id !== undefined && orderedColumns.some((column) => column.id === id)
   const activeId =
-    activeIdState !== undefined && orderedColumns.some((column) => column.id === activeIdState)
-      ? activeIdState
-      : orderedColumns[0]?.id
+    (exists(activeIdState) ? activeIdState : undefined) ??
+    (exists(settings.activeTabId) ? settings.activeTabId : undefined) ??
+    orderedColumns[0]?.id
+  const activeColumn = orderedColumns.find((column) => column.id === activeId)
 
   // An explicit move persists the whole arrangement, so it survives restarts; unmoved columns keep
   // slotting in by the default rule. Both the ±1 step (buttons / Alt+Arrow) and the drag-to-index
@@ -382,6 +379,36 @@ export function App(): ReactElement {
 
   function moveColumn(id: string, direction: -1 | 1): void {
     commitOrder(moveColumnBy(order, id, direction))
+  }
+
+  /** Drag-to-reorder a tab to a target index (its position once removed). */
+  function moveColumnToIndex(id: string, toIndex: number): void {
+    commitOrder(moveColumnTo(order, id, toIndex))
+  }
+
+  /** Select a tab and remember it across restarts (the tabs layout reopens it on launch). */
+  function selectTab(id: string): void {
+    setActiveId(id)
+    updateSettings({ activeTabId: id })
+  }
+
+  /** Remove a column from its tab (a chat or a monitor; the flagged view is pinned). */
+  function removeColumn(id: string): void {
+    if (id === activeId) {
+      // Move to the right neighbour (else the left) so the pane doesn't jump to the leftmost tab.
+      const ids = orderedColumns.map((column) => column.id)
+      const i = ids.indexOf(id)
+      const neighbour = ids[i + 1] ?? ids[i - 1]
+      if (neighbour !== undefined) {
+        selectTab(neighbour)
+      }
+    }
+    const column = orderedColumns.find((c) => c.id === id)
+    if (column?.kind === 'monitor') {
+      removeMonitor(id)
+    } else if (column?.kind === 'channel') {
+      void window.chat.removeChannel(id)
+    }
   }
 
   // Whether any overlay is open — the global shortcuts below stand down so keystrokes can't
@@ -599,6 +626,124 @@ export function App(): ReactElement {
   const theme = settings.theme
   const palette = THEME_PALETTES[theme]
 
+  // One column (chat / monitor / flagged), rendered as a scroll-layout column or, with `inTab`, as
+  // the single full-width tab pane (its move/resize/remove chrome suppressed — that lives on the tab).
+  function renderColumn(column: Column, index: number, inTab: boolean): ReactElement {
+    const canMoveLeft = !inTab && index > 0
+    const canMoveRight = !inTab && index < orderedColumns.length - 1
+    const active = column.id === activeId
+    const width = widths[column.id] ?? DEFAULT_COL_WIDTH
+    if (column.kind === 'channel') {
+      return (
+        <ChannelColumn
+          key={column.id}
+          channel={column.channel}
+          messages={messages[column.id] ?? []}
+          canSend={canSendTo(column.channel, auth)}
+          pingedAt={pingedAt[column.id]}
+          active={active}
+          palette={palette}
+          width={width}
+          canMoveLeft={canMoveLeft}
+          canMoveRight={canMoveRight}
+          inTab={inTab}
+          onActivate={setActiveId}
+          onRemove={(channelId) => {
+            void window.chat.removeChannel(channelId)
+          }}
+          onMove={moveColumn}
+          onResize={(channelId, value) => {
+            setWidths((prev) => ({ ...prev, [channelId]: value }))
+          }}
+          onUserActivity={openUserActivity}
+          onDonationReplies={openDonationThread}
+          onHeldAction={handleHeldAction}
+          onScrollPause={reportScrollPause}
+          monitoredKeys={monitoredKeys}
+        />
+      )
+    }
+    if (column.kind === 'monitor') {
+      return (
+        <CombinedColumn
+          key={column.id}
+          id={column.monitor.id}
+          label={column.monitor.label}
+          memberIds={column.monitor.members}
+          members={column.monitor.members
+            .map((id) => channels.find((channel) => channel.id === id))
+            .filter((channel): channel is ChannelInfo => channel !== undefined)}
+          messagesByChannel={messages}
+          cap={settings.bufferSize}
+          active={active}
+          palette={palette}
+          width={width}
+          canMoveLeft={canMoveLeft}
+          canMoveRight={canMoveRight}
+          inTab={inTab}
+          onActivate={setActiveId}
+          onJump={jumpToChannel}
+          onUserActivity={openUserActivity}
+          onDonationReplies={openDonationThread}
+          onHeldAction={handleHeldAction}
+          onMove={moveColumn}
+          onRemove={removeMonitor}
+          onResize={(monitorId, value) => {
+            setWidths((prev) => ({ ...prev, [monitorId]: value }))
+          }}
+          onScrollPause={reportScrollPause}
+          monitoredKeys={monitoredKeys}
+        />
+      )
+    }
+    return (
+      <CombinedColumn
+        key={column.id}
+        id={column.id}
+        label="messages flagged for moderation"
+        memberIds={allChannelIds}
+        members={channels}
+        messagesByChannel={messages}
+        cap={settings.bufferSize}
+        flaggedOnly
+        active={active}
+        palette={palette}
+        width={width}
+        canMoveLeft={canMoveLeft}
+        canMoveRight={canMoveRight}
+        inTab={inTab}
+        onActivate={setActiveId}
+        onJump={jumpToChannel}
+        onUserActivity={openUserActivity}
+        onDonationReplies={openDonationThread}
+        onHeldAction={handleHeldAction}
+        onMove={moveColumn}
+        onResize={(viewId, value) => {
+          setWidths((prev) => ({ ...prev, [viewId]: value }))
+        }}
+        onScrollPause={reportScrollPause}
+        monitoredKeys={monitoredKeys}
+      />
+    )
+  }
+
+  const addColumn = (
+    <AddColumn
+      open={addOpen}
+      onOpen={() => {
+        setAddOpen(true)
+      }}
+      onClose={() => {
+        setAddOpen(false)
+      }}
+      onAdd={(platform, target) => window.chat.addChannel(platform, target)}
+      onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
+      onCompose={() => {
+        setComposerOpen(true)
+      }}
+    />
+  )
+
   return (
     <div
       className={`pc-app theme-${theme}`}
@@ -633,107 +778,27 @@ export function App(): ReactElement {
         }}
       />
       <div className="pc-screen">
-        <div className="pc-body">
-          {orderedColumns.map((column, index) =>
-            column.kind === 'channel' ? (
-              <ChannelColumn
-                key={column.id}
-                channel={column.channel}
-                messages={messages[column.id] ?? []}
-                canSend={canSendTo(column.channel, auth)}
-                pingedAt={pingedAt[column.id]}
-                active={column.id === activeId}
-                palette={palette}
-                width={widths[column.id] ?? DEFAULT_COL_WIDTH}
-                canMoveLeft={index > 0}
-                canMoveRight={index < orderedColumns.length - 1}
-                onActivate={setActiveId}
-                onRemove={(channelId) => {
-                  void window.chat.removeChannel(channelId)
-                }}
-                onMove={moveColumn}
-                onResize={(channelId, value) => {
-                  setWidths((prev) => ({ ...prev, [channelId]: value }))
-                }}
-                onUserActivity={openUserActivity}
-                onDonationReplies={openDonationThread}
-                onHeldAction={handleHeldAction}
-                onScrollPause={reportScrollPause}
-                monitoredKeys={monitoredKeys}
-              />
-            ) : column.kind === 'monitor' ? (
-              <CombinedColumn
-                key={column.id}
-                id={column.monitor.id}
-                label={column.monitor.label}
-                memberIds={column.monitor.members}
-                members={column.monitor.members
-                  .map((id) => channels.find((channel) => channel.id === id))
-                  .filter((channel): channel is ChannelInfo => channel !== undefined)}
-                messagesByChannel={messages}
-                cap={settings.bufferSize}
-                active={column.id === activeId}
-                palette={palette}
-                width={widths[column.id] ?? DEFAULT_COL_WIDTH}
-                canMoveLeft={index > 0}
-                canMoveRight={index < orderedColumns.length - 1}
-                onActivate={setActiveId}
-                onJump={jumpToChannel}
-                onUserActivity={openUserActivity}
-                onDonationReplies={openDonationThread}
-                onHeldAction={handleHeldAction}
-                onMove={moveColumn}
-                onRemove={removeMonitor}
-                onResize={(monitorId, value) => {
-                  setWidths((prev) => ({ ...prev, [monitorId]: value }))
-                }}
-                onScrollPause={reportScrollPause}
-                monitoredKeys={monitoredKeys}
-              />
-            ) : (
-              <CombinedColumn
-                key={column.id}
-                id={column.id}
-                label="messages flagged for moderation"
-                memberIds={allChannelIds}
-                members={channels}
-                messagesByChannel={messages}
-                cap={settings.bufferSize}
-                flaggedOnly
-                active={column.id === activeId}
-                palette={palette}
-                width={widths[column.id] ?? DEFAULT_COL_WIDTH}
-                canMoveLeft={index > 0}
-                canMoveRight={index < orderedColumns.length - 1}
-                onActivate={setActiveId}
-                onJump={jumpToChannel}
-                onUserActivity={openUserActivity}
-                onDonationReplies={openDonationThread}
-                onHeldAction={handleHeldAction}
-                onMove={moveColumn}
-                onResize={(viewId, value) => {
-                  setWidths((prev) => ({ ...prev, [viewId]: value }))
-                }}
-                onScrollPause={reportScrollPause}
-                monitoredKeys={monitoredKeys}
-              />
-            )
-          )}
-          <AddColumn
-            open={addOpen}
-            onOpen={() => {
-              setAddOpen(true)
-            }}
-            onClose={() => {
-              setAddOpen(false)
-            }}
-            onAdd={(platform, target) => window.chat.addChannel(platform, target)}
-            onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
-            onCompose={() => {
-              setComposerOpen(true)
-            }}
-          />
-        </div>
+        {settings.layout === 'tabs' ? (
+          <>
+            <TabBar
+              columns={orderedColumns}
+              channels={channels}
+              activeId={activeId}
+              onSelect={selectTab}
+              onRemove={removeColumn}
+              onReorder={moveColumnToIndex}
+              trailing={addColumn}
+            />
+            <div className="pc-body pc-body-tabs">
+              {activeColumn !== undefined ? renderColumn(activeColumn, 0, true) : null}
+            </div>
+          </>
+        ) : (
+          <div className="pc-body">
+            {orderedColumns.map((column, index) => renderColumn(column, index, false))}
+            {addColumn}
+          </div>
+        )}
       </div>
       <StatusBar
         channelCount={channels.length}

@@ -36,6 +36,10 @@ interface MessageContextMenuProps {
   onUserActivity?: ((message: ChatMessage) => void) | undefined
   /** Open a Super Chat's reply thread; only shown on a message that replies to a donation. */
   onDonationReplies?: ((message: ChatMessage) => void) | undefined
+  /** Open the Twitch thread modal; only shown when the message is part of a thread. */
+  onViewThread?: ((message: ChatMessage) => void) | undefined
+  /** Whether the message belongs to a thread (computed by the column from its buffer). */
+  isThreaded?: boolean | undefined
 }
 
 /**
@@ -54,7 +58,9 @@ export function MessageContextMenu({
   onReply,
   onJump,
   onUserActivity,
-  onDonationReplies
+  onDonationReplies,
+  onViewThread,
+  isThreaded
 }: MessageContextMenuProps): ReactElement {
   const menuRef = useRef<HTMLDivElement>(null)
   const [actions, setActions] = useState<ChatAction[]>([])
@@ -207,6 +213,8 @@ export function MessageContextMenu({
   // "Donation replies" is only meaningful on a message that replies to a Super Chat (carries a token).
   const hasDonationReplies =
     onDonationReplies !== undefined && message.reply?.threadToken !== undefined
+  // "View thread" shows on any Twitch message the column found to be part of a reply thread.
+  const hasViewThread = onViewThread !== undefined && isThreaded === true
 
   return (
     <>
@@ -295,7 +303,18 @@ export function MessageContextMenu({
                 donation replies
               </button>
             ) : null}
-            {(hasReply || hasJump || hasUserActivity || hasDonationReplies) &&
+            {hasViewThread ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onViewThread?.(message)
+                  onClose()
+                }}
+              >
+                view thread
+              </button>
+            ) : null}
+            {(hasReply || hasJump || hasUserActivity || hasDonationReplies || hasViewThread) &&
             (actions.length > 0 || loading) ? (
               <div className="pc-ctx-sep" />
             ) : null}

@@ -18,7 +18,6 @@ import {
   type BanRule,
   type HighlightRule,
   type ModerationRule,
-  type MonitorView,
   type Platform,
   type SendResult,
   type SourceStatus
@@ -45,7 +44,12 @@ import {
   type MessageMap,
   resolveHeldMessage
 } from '@renderer/chatState'
-import { FLAGGED_COLUMN_ID, reconcileColumnOrder } from '@renderer/columnOrder'
+import {
+  FLAGGED_COLUMN_ID,
+  moveColumnBy,
+  reconcileColumnOrder,
+  type Column
+} from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
 import { THEME_PALETTES } from '@renderer/theme'
 
@@ -74,12 +78,6 @@ function isOnline(status: SourceStatus): boolean {
     status.state === 'replay'
   )
 }
-
-/** A rendered column: a chat channel, a combined monitor view, or the built-in flagged view. */
-type Column =
-  | { kind: 'channel'; id: string; channel: ChannelInfo }
-  | { kind: 'monitor'; id: string; monitor: MonitorView }
-  | { kind: 'flagged'; id: string }
 
 export function App(): ReactElement {
   const [channels, setChannels] = useState<ChannelInfo[]>([])
@@ -371,24 +369,19 @@ export function App(): ReactElement {
       ? activeIdState
       : orderedColumns[0]?.id
 
-  function moveColumn(id: string, direction: -1 | 1): void {
-    const i = order.indexOf(id)
-    const j = i + direction
-    if (i < 0 || j < 0 || j >= order.length) {
+  // An explicit move persists the whole arrangement, so it survives restarts; unmoved columns keep
+  // slotting in by the default rule. Both the ±1 step (buttons / Alt+Arrow) and the drag-to-index
+  // (tab bar) route through here so scroll and tabs share one ordering source of truth.
+  function commitOrder(next: string[]): void {
+    if (next === order) {
       return
     }
-    const a = order[i]
-    const b = order[j]
-    if (a === undefined || b === undefined) {
-      return
-    }
-    const next = [...order]
-    next[i] = b
-    next[j] = a
     setOrder(next)
-    // An explicit move persists the whole arrangement, so it survives restarts; unmoved columns
-    // keep slotting in by the default rule.
     updateSettings({ columnOrder: next })
+  }
+
+  function moveColumn(id: string, direction: -1 | 1): void {
+    commitOrder(moveColumnBy(order, id, direction))
   }
 
   // Whether any overlay is open — the global shortcuts below stand down so keystrokes can't

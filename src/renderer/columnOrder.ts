@@ -1,5 +1,48 @@
+import type { ChannelInfo, MonitorView } from '@shared/model'
+
 /** The built-in flagged-messages view's column id (reserved; not a real channel/monitor). */
 export const FLAGGED_COLUMN_ID = 'flagged'
+
+/** A rendered column: a chat channel, a combined monitor view, or the built-in flagged view. */
+export type Column =
+  | { kind: 'channel'; id: string; channel: ChannelInfo }
+  | { kind: 'monitor'; id: string; monitor: MonitorView }
+  | { kind: 'flagged'; id: string }
+
+/**
+ * Swap a column one step left (`-1`) or right (`+1`). Returns the input array unchanged (same
+ * reference) when it can't move (edge, or id absent), so the caller can skip persisting a no-op.
+ */
+export function moveColumnBy(order: string[], id: string, direction: -1 | 1): string[] {
+  const i = order.indexOf(id)
+  const j = i + direction
+  const a = order[i]
+  const b = order[j]
+  if (i < 0 || j < 0 || j >= order.length || a === undefined || b === undefined) {
+    return order
+  }
+  const next = [...order]
+  next[i] = b
+  next[j] = a
+  return next
+}
+
+/**
+ * Move a column to `toIndex` (its position in the list once removed), for drag-to-reorder. Clamped
+ * to the valid range. Returns the input array unchanged (same reference) when the id is absent or the
+ * position doesn't change, so the caller can skip persisting a no-op.
+ */
+export function moveColumnTo(order: string[], id: string, toIndex: number): string[] {
+  if (!order.includes(id)) {
+    return order
+  }
+  const without = order.filter((existing) => existing !== id)
+  const clamped = Math.max(0, Math.min(without.length, toIndex))
+  const next = [...without.slice(0, clamped), id, ...without.slice(clamped)]
+  return next.length === order.length && next.every((existing, k) => existing === order[k])
+    ? order
+    : next
+}
 
 /**
  * Default left-to-right priority for a column that hasn't been explicitly placed: the flagged

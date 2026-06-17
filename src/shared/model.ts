@@ -538,6 +538,20 @@ export const DEFAULT_SETTINGS: AppSettings = {
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */
 export type SendResult = { ok: true } | { ok: false; error: string }
 
+/**
+ * Reply target for {@link ChatApi.send}. `parentId` is the message being replied to (what Twitch's
+ * native reply uses). The remaining fields let the local echo render as a threaded reply — Twitch
+ * echoes nothing back over the sender's own connection, so the client builds the sent line itself.
+ */
+export interface SendReply {
+  parentId: string
+  parentAuthor?: string
+  parentText?: string
+  /** Thread root id, so the echo (and the root) count as part of the thread. */
+  threadId?: string
+  threadAuthor?: string
+}
+
 /** Result of bulk-adding a YouTube channel's live + waiting-room streams as columns. */
 export type AddStreamsResult =
   | { ok: true; added: number; total: number }
@@ -581,7 +595,7 @@ export interface ChatApi {
   getBacklog(): Promise<ChatEvent[]>
   listChannels(): Promise<ChannelInfo[]>
   /** Send a message. `replyTo` is a Twitch parent message id (native reply); YouTube tags inline instead. */
-  send(channelId: string, text: string, replyTo?: string): Promise<SendResult>
+  send(channelId: string, text: string, reply?: SendReply): Promise<SendResult>
   getAuthState(): Promise<AuthState>
   /** Start Twitch device-code login. Returns the code to enter; completion arrives via an `auth` event. */
   loginTwitch(): Promise<TwitchLoginPrompt>

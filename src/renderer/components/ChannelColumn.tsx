@@ -7,10 +7,10 @@ import {
   useRef,
   useState
 } from 'react'
-import type { ChannelInfo, ChatMessage, HeldActionHandler } from '@shared/model'
+import type { ChannelInfo, ChatMessage, HeldActionHandler, SendReply } from '@shared/model'
 import { EmojiAutocomplete } from '@renderer/components/EmojiAutocomplete'
 import { EmojiPicker } from '@renderer/components/EmojiPicker'
-import { atName } from '@renderer/format'
+import { atName, plainText } from '@renderer/format'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { StatusChip } from '@renderer/components/StatusChip'
@@ -96,10 +96,11 @@ export function ChannelColumn({
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | undefined>(undefined)
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
-  // Twitch native reply target; YouTube tags inline instead, so it needs no state.
-  const [replyTarget, setReplyTarget] = useState<{ id: string; author: string } | undefined>(
-    undefined
-  )
+  // Twitch native reply target; YouTube tags inline instead, so it needs no state. Carries the
+  // parent's text + thread root so the sent echo renders (and threads) like any other reply.
+  const [replyTarget, setReplyTarget] = useState<
+    { id: string; author: string; text: string; threadId: string } | undefined
+  >(undefined)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [flashing, setFlashing] = useState(false)
   const emoji = useEmojiInput(channel.id, inputRef, setDraft)
@@ -288,7 +289,13 @@ export function ChannelColumn({
       return
     }
     if (channel.platform === 'twitch') {
-      setReplyTarget({ id: message.id, author: message.author.displayName })
+      setReplyTarget({
+        id: message.id,
+        author: message.author.displayName,
+        text: plainText(message.fragments),
+        // A reply to a not-yet-threaded message starts a thread rooted at that message.
+        threadId: message.reply?.threadId ?? message.id
+      })
     } else {
       const mention = `${atName(message.author.displayName)} `
       setDraft((current) => (current.startsWith(mention) ? current : `${mention}${current}`))
@@ -301,7 +308,16 @@ export function ChannelColumn({
     if (text === '' || !canSend) {
       return
     }
-    const replyTo = replyTarget?.id
+    const reply: SendReply | undefined =
+      replyTarget !== undefined
+        ? {
+            parentId: replyTarget.id,
+            parentAuthor: replyTarget.author,
+            parentText: replyTarget.text,
+            threadId: replyTarget.threadId,
+            threadAuthor: replyTarget.author
+          }
+        : undefined
     // Optimistic clear: empty the composer immediately so it feels instant despite YouTube's ~1s
     // send latency (the message still posts in the background). Snapshot what we cleared and, if the
     // send fails, restore it — but only if the user hasn't started a new message, so a late failure
@@ -320,7 +336,7 @@ export function ChannelColumn({
     setError(undefined)
     const startedAt = performance.now()
     try {
-      const result = await window.chat.send(channel.id, text, replyTo)
+      const result = await window.chat.send(channel.id, text, reply)
       if (import.meta.env.DEV) {
         const ms = Math.round(performance.now() - startedAt)
         console.debug(`[send] ${channel.id}: round-trip ${ms}ms (${result.ok ? 'ok' : 'rejected'})`)

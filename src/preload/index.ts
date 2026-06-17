@@ -15,6 +15,7 @@ import type {
   ModerationRule,
   Platform,
   PrebanImport,
+  SendReply,
   SendResult,
   TwitchLoginPrompt,
   UserProfile,
@@ -40,14 +41,14 @@ const api: ChatApi = {
   listChannels(): Promise<ChannelInfo[]> {
     return ipcRenderer.invoke('chat:listChannels') as Promise<ChannelInfo[]>
   },
-  send(channelId: string, text: string, replyTo?: string): Promise<SendResult> {
+  send(channelId: string, text: string, reply?: SendReply): Promise<SendResult> {
     // Stamp the click time (Date.now is wall-clock, comparable across processes) as a trailing
     // IPC arg so SEND_DEBUG in main can measure click→handler latency. Not part of the public API.
     return ipcRenderer.invoke(
       'chat:send',
       channelId,
       text,
-      replyTo,
+      reply,
       Date.now()
     ) as Promise<SendResult>
   },

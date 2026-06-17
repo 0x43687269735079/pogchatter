@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ClearTarget,
   Platform,
+  SendReply,
   SourceStatus,
   UserProfile
 } from '@shared/model'
@@ -240,12 +241,12 @@ export class SourceManager {
     }
   }
 
-  async send(channelId: string, text: string, replyTo?: string): Promise<void> {
+  async send(channelId: string, text: string, reply?: SendReply): Promise<void> {
     const source = this.#sources.get(channelId)
     if (!source) {
       throw new Error(`No chat source registered for channel "${channelId}"`)
     }
-    await source.send(text, replyTo)
+    await source.send(text, reply)
   }
 
   /** Right-click actions available on a message (empty if the source/platform has none). */

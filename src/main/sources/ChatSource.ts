@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   ClearTarget,
   Platform,
+  SendReply,
   SourceStatus,
   UserProfile
 } from '@shared/model'
@@ -48,8 +49,8 @@ export interface ChatSource {
   status(): SourceStatus
   connect(): Promise<void>
   disconnect(): Promise<void>
-  /** Send a message as the authenticated user. `replyTo` is a native reply target where supported. Throws if unauthenticated. */
-  send(text: string, replyTo?: string): Promise<void>
+  /** Send a message as the authenticated user. `reply` is a native reply/thread target where supported. Throws if unauthenticated. */
+  send(text: string, reply?: SendReply): Promise<void>
   /** The platform + channel id under which this source's custom emotes are loaded, once known. */
   emoteScope?(): { platform: Platform; channelId: string } | undefined
   /** The video id this source is currently reading, once resolved (YouTube). Used to dedup streams. */
@@ -160,5 +161,5 @@ export abstract class BaseChatSource implements ChatSource {
 
   abstract connect(): Promise<void>
   abstract disconnect(): Promise<void>
-  abstract send(text: string, replyTo?: string): Promise<void>
+  abstract send(text: string, reply?: SendReply): Promise<void>
 }

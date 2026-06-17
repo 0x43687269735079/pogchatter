@@ -14,6 +14,7 @@ import {
   type ModerationRule,
   type Platform,
   type PrebanImport,
+  type SendReply,
   type SendResult,
   type TwitchLoginPrompt
 } from '@shared/model'
@@ -26,6 +27,16 @@ import { isTrustedRendererUrl } from '@main/net/origin'
 import { isPlatform } from '@main/sources/channelId'
 import type { TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
 import type { YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManager'
+
+/** Validate the optional reply payload from `chat:send`: absent, or an object with a string parentId. */
+function isValidSendReply(value: unknown): value is SendReply | undefined {
+  if (value === undefined) {
+    return true
+  }
+  return (
+    typeof value === 'object' && value !== null && typeof (value as SendReply).parentId === 'string'
+  )
+}
 
 /** Adds/removes chat columns and persists the channel list (implemented by the composition root). */
 export interface ChannelService {
@@ -92,12 +103,8 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle('chat:listChannels', () => activeManager.list())
   handle('chat:getBacklog', () => deps.backlogSnapshot())
-  handle('chat:send', async (_event, channelId, text, replyTo, clientTime): Promise<SendResult> => {
-    if (
-      typeof channelId !== 'string' ||
-      typeof text !== 'string' ||
-      (replyTo !== undefined && typeof replyTo !== 'string')
-    ) {
+  handle('chat:send', async (_event, channelId, text, reply, clientTime): Promise<SendResult> => {
+    if (typeof channelId !== 'string' || typeof text !== 'string' || !isValidSendReply(reply)) {
       return { ok: false, error: 'Invalid send request' }
     }
     if (sendDebug && typeof clientTime === 'number') {
@@ -106,7 +113,7 @@ export function registerIpc(deps: IpcDeps): void {
     }
     const startedAt = sendDebug || debugLogEnabled() ? performance.now() : 0
     try {
-      await activeManager.send(channelId, text, replyTo)
+      await activeManager.send(channelId, text, reply)
       if (sendDebug) {
         console.log(`[send] ${channelId}: ok in ${Math.round(performance.now() - startedAt)}ms`)
       }

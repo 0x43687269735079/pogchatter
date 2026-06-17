@@ -366,7 +366,13 @@ describe('TwitchSource.send', () => {
     const client = await connectSource(source)
     client.isConnected = true
     await source.send('hello chat')
-    await source.send('hi again', 'parent-msg-id')
+    await source.send('hi again', {
+      parentId: 'parent-msg-id',
+      parentAuthor: 'Bob',
+      parentText: 'hello',
+      threadId: 'root-id',
+      threadAuthor: 'Streamer'
+    })
     expect(client.say).toHaveBeenNthCalledWith(1, 'somechannel', 'hello chat', undefined)
     expect(client.say).toHaveBeenNthCalledWith(2, 'somechannel', 'hi again', {
       replyTo: 'parent-msg-id'
@@ -375,6 +381,14 @@ describe('TwitchSource.send', () => {
     expect(messages[0]?.self).toBe(true)
     expect(messages[0]?.author.id).toBe('u1')
     expect(messages[0]?.author.name).toBe('modlogin')
+    // The echoed reply carries the thread context so it renders threaded (Twitch echoes nothing back).
+    expect(messages[1]?.reply).toEqual({
+      parentId: 'parent-msg-id',
+      parentAuthor: 'Bob',
+      parentText: 'hello',
+      threadId: 'root-id',
+      threadAuthor: 'Streamer'
+    })
     await source.disconnect()
   })
 

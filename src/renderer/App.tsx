@@ -798,6 +798,7 @@ export function App(): ReactElement {
   const addColumn = (
     <AddColumn
       open={addOpen}
+      variant={settings.layout === 'tabs' ? 'compact' : 'column'}
       onOpen={() => {
         setAddOpen(true)
       }}

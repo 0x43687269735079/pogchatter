@@ -128,7 +128,7 @@ export function TabBar({
           </div>
         )
       })}
-      {trailing !== undefined ? <span className="pc-tab-add">{trailing}</span> : null}
+      {trailing}
     </div>
   )
 }

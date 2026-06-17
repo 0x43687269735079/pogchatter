@@ -434,13 +434,13 @@ body,
   border-bottom: 1px solid var(--rule);
 }
 .pc-tab {
-  flex: 0 0 auto;
-  min-width: 90px;
-  max-width: 220px;
+  flex: 0 1 auto;
+  min-width: 44px;
+  max-width: 170px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 6px 0 10px;
+  gap: 4px;
+  padding: 0 4px 0 8px;
   border-right: 1px solid var(--rule);
   cursor: pointer;
   position: relative;
@@ -544,11 +544,45 @@ body,
 .pc-tab-x:hover {
   color: var(--err);
 }
-.pc-tab-add {
+/* Compact "+" add control at the end of the tab bar, opening the add form as a popover. */
+.pc-tabadd-wrap {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  padding: 0 4px;
+  align-items: stretch;
+}
+.pc-tabadd {
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 9px;
+}
+.pc-tabadd:hover {
+  color: var(--fg);
+  background: var(--sel);
+}
+.pc-addpop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.pc-addpop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 41;
+  width: 248px;
+  background: var(--bgElev);
+  border: 1px solid var(--rule);
+}
+.pc-addpop .pc-ghostbox {
+  margin: 0;
+  width: 100%;
+  border: none;
+  padding: 10px;
 }
 
 .pc-colhead {

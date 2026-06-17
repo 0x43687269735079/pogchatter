@@ -2050,6 +2050,11 @@ body,
   padding: 12px;
   border-top: 1px solid var(--rule);
 }
+/* The thread modal stacks its reply composer above the close button. */
+.pc-modal .mf.pc-thread-foot {
+  flex-direction: column;
+  align-items: stretch;
+}
 .pc-mbtn {
   flex: 1;
   border: 1px solid var(--rule);

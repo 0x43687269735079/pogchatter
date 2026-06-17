@@ -26,6 +26,8 @@ import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
 import { DonationThreadModal } from '@renderer/components/DonationThreadModal'
+import { ThreadModal } from '@renderer/components/ThreadModal'
+import { threadMessages, threadRootAuthor } from '@renderer/threads'
 import { SearchModal } from '@renderer/components/SearchModal'
 import { ModalShell } from '@renderer/components/ModalShell'
 import { MonitorComposer } from '@renderer/components/MonitorComposer'
@@ -94,6 +96,10 @@ export function App(): ReactElement {
   const [donationThread, setDonationThread] = useState<
     { channelId: string; threadToken: string; parentAuthor: string } | undefined
   >(undefined)
+  // The Twitch reply thread that's open, if any (rebuilt from the channel's buffer by root id).
+  const [threadView, setThreadView] = useState<{ channelId: string; rootId: string } | undefined>(
+    undefined
+  )
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
@@ -458,7 +464,8 @@ export function App(): ReactElement {
     searchOpen ||
     settingsOpen ||
     userActivity !== undefined ||
-    donationThread !== undefined
+    donationThread !== undefined ||
+    threadView !== undefined
 
   useEffect(() => {
     function onKey(event: KeyboardEvent): void {
@@ -654,6 +661,15 @@ export function App(): ReactElement {
     })
   }, [])
 
+  // Open the Twitch reply thread a message belongs to, keyed by its root id (a reply's threadId, or
+  // the message's own id when it is the root). Stable for the memoized rows.
+  const openThread = useCallback((message: ChatMessage): void => {
+    setThreadView({
+      channelId: message.channelId,
+      rootId: message.reply?.threadId ?? message.id
+    })
+  }, [])
+
   // Run a held message's Show/Hide review action, then resolve the row locally to its decided state
   // (struck if hidden, regular if shown) so the moderation card clears immediately rather than only
   // when YouTube echoes the change back. Left in place on failure so the moderator can retry.
@@ -727,6 +743,7 @@ export function App(): ReactElement {
           }}
           onUserActivity={openUserActivity}
           onDonationReplies={openDonationThread}
+          onViewThread={openThread}
           onHeldAction={handleHeldAction}
           onScrollPause={reportScrollPause}
           monitoredKeys={monitoredKeys}
@@ -755,6 +772,7 @@ export function App(): ReactElement {
           onJump={jumpToChannel}
           onUserActivity={openUserActivity}
           onDonationReplies={openDonationThread}
+          onViewThread={openThread}
           onHeldAction={handleHeldAction}
           onMove={moveColumn}
           onRemove={removeMonitor}
@@ -786,6 +804,7 @@ export function App(): ReactElement {
         onJump={jumpToChannel}
         onUserActivity={openUserActivity}
         onDonationReplies={openDonationThread}
+        onViewThread={openThread}
         onHeldAction={handleHeldAction}
         onMove={moveColumn}
         onResize={(viewId, value) => {
@@ -805,6 +824,14 @@ export function App(): ReactElement {
       }}
     />
   )
+
+  // Rebuild the open Twitch thread from the live buffer each render so a just-posted reply appears.
+  // Twitch has no chat-history API, so an unbuffered root surfaces as a note inside the modal.
+  const threadBuffer = threadView !== undefined ? (messages[threadView.channelId] ?? []) : []
+  const threadChannel =
+    threadView !== undefined
+      ? channels.find((channel) => channel.id === threadView.channelId)
+      : undefined
 
   return (
     <div
@@ -976,6 +1003,25 @@ export function App(): ReactElement {
           }}
           onClose={() => {
             setDonationThread(undefined)
+          }}
+        />
+      ) : null}
+      {threadView !== undefined ? (
+        <ThreadModal
+          channelId={threadView.channelId}
+          messages={threadMessages(threadBuffer, threadView.rootId)}
+          rootId={threadView.rootId}
+          rootAuthor={threadRootAuthor(threadBuffer, threadView.rootId)}
+          rootBuffered={threadBuffer.some((message) => message.id === threadView.rootId)}
+          canSend={threadChannel !== undefined && canSendTo(threadChannel, auth)}
+          palette={palette}
+          monitoredKeys={monitoredKeys}
+          onJump={(channelId) => {
+            jumpToChannel(channelId)
+            setThreadView(undefined)
+          }}
+          onClose={() => {
+            setThreadView(undefined)
           }}
         />
       ) : null}

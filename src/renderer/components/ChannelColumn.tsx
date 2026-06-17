@@ -14,6 +14,7 @@ import { atName } from '@renderer/format'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { StatusChip } from '@renderer/components/StatusChip'
+import { isInThread, threadCounts } from '@renderer/threads'
 import { useEmojiInput } from '@renderer/useEmojiInput'
 
 const MIN_COL_WIDTH = 240
@@ -38,6 +39,8 @@ interface ChannelColumnProps {
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */
   onDonationReplies: (message: ChatMessage) => void
+  /** Open the Twitch thread modal for a message that's part of a reply thread. */
+  onViewThread: (message: ChatMessage) => void
   /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
   onHeldAction: HeldActionHandler
   /**
@@ -76,6 +79,7 @@ export function ChannelColumn({
   onResize,
   onUserActivity,
   onDonationReplies,
+  onViewThread,
   onHeldAction,
   onScrollPause,
   monitoredKeys,
@@ -250,6 +254,10 @@ export function ChannelColumn({
     setMenu({ message, x, y })
   }, [])
 
+  // Reply-thread membership for this column, recomputed only when the buffer changes (so the
+  // indicator and the right-click "view thread" reflect the latest replies without per-keystroke work).
+  const counts = useMemo(() => threadCounts(messages), [messages])
+
   // Render the rows once per message/identity change, not on every keystroke or status update —
   // on a fast, full chat this keeps typing from re-rendering the whole list (see MessageRow memo).
   // The right-click menu is always available — it offers "User activity" for any line, plus reply
@@ -264,13 +272,21 @@ export function ChannelColumn({
           onContextMenu={openContextMenu}
           onHeldAction={onHeldAction}
           monitoredKeys={monitoredKeys}
+          inThread={isInThread(message, counts)}
+          threadReplyCount={counts.get(message.id)}
         />
       )),
-    [messages, palette, openContextMenu, onHeldAction, monitoredKeys]
+    [messages, palette, openContextMenu, onHeldAction, monitoredKeys, counts]
   )
 
   function startReply(message: ChatMessage): void {
     setMenu(undefined)
+    // Replying to a message already in a thread opens the thread modal (with its own composer)
+    // instead of the inline reply, so the reply lands in — and the user sees — the whole thread.
+    if (channel.platform === 'twitch' && isInThread(message, counts)) {
+      onViewThread(message)
+      return
+    }
     if (channel.platform === 'twitch') {
       setReplyTarget({ id: message.id, author: message.author.displayName })
     } else {
@@ -565,6 +581,8 @@ export function ChannelColumn({
           onReply={canSend ? startReply : undefined}
           onUserActivity={onUserActivity}
           onDonationReplies={onDonationReplies}
+          onViewThread={onViewThread}
+          isThreaded={isInThread(menu.message, counts)}
         />
       ) : null}
 

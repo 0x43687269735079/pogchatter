@@ -2,12 +2,15 @@ import { type ReactElement, type ReactNode, useState } from 'react'
 import type { ChannelInfo } from '@shared/model'
 import type { Column } from '@renderer/columnOrder'
 import { channelTabStatus, monitorTabStatus, type TabStatus } from '@renderer/status'
+import type { UnreadLevel } from '@renderer/unread'
 
 interface TabBarProps {
   columns: Column[]
   /** All channels, to resolve a monitor tab's online status from its members. */
   channels: ChannelInfo[]
   activeId: string | undefined
+  /** Per-column unread level; an inactive tab shows an activity dot or alert accent. */
+  unread?: ReadonlyMap<string, UnreadLevel> | undefined
   onSelect: (id: string) => void
   onRemove: (id: string) => void
   /** Drag-to-reorder: move `id` to the dropped-on tab's index. */
@@ -57,6 +60,7 @@ export function TabBar({
   columns,
   channels,
   activeId,
+  unread,
   onSelect,
   onRemove,
   onReorder,
@@ -68,6 +72,8 @@ export function TabBar({
       {columns.map((column, index) => {
         const info = describe(column, channels)
         const active = info.id === activeId
+        // The active tab is on screen, so it never shows an unread indicator.
+        const level: UnreadLevel = active ? 'none' : (unread?.get(info.id) ?? 'none')
         return (
           <div
             key={info.id}
@@ -75,7 +81,7 @@ export function TabBar({
             aria-selected={active}
             tabIndex={active ? 0 : -1}
             draggable
-            className={`pc-tab ${info.accent}${active ? ' active' : ''}`}
+            className={`pc-tab ${info.accent}${active ? ' active' : ''}${level !== 'none' ? ` ${level}` : ''}`}
             title={info.label}
             onClick={() => {
               onSelect(info.id)
@@ -99,6 +105,12 @@ export function TabBar({
           >
             {info.status !== 'none' ? <span className={`pc-tab-dot ${info.status}`} /> : null}
             <span className="pc-tab-label">{info.label}</span>
+            {level !== 'none' ? (
+              <span
+                className={`pc-tab-unread ${level}`}
+                title={level === 'alert' ? 'new flagged / highlighted message' : 'new messages'}
+              />
+            ) : null}
             {info.closable ? (
               <button
                 type="button"

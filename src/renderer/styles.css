@@ -504,6 +504,29 @@ body,
 .pc-tab-dot.err {
   background: var(--err);
 }
+/* Unread indicators: a dot for new messages, a brighter ring + label for an alert (ping/flag/held). */
+.pc-tab.activity .pc-tab-label,
+.pc-tab.alert .pc-tab-label {
+  color: var(--fg);
+}
+.pc-tab-unread {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 2px;
+}
+.pc-tab-unread.activity {
+  background: var(--dim);
+}
+.pc-tab-unread.alert {
+  background: var(--err);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--err) 35%, transparent);
+}
+.pc-tab.alert::before {
+  background: var(--err);
+  opacity: 1;
+}
 .pc-tab-x {
   flex: 0 0 auto;
   border: none;

@@ -52,6 +52,7 @@ import {
 } from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
 import { isOnline } from '@renderer/status'
+import { clearUnread, foldUnread, type UnreadLevel } from '@renderer/unread'
 import { TabBar } from '@renderer/components/TabBar'
 import { THEME_PALETTES } from '@renderer/theme'
 
@@ -97,6 +98,12 @@ export function App(): ReactElement {
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  // Refs the stable onEvents handler reads for tab-bar unread tracking — it's set up once in a
+  // []-effect, so these must be refs (a closure would capture the first render's values).
+  const layoutRef = useRef(settings.layout)
+  layoutRef.current = settings.layout
+  const activeIdRef = useRef<string | undefined>(undefined)
+  const flaggedVisibleRef = useRef(false)
   // Settings keys the user edited before the persisted settings finished loading, so hydration
   // can adopt the stored values without clobbering those early edits (and an early edit can't
   // pin the whole session to defaults).
@@ -110,6 +117,8 @@ export function App(): ReactElement {
   const [order, setOrder] = useState<string[]>([])
   const [widths, setWidths] = useState<Record<string, number>>({})
   const [activeIdState, setActiveId] = useState<string | undefined>(undefined)
+  // Per-column unread level for the tabs layout (none/activity/alert); transient, never persisted.
+  const [unread, setUnread] = useState<ReadonlyMap<string, UnreadLevel>>(new Map())
 
   // Total messages received; StatusBar samples it at 1 Hz for the msg/s rate, so the per-second
   // re-render stays scoped there instead of cascading through the whole column tree.
@@ -172,6 +181,18 @@ export function App(): ReactElement {
         seenIdCapacity(settingsRef.current.bufferSize)
       )
       const batch = processEvents(fresh, settingsRef.current)
+      // Tab bar unread/alert (tabs layout only): fold the already-tagged batch into per-column levels.
+      if (layoutRef.current === 'tabs') {
+        setUnread((prev) =>
+          foldUnread({
+            prev,
+            events: fresh,
+            activeId: activeIdRef.current,
+            flaggedColumnId: FLAGGED_COLUMN_ID,
+            flaggedVisible: flaggedVisibleRef.current
+          })
+        )
+      }
       if (batch.auth !== undefined) {
         setAuth(batch.auth)
       }
@@ -300,6 +321,7 @@ export function App(): ReactElement {
     }
   }, [messages, heldSeen, hasModerationRules])
   const flaggedVisible = hasModerationRules || heldSeen
+  flaggedVisibleRef.current = flaggedVisible
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
 
@@ -365,6 +387,15 @@ export function App(): ReactElement {
     (exists(settings.activeTabId) ? settings.activeTabId : undefined) ??
     orderedColumns[0]?.id
   const activeColumn = orderedColumns.find((column) => column.id === activeId)
+  activeIdRef.current = activeId
+
+  // Switching into the tabs layout starts with a clean slate — nothing is "unread" the moment you
+  // arrive (every column was visible in scroll mode).
+  useEffect(() => {
+    if (settings.layout === 'tabs') {
+      setUnread(new Map())
+    }
+  }, [settings.layout])
 
   // An explicit move persists the whole arrangement, so it survives restarts; unmoved columns keep
   // slotting in by the default rule. Both the ±1 step (buttons / Alt+Arrow) and the drag-to-index
@@ -386,9 +417,10 @@ export function App(): ReactElement {
     commitOrder(moveColumnTo(order, id, toIndex))
   }
 
-  /** Select a tab and remember it across restarts (the tabs layout reopens it on launch). */
+  /** Select a tab, clear its unread indicator, and remember it across restarts (tabs reopen it). */
   function selectTab(id: string): void {
     setActiveId(id)
+    setUnread((prev) => clearUnread(prev, id))
     updateSettings({ activeTabId: id })
   }
 
@@ -784,6 +816,7 @@ export function App(): ReactElement {
               columns={orderedColumns}
               channels={channels}
               activeId={activeId}
+              unread={unread}
               onSelect={selectTab}
               onRemove={removeColumn}
               onReorder={moveColumnToIndex}

@@ -136,6 +136,26 @@ export function SettingsModal({
 
         <label className="pc-setting">
           <span className="pc-setting-meta">
+            <span className="pc-setting-name">chat layout</span>
+            <span className="pc-setting-desc">
+              Side-by-side columns, or a tab bar showing one chat at a time.
+            </span>
+          </span>
+          <select
+            className="pc-hl-target"
+            value={settings.layout}
+            aria-label="Chat layout"
+            onChange={(event) => {
+              onChange({ layout: event.target.value === 'tabs' ? 'tabs' : 'scroll' })
+            }}
+          >
+            <option value="scroll">side-by-side columns</option>
+            <option value="tabs">tabs</option>
+          </select>
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
             <span className="pc-setting-name">chat text size</span>
             <span className="pc-setting-desc">
               Scales the chat text; window chrome stays compact.

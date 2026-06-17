@@ -276,6 +276,12 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
       .filter((id): id is string => typeof id === 'string' && id !== '')
       .slice(0, 200)
   }
+  if (input['layout'] === 'scroll' || input['layout'] === 'tabs') {
+    settings.layout = input['layout']
+  }
+  if (typeof input['activeTabId'] === 'string' && input['activeTabId'] !== '') {
+    settings.activeTabId = input['activeTabId']
+  }
   const chatLog = sanitizeChatLog(input['chatLog'])
   if (chatLog !== undefined) {
     settings.chatLog = chatLog

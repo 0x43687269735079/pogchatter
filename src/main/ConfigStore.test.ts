@@ -38,6 +38,7 @@ const DEFAULTS = {
   fontSize: 13,
   emoteProviders: { sevenTv: true, bttv: true, ffz: true },
   columnOrder: [],
+  layout: 'scroll',
   chatLog: { enabled: false, directory: '' },
   allowPlaintextCredentials: false,
   keepAwake: true
@@ -65,6 +66,21 @@ describe('ConfigStore settings', () => {
     const store = new ConfigStore()
     expect(store.setSettings({ devMode: 'yes', secret: 'x' } as never)).toEqual(DEFAULTS)
     expect(store.setSettings({ devMode: true })).toEqual({ ...DEFAULTS, devMode: true })
+  })
+
+  it('accepts the two chat layouts and the active tab id, rejecting anything else', () => {
+    const store = new ConfigStore()
+    // Default is the side-by-side layout, with no remembered tab.
+    expect(store.settings().layout).toBe('scroll')
+    expect(store.settings().activeTabId).toBeUndefined()
+    expect(store.setSettings({ layout: 'tabs' }).layout).toBe('tabs')
+    expect(store.setSettings({ layout: 'scroll' }).layout).toBe('scroll')
+    // An unknown value is dropped from the patch, so the prior value is kept (merge semantics).
+    expect(store.setSettings({ layout: 'grid' } as never).layout).toBe('scroll')
+    expect(store.setSettings({ activeTabId: 'youtube:@foo' }).activeTabId).toBe('youtube:@foo')
+    // Empty / wrong-typed active tab ids are ignored, leaving the last valid one in place.
+    expect(store.setSettings({ activeTabId: '' }).activeTabId).toBe('youtube:@foo')
+    expect(store.setSettings({ activeTabId: 42 } as never).activeTabId).toBe('youtube:@foo')
   })
 
   it('keeps only valid highlight rules', () => {

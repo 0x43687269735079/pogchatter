@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  decodeHeldToken,
+  deepModerationParams,
   findActionEndpoint,
   moderationParams,
+  parseHeldActions,
   parseMenuActions,
   resolveConfirmDialog,
   timeoutOptions,
@@ -248,6 +251,27 @@ describe('findActionEndpoint', () => {
   it('returns undefined for an action no longer in the menu', () => {
     expect(findActionEndpoint(moderatorMenu, 'NOPE')).toBeUndefined()
   })
+
+  it('refuses an id whose endpoint is not an actionable chat action (S2-6)', () => {
+    // A navigation-only item ("Go to channel") the display filter hides — requesting its id by
+    // hand must not reach the endpoint the menu would never have surfaced as an action.
+    const menu = {
+      liveChatItemContextMenuSupportedRenderers: {
+        menuRenderer: {
+          items: [
+            {
+              menuNavigationItemRenderer: {
+                icon: { iconType: 'OPEN_IN_NEW' },
+                text: { simpleText: 'Go to channel' },
+                navigationEndpoint: { browseEndpoint: { browseId: 'UC123' }, commandMetadata: {} }
+              }
+            }
+          ]
+        }
+      }
+    }
+    expect(findActionEndpoint(menu, 'OPEN_IN_NEW')).toBeUndefined()
+  })
 })
 
 describe('moderationParams', () => {
@@ -318,5 +342,187 @@ describe('timeoutOptions / timeoutParams', () => {
   it('is empty for a non-timeout endpoint', () => {
     expect(timeoutOptions(findActionEndpoint(moderatorMenu, 'DELETE'))).toEqual([])
     expect(timeoutOptions(undefined)).toEqual([])
+  })
+})
+
+describe('parseHeldActions', () => {
+  // The real held renderer (capture auto-moderation/1): Show/Hide carry a `text`; the per-author
+  // inline buttons carry only an icon + accessibility label.
+  const renderer = {
+    moderationButtons: [
+      {
+        buttonRenderer: {
+          text: { simpleText: 'Show' },
+          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
+        }
+      },
+      {
+        buttonRenderer: {
+          text: { simpleText: 'Hide' },
+          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'KEEP' } }
+        }
+      }
+    ],
+    inlineActionButtons: [
+      {
+        buttonRenderer: {
+          icon: { iconType: 'DELETE' },
+          accessibility: { label: 'Remove' },
+          tooltip: 'Remove',
+          serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REM' } }
+        }
+      },
+      {
+        buttonRenderer: {
+          icon: { iconType: 'REMOVE_CIRCLE' },
+          accessibility: { label: 'Hide user on this channel' },
+          // The moderate endpoint may be wrapped (command executor) — deepModerationParams finds it.
+          serviceEndpoint: {
+            commandExecutorCommand: { commands: [{ moderateLiveChatEndpoint: { params: 'BAN' } }] }
+          }
+        }
+      }
+    ]
+  }
+
+  it('parses only the Show/Hide review toggle, with labels, ids, and hides flags', () => {
+    const actions = parseHeldActions(renderer)
+    // Show/Hide come from moderationButtons; the per-author inlineActionButtons are intentionally
+    // dropped (they're reached by right-clicking the message instead). The first button shows
+    // (hides=false), the second hides (hides=true).
+    expect(actions.map((action) => [action.label, action.id, action.hides])).toEqual([
+      ['Show', 'review-0', false],
+      ['Hide', 'review-1', true]
+    ])
+    expect(deepModerationParams(decodeHeldToken(actions[0]?.token ?? ''))).toBe('APP')
+    expect(deepModerationParams(decodeHeldToken(actions[1]?.token ?? ''))).toBe('KEEP')
+  })
+
+  it('classifies hides by label, not position, so a reordered Hide/Show set still resolves correctly', () => {
+    // YouTube gives no icon to tell Show from Hide apart, only the label — so a reordered set must
+    // classify by label rather than index, or the optimistic struck/unstruck would be inverted.
+    const actions = parseHeldActions({
+      moderationButtons: [
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Hide' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'KEEP' } }
+          }
+        },
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Show' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
+          }
+        }
+      ]
+    })
+    expect(actions.map((action) => [action.label, action.hides])).toEqual([
+      ['Hide', true],
+      ['Show', false]
+    ])
+  })
+
+  it('falls back to the [Show, Hide] order for a localized two-button set', () => {
+    // Non-English labels match neither allowlist; the documented two-button order still resolves.
+    const actions = parseHeldActions({
+      moderationButtons: [
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Afficher' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
+          }
+        },
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Masquer' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'KEEP' } }
+          }
+        }
+      ]
+    })
+    expect(actions.map((action) => action.hides)).toEqual([false, true])
+  })
+
+  it('leaves hides unset for an unrecognized label outside the standard two-button set', () => {
+    const actions = parseHeldActions({
+      moderationButtons: [
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Show' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
+          }
+        },
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Hide' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'KEEP' } }
+          }
+        },
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Escalate' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'ESC' } }
+          }
+        }
+      ]
+    })
+    // Show/Hide still classify by label; the unknown third action is left pending (no optimistic flip).
+    expect(actions.map((action) => [action.label, action.hides])).toEqual([
+      ['Show', false],
+      ['Hide', true],
+      ['Escalate', undefined]
+    ])
+  })
+
+  it('drops the per-author inlineActionButtons entirely', () => {
+    const actions = parseHeldActions({
+      inlineActionButtons: [
+        {
+          buttonRenderer: {
+            icon: { iconType: 'DELETE' },
+            accessibility: { label: 'Remove' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'REM' } }
+          }
+        }
+      ]
+    })
+    expect(actions).toEqual([])
+  })
+
+  it('drops endpoint-less buttons and buttons that are not a moderation action', () => {
+    const actions = parseHeldActions({
+      moderationButtons: [
+        {},
+        { buttonRenderer: { text: { simpleText: 'No endpoint' } } },
+        {
+          // A non-moderation endpoint (navigation) is dropped, not surfaced as a replayable token —
+          // the manager would refuse to run it, and encoding it would only mislead (S2-6).
+          buttonRenderer: {
+            text: { simpleText: 'Open' },
+            navigationEndpoint: { urlEndpoint: { url: 'x' } }
+          }
+        },
+        {
+          buttonRenderer: {
+            text: { simpleText: 'Show' },
+            serviceEndpoint: { moderateLiveChatEndpoint: { params: 'APP' } }
+          }
+        }
+      ]
+    })
+    // Only the moderation button survives.
+    expect(actions).toHaveLength(1)
+    expect(actions[0]?.label).toBe('Show')
+    expect(deepModerationParams(decodeHeldToken(actions[0]?.token ?? ''))).toBe('APP')
+  })
+
+  it('ignores a non-object renderer and never throws', () => {
+    expect(parseHeldActions(undefined)).toEqual([])
+    expect(parseHeldActions({})).toEqual([])
+  })
+
+  it('decodeHeldToken returns undefined on a malformed token', () => {
+    expect(decodeHeldToken('@@@ not valid base64 json @@@')).toBeUndefined()
   })
 })

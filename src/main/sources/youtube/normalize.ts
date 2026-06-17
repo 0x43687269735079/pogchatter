@@ -4,9 +4,11 @@ import type {
   ChatMessage,
   ClearTarget,
   Fragment,
+  HeldReview,
   Highlight,
   ReplyContext
 } from '@shared/model'
+import { parseHeldActions } from '@main/sources/youtube/liveChatActions'
 
 // Minimal shapes of the raw InnerTube live-chat renderers we consume. Parsing the
 // raw JSON (rather than youtubei.js's typed LiveChat) keeps one unexpected action
@@ -59,6 +61,14 @@ interface RawRenderer {
   headerPrimaryText?: RawText
   /** The "⋮" menu token; opens the per-message action menu (report/block/moderation). */
   contextMenuEndpoint?: { liveChatItemContextMenuEndpoint?: { params?: string } }
+  /** On a `liveChatAutoModMessageRenderer`: the wrapped message held for review. */
+  autoModeratedItem?: RawItem
+  /** On a held renderer: YouTube's Show/Hide review buttons (raw JSON). */
+  moderationButtons?: unknown
+  /** On a `liveChatAutoModMessageRenderer`: the "held for review" explanatory line. */
+  headerText?: RawText
+  /** On a replaced message that was hidden ("Message … hidden by @mod") — present = deleted state. */
+  deletedStateMessage?: RawText
   /**
    * On a reply to a Super Chat, a chip whose tap opens the donation's reply thread and whose title
    * is the donor's handle — the only marker that ties a reply back to the donation it answers.
@@ -84,6 +94,7 @@ interface RawItem {
   liveChatPaidMessageRenderer?: RawRenderer
   liveChatPaidStickerRenderer?: RawRenderer
   liveChatMembershipItemRenderer?: RawRenderer
+  liveChatAutoModMessageRenderer?: RawRenderer
 }
 export interface RawAction {
   addChatItemAction?: { item?: RawItem }
@@ -95,6 +106,9 @@ export interface RawAction {
   removeChatItemAction?: { targetItemId?: string }
   removeChatItemByAuthorAction?: { externalChannelId?: string }
   replayChatItemAction?: { actions?: RawAction[] }
+  // Replace a message in place (held → approved text, or → a hidden deleted-state placeholder); the
+  // replacement renderer carries the same id as the target.
+  replaceChatItemAction?: { targetItemId?: string; replacementItem?: RawItem }
 }
 
 function pickThumb(thumbs: RawThumbs | undefined): string {
@@ -297,10 +311,66 @@ function baseMessage(sourceId: string, renderer: RawRenderer): ChatMessage {
   if (menuToken !== undefined && menuToken !== '') {
     message.menuToken = menuToken
   }
+  // A replaced message YouTube has hidden carries a "Message … hidden by @mod" deletedStateMessage;
+  // render it like any moderator-deleted line (dimmed/struck, or hidden per the reveal setting).
+  if (renderer.deletedStateMessage !== undefined) {
+    message.deleted = true
+  }
+  // A message held for review carries a headerText. It arrives wrapped in a
+  // liveChatAutoModMessageRenderer when freshly held (handled by heldMessage), but in the Live view
+  // and the standing backlog it comes as an ordinary renderer bearing that same header — so detect
+  // it here, by the header, for that shape.
+  const held = buildHeld(renderer)
+  if (held !== undefined) {
+    message.held = held
+  }
   const reply = donationReply(renderer)
   if (reply !== undefined) {
     message.reply = reply
   }
+  return message
+}
+
+/**
+ * The held-for-review state on a message renderer, or undefined if it isn't held. YouTube marks a
+ * held message with a headerText ("This message is held for review.") plus its Show/Hide review
+ * buttons and per-author moderation buttons. It reaches us two ways — wrapped in a
+ * liveChatAutoModMessageRenderer when freshly held, or, in the Live view and the standing backlog, as
+ * an ordinary renderer carrying that same header — and the header is the signal common to both.
+ */
+function buildHeld(renderer: RawRenderer): HeldReview | undefined {
+  const header = textToString(renderer.headerText)
+  if (header === '') {
+    return undefined
+  }
+  return { actions: parseHeldActions(renderer), headerText: header }
+}
+
+/**
+ * A YouTube automod "held for review" message (`liveChatAutoModMessageRenderer`). YouTube delivers
+ * these only to moderators/the broadcaster: the visible message (author + text) is the wrapped
+ * `autoModeratedItem`, while the outer renderer carries the review header, the inline approve/remove
+ * buttons, the per-author moderation menu, and the id the held item is later approved/removed under.
+ */
+function heldMessage(sourceId: string, outer: RawRenderer): ChatMessage {
+  const inner = outer.autoModeratedItem
+  const innerRenderer =
+    inner?.liveChatTextMessageRenderer ??
+    inner?.liveChatPaidMessageRenderer ??
+    inner?.liveChatMembershipItemRenderer
+  // Build the visible row from the wrapped item (author + text), falling back to the outer renderer
+  // if YouTube ever omits the inner one.
+  const message = baseMessage(sourceId, innerRenderer ?? outer)
+  // The held container owns the id — a later replaceChatItemAction (approve → text, or hide →
+  // deleted state) targets it. The wrapped item carries the same id in practice; prefer the outer
+  // one explicitly. The ⋮ menu token comes from the wrapped item (baseMessage already set it); the
+  // held renderer has no top-level context menu of its own.
+  if (outer.id !== undefined && outer.id !== '') {
+    message.id = outer.id
+  }
+  // The autoMod wrapper is always held; its header/buttons live on the outer renderer (the inner
+  // item only supplied the visible text above, so baseMessage didn't see them).
+  message.held = buildHeld(outer) ?? { actions: parseHeldActions(outer) }
   return message
 }
 
@@ -317,15 +387,16 @@ function applyAmount(
   return message
 }
 
-/** Expand one raw chat action into normalized messages and clear targets. */
+/** Expand one raw chat action into normalized new messages, in-place replacements, and clears. */
 export function normalizeAction(
   sourceId: string,
   action: RawAction
-): { messages: ChatMessage[]; clears: ClearTarget[] } {
+): { messages: ChatMessage[]; replacements: ChatMessage[]; clears: ClearTarget[] } {
   const messages: ChatMessage[] = []
+  const replacements: ChatMessage[] = []
   const clears: ClearTarget[] = []
-  collect(sourceId, action, messages, clears)
-  return { messages, clears }
+  collect(sourceId, action, messages, replacements, clears)
+  return { messages, replacements, clears }
 }
 
 // The action types collect() consumes — must mirror RawAction. Anything else at an action's top
@@ -336,16 +407,28 @@ const KNOWN_ACTION_KEYS = new Set([
   'markChatItemsByAuthorAsDeletedAction',
   'removeChatItemAction',
   'removeChatItemByAuthorAction',
-  'replayChatItemAction'
+  'replayChatItemAction',
+  'replaceChatItemAction'
 ])
 // Metadata that rides alongside an action key on the same object without being an action type.
 const ACTION_METADATA_KEYS = new Set(['clickTrackingParams'])
+// Actions we recognize and deliberately skip — they carry no chat content. Classified so they
+// don't trip the parse-health warning: `liveChatReportModerationStateCommand` accompanies a
+// moderator's own actions to sync the report/hold state; `toggleLiveChatModerationActivityCommand`
+// and `liveChatAddToToastAction` arrive once when the "Moderation activity" stream is entered (the
+// mode acknowledgement + its "Moderation activity on" toast) — neither is a chat item.
+const IGNORED_ACTION_KEYS = new Set([
+  'liveChatReportModerationStateCommand',
+  'toggleLiveChatModerationActivityCommand',
+  'liveChatAddToToastAction'
+])
 // The item renderers collect() consumes from an addChatItemAction — must mirror RawItem.
 const KNOWN_ITEM_KEYS = new Set([
   'liveChatTextMessageRenderer',
   'liveChatPaidMessageRenderer',
   'liveChatPaidStickerRenderer',
-  'liveChatMembershipItemRenderer'
+  'liveChatMembershipItemRenderer',
+  'liveChatAutoModMessageRenderer'
 ])
 // Item renderers we recognize and deliberately don't render — informational, not chat content.
 // Classified here so they don't trip the parse-health warning (seen in the field: the
@@ -366,9 +449,17 @@ export function unknownActionKeys(action: RawAction): string[] {
   return unknown
 }
 
+function reportUnknownItemKeys(item: RawItem | undefined, out: string[]): void {
+  for (const itemKey of Object.keys(item ?? {})) {
+    if (!KNOWN_ITEM_KEYS.has(itemKey) && !IGNORED_ITEM_KEYS.has(itemKey)) {
+      out.push(itemKey)
+    }
+  }
+}
+
 function collectUnknownKeys(action: RawAction, out: string[]): void {
   for (const key of Object.keys(action)) {
-    if (ACTION_METADATA_KEYS.has(key)) {
+    if (ACTION_METADATA_KEYS.has(key) || IGNORED_ACTION_KEYS.has(key)) {
       continue
     }
     if (!KNOWN_ACTION_KEYS.has(key)) {
@@ -378,11 +469,9 @@ function collectUnknownKeys(action: RawAction, out: string[]): void {
         collectUnknownKeys(inner, out)
       }
     } else if (key === 'addChatItemAction') {
-      for (const itemKey of Object.keys(action.addChatItemAction?.item ?? {})) {
-        if (!KNOWN_ITEM_KEYS.has(itemKey) && !IGNORED_ITEM_KEYS.has(itemKey)) {
-          out.push(itemKey)
-        }
-      }
+      reportUnknownItemKeys(action.addChatItemAction?.item, out)
+    } else if (key === 'replaceChatItemAction') {
+      reportUnknownItemKeys(action.replaceChatItemAction?.replacementItem, out)
     }
   }
 }
@@ -391,11 +480,27 @@ function collect(
   sourceId: string,
   action: RawAction,
   messages: ChatMessage[],
+  replacements: ChatMessage[],
   clears: ClearTarget[]
 ): void {
   if (action.replayChatItemAction !== undefined) {
     for (const inner of action.replayChatItemAction.actions ?? []) {
-      collect(sourceId, inner, messages, clears)
+      collect(sourceId, inner, messages, replacements, clears)
+    }
+    return
+  }
+  if (action.replaceChatItemAction !== undefined) {
+    const target = action.replaceChatItemAction.targetItemId
+    const item = action.replaceChatItemAction.replacementItem
+    if (target !== undefined && item !== undefined) {
+      // Normalize the replacement through the same item dispatch, then key it to the target id so it
+      // updates that row in place (held → approved text, or → a hidden deleted-state placeholder).
+      const replaced: ChatMessage[] = []
+      collect(sourceId, { addChatItemAction: { item } }, replaced, [], clears)
+      for (const replacement of replaced) {
+        replacement.id = target
+        replacements.push(replacement)
+      }
     }
     return
   }
@@ -450,6 +555,8 @@ function collect(
         renderer.backgroundColor
       )
     )
+  } else if (item.liveChatAutoModMessageRenderer !== undefined) {
+    messages.push(heldMessage(sourceId, item.liveChatAutoModMessageRenderer))
   } else if (item.liveChatMembershipItemRenderer !== undefined) {
     const renderer = item.liveChatMembershipItemRenderer
     // baseMessage keeps the member's own milestone-chat text (renderer.message) as fragments; the

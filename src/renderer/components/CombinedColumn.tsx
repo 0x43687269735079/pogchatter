@@ -7,7 +7,7 @@ import {
   useRef,
   useState
 } from 'react'
-import type { ChannelInfo, ChatMessage } from '@shared/model'
+import type { ChannelInfo, ChatMessage, HeldActionHandler } from '@shared/model'
 import { type MessageMap, PAUSED_TRIM_HEADROOM } from '@renderer/chatState'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
@@ -28,7 +28,6 @@ interface CombinedColumnProps {
   cap: number
   /** Show only moderation-flagged messages (the flagged view) instead of every message (a monitor). */
   flaggedOnly?: boolean
-  revealDeleted: boolean
   active: boolean
   palette: readonly string[]
   width: number
@@ -41,6 +40,8 @@ interface CombinedColumnProps {
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */
   onDonationReplies: (message: ChatMessage) => void
+  /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
+  onHeldAction: HeldActionHandler
   onMove: (id: string, direction: -1 | 1) => void
   /** Remove the view; omitted for the built-in flagged view, which the rule set manages. */
   onRemove?: (id: string) => void
@@ -75,7 +76,6 @@ export function CombinedColumn({
   messagesByChannel,
   cap,
   flaggedOnly,
-  revealDeleted,
   active,
   palette,
   width,
@@ -85,6 +85,7 @@ export function CombinedColumn({
   onJump,
   onUserActivity,
   onDonationReplies,
+  onHeldAction,
   onMove,
   onRemove,
   onResize,
@@ -265,8 +266,8 @@ export function CombinedColumn({
                   key={`${message.channelId} ${message.id}`}
                   message={message}
                   palette={palette}
-                  revealDeleted={revealDeleted}
                   onContextMenu={openContextMenu}
+                  onHeldAction={onHeldAction}
                   originLabel={origin?.label}
                   originColor={origin?.color}
                   onOriginClick={onJump}

@@ -172,6 +172,20 @@ export function registerIpc(deps: IpcDeps): void {
       }
     }
   )
+  handle('chat:runHeldAction', async (_event, channelId, token): Promise<SendResult> => {
+    if (typeof channelId !== 'string' || typeof token !== 'string') {
+      return { ok: false, error: 'Invalid action request' }
+    }
+    try {
+      await activeManager.runHeldAction(channelId, token)
+      debugLog('action', 'held ok', { channelId })
+      return { ok: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Action failed'
+      debugLog('action', 'held failed', { channelId, error: message })
+      return { ok: false, error: message }
+    }
+  })
   handle('chat:getAuthState', () => deps.authState())
   handle('chat:loginTwitch', async (): Promise<TwitchLoginPrompt> => {
     debugLog('login', 'twitch start')

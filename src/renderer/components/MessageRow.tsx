@@ -1,5 +1,12 @@
-import { type CSSProperties, Fragment, memo, type ReactElement, type ReactNode } from 'react'
-import type { ChatMessage, Fragment as Frag } from '@shared/model'
+import {
+  type CSSProperties,
+  Fragment,
+  memo,
+  type ReactElement,
+  type ReactNode,
+  useState
+} from 'react'
+import type { ChatMessage, Fragment as Frag, HeldAction, HeldActionHandler } from '@shared/model'
 import { Avatar } from '@renderer/components/Avatar'
 import { Badges } from '@renderer/components/Badges'
 import { EmoteImg } from '@renderer/components/EmoteImg'
@@ -130,9 +137,9 @@ function bitsColor(count: number): string {
 interface MessageRowProps {
   message: ChatMessage
   palette: readonly string[]
-  /** Show a deleted message's original text (dimmed + struck) instead of "message removed". */
-  revealDeleted: boolean
   onContextMenu?: ((message: ChatMessage, x: number, y: number) => void) | undefined
+  /** Run a held-for-review message's Show/Hide review action; resolves the row with the outcome. */
+  onHeldAction?: HeldActionHandler | undefined
   /**
    * Origin tag for a combined monitor view (the column this message came from); omitted elsewhere.
    * Passed as plain strings so the memoized row compares them by value and isn't re-rendered each
@@ -151,6 +158,98 @@ interface MessageRowProps {
 }
 
 /**
+ * A YouTube automod "held for review" message: a compact card with the review header, the message,
+ * and YouTube's Show / keep-Hidden review buttons. Both decisions are reversible, so they run on a
+ * single click. Per-author moderation (remove/timeout/hide) isn't repeated here — right-click (or the
+ * ⋮ menu) opens the standard moderation menu for the author. Manages its own busy/error state, so
+ * it's a component rather than an inline branch of MessageRow (which can't hold hooks past its early
+ * returns).
+ */
+function HeldCard({
+  message,
+  palette,
+  onContextMenu,
+  onHeldAction
+}: {
+  message: ChatMessage
+  palette: readonly string[]
+  onContextMenu?: ((message: ChatMessage, x: number, y: number) => void) | undefined
+  onHeldAction?: HeldActionHandler | undefined
+}): ReactElement {
+  const held = message.held
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
+  const name = message.author.displayName
+
+  async function run(action: HeldAction): Promise<void> {
+    if (onHeldAction === undefined) {
+      return
+    }
+    setBusy(true)
+    setError(undefined)
+    try {
+      // On success the handler resolves this row to its decided state (struck if hidden, regular if
+      // shown), clearing the card immediately rather than waiting for YouTube to echo the change.
+      const result = await onHeldAction(message.channelId, message.id, action.token, action.hides)
+      if (!result.ok) {
+        setError(result.error)
+      }
+    } catch {
+      setError('action failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="pc-held"
+      onContextMenu={
+        onContextMenu !== undefined
+          ? (event): void => {
+              event.preventDefault()
+              onContextMenu(message, event.clientX, event.clientY)
+            }
+          : undefined
+      }
+    >
+      <div className="pc-held-head">⚑ {held?.headerText ?? 'held for review'}</div>
+      <div className="pc-held-body">
+        <div className="pc-held-content">
+          <div className="pc-held-meta">
+            <Avatar name={message.author.name} url={message.author.avatarUrl} palette={palette} />
+            <span
+              className="pc-user"
+              style={{ color: message.author.color ?? nameColor(name, palette) }}
+            >
+              {atName(name)}
+            </span>
+            <Badges badges={message.author.badges} />
+            <span className="pc-time">{clockHM(message.timestamp)}</span>
+          </div>
+          <div className="pc-held-text">{renderFragments(message.fragments)}</div>
+        </div>
+        <div className="pc-held-actions">
+          {(held?.actions ?? []).map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              disabled={busy || onHeldAction === undefined}
+              onClick={() => {
+                void run(action)
+              }}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {error !== undefined ? <div className="pc-held-err">{error}</div> : null}
+    </div>
+  )
+}
+
+/**
  * A single chat line. Memoized: a fast chat re-renders its column on every incoming message and on
  * every keystroke in the composer, so re-running the regex-heavy fragment rendering for all ~500
  * buffered rows each time would starve the main thread (and the autoscroll). With stable `message`,
@@ -159,8 +258,8 @@ interface MessageRowProps {
 export const MessageRow = memo(function MessageRow({
   message,
   palette,
-  revealDeleted,
   onContextMenu,
+  onHeldAction,
   originLabel,
   originColor,
   onOriginClick,
@@ -176,6 +275,19 @@ export const MessageRow = memo(function MessageRow({
   const time = clockHM(message.timestamp)
   const name = message.author.displayName
   const highlight = message.highlight
+
+  // A YouTube automod "held for review" message renders as its own card with inline approve/remove
+  // actions; the ⋮ menu (handleContextMenu) still offers per-author moderation (hide/ban/timeout).
+  if (message.held !== undefined) {
+    return (
+      <HeldCard
+        message={message}
+        palette={palette}
+        onContextMenu={onContextMenu}
+        onHeldAction={onHeldAction}
+      />
+    )
+  }
 
   if (highlight?.kind === 'superchat' || highlight?.kind === 'supersticker') {
     const base = highlight.color ?? '#1976d2'
@@ -344,19 +456,19 @@ export const MessageRow = memo(function MessageRow({
               ⚑
             </span>
           ) : null}
-          {message.deleted === true ? <span className="pc-del-tag">⌀</span> : null}
+          {message.deleted === true ? (
+            <span className="pc-del-tag" title="Hidden by a moderator — visible to you only">
+              HIDDEN
+            </span>
+          ) : null}
           <Badges badges={message.author.badges} />
           <span className="pc-user" style={{ color }}>
             {message.self === true ? name : atName(name)}
           </span>
           <span className="pc-colon">:</span>
-          <span className="pc-text">
-            {message.deleted === true && !revealDeleted ? (
-              <s>message removed by a moderator</s>
-            ) : (
-              renderFragments(message.fragments)
-            )}
-          </span>
+          {/* A hidden/removed message always shows its content (a moderator can act on it either
+              way); the tinted `.del` row + the HIDDEN tag mark it clearly. */}
+          <span className="pc-text">{renderFragments(message.fragments)}</span>
         </span>
       </div>
     </Fragment>

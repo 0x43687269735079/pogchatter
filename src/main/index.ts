@@ -285,6 +285,25 @@ if (debugLogEnabled()) {
 function debugLogChatEvent(event: ChatEvent): void {
   if (event.kind === 'message') {
     debugMessageCounts.set(event.channelId, (debugMessageCounts.get(event.channelId) ?? 0) + 1)
+    // A held-for-review message is the moderator-only signal we want to see arriving; log each one
+    // distinctly (id + action count) rather than burying it in the 30s message tally.
+    if (event.message.held !== undefined) {
+      debugLog('held', event.channelId, {
+        id: event.message.id,
+        actions: event.message.held.actions.length
+      })
+    }
+    return
+  }
+  if (event.kind === 'replace') {
+    // Distinguish a held-for-review replacement (a pending card) from a moderator's hide (struck
+    // "removed"): a moderated message can arrive as a replace of an item we never buffered, and
+    // which it is decides whether the renderer should surface it standalone.
+    debugLog('replace', event.channelId, {
+      id: event.message.id,
+      held: event.message.held !== undefined,
+      deleted: event.message.deleted === true
+    })
     return
   }
   if (event.kind === 'status') {
@@ -563,16 +582,15 @@ void app
     // into the engine on login, and clear it on logout. Personal emotes need the
     // user:read:emotes scope; a pre-scope login simply yields global emotes only.
     async function loadTwitchEmotes(): Promise<void> {
-      const token = await twitchAuth.accessToken()
-      const clientId = twitchAuth.clientId
-      if (token === undefined || clientId === undefined) {
+      if (!twitchAuth.isLoggedIn || twitchAuth.clientId === undefined) {
         emotes.clearTwitch()
         return
       }
+      const helix = (url: string): Promise<Response | undefined> => twitchAuth.helixFetch(url)
       const userId = twitchAuth.userId
       const [global, user] = await Promise.all([
-        twitchEmotes.fetchGlobal(token, clientId),
-        userId === undefined ? Promise.resolve([]) : twitchEmotes.fetchUser(userId, token, clientId)
+        twitchEmotes.fetchGlobal(helix),
+        userId === undefined ? Promise.resolve([]) : twitchEmotes.fetchUser(userId, helix)
       ])
       emotes.setTwitchGlobal([...global, ...user])
     }
@@ -614,13 +632,16 @@ void app
       void loadUserEmotes()
     })
 
-    // YouTube sending only; reading uses a separate unauthenticated instance so
-    // login never interrupts the live-chat readers.
+    // When logged in, the live-chat reader polls with the authenticated session (see
+    // getYouTubeReader) so YouTube delivers the moderator-only "held for review" items; logged out,
+    // it falls back to the anonymous instance below. An auth change therefore reconnects the open
+    // YouTube chats so each re-bootstraps with the right session.
     const ytAuth = new YouTubeAuthManager(
       store,
       identity.userAgent,
       () => visitorData,
       () => {
+        void sourceManager.reconnectByPlatform('youtube')
         // Same as the Twitch path: fresh cookies (or a channel switch) may restore moderation
         // permissions, so auto-mod's per-channel pauses must not outlive the login.
         autoMod?.resetPermanentFailures('youtube')
@@ -633,9 +654,18 @@ void app
     // (sending is unavailable until it finishes, reading is unaffected).
     void ytAuth.init().then(() => {
       broadcastAuth()
+      // A startup restore (logged in via stored cookies) doesn't go through the onChange reconnect
+      // that a fresh login/channel-switch does — so YouTube channels opened during the logged-out
+      // startup window keep the ANONYMOUS reader, which can't see moderator-only content (the
+      // held-for-review queue). Reconnect them to re-acquire the authed reader, exactly as a fresh
+      // login would. (No-op when nothing's open yet, or when not logged in.)
+      if (ytAuth.isLoggedIn) {
+        void sourceManager.reconnectByPlatform('youtube')
+      }
     })
 
-    // The unauthenticated YouTube reader is created lazily on the first YouTube channel.
+    // The anonymous YouTube reader, created lazily on the first YouTube channel and used only when
+    // logged out (the authenticated session is preferred while logged in — see getYouTubeReader).
     let youtubeReader: Promise<Innertube> | undefined
     const createYouTubeReader = async (): Promise<Innertube> => {
       // Reuse the persisted visitor identity across restarts (instead of a fresh random one each
@@ -653,6 +683,13 @@ void app
       return yt
     }
     const getYouTubeReader = (): Promise<Innertube> => {
+      // Prefer the authenticated session while logged in, so moderator-only items (held-for-review
+      // messages) arrive; the anonymous instance is the logged-out fallback. Read the authed
+      // instance fresh each call — it's rebuilt on cookie rotation/recovery.
+      const authed = ytAuth.readerInnertube()
+      if (authed !== undefined) {
+        return Promise.resolve(authed)
+      }
       if (youtubeReader === undefined) {
         // Reset the cache on failure so one transient error doesn't poison every later YouTube add.
         youtubeReader = createYouTubeReader().catch((error: unknown) => {

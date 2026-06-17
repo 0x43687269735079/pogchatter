@@ -1,4 +1,4 @@
-import { proxiedFetch } from '@main/net/proxy'
+import type { HelixFetch } from '@main/sources/twitch/TwitchAuthManager'
 
 const HELIX = 'https://api.twitch.tv/helix'
 
@@ -42,24 +42,23 @@ export class TwitchCheermoteProvider {
   #global: CheermoteMap | undefined
   readonly #channels = new Map<string, CheermoteMap>()
 
-  async ensureGlobal(token: string, clientId: string): Promise<void> {
+  async ensureGlobal(helix: HelixFetch): Promise<void> {
     if (this.#global !== undefined) {
       return
     }
-    const map = await this.#fetch(`${HELIX}/bits/cheermotes`, token, clientId)
+    const map = await this.#fetch(`${HELIX}/bits/cheermotes`, helix)
     if (map !== undefined) {
       this.#global = map
     }
   }
 
-  async ensureChannel(roomId: string, token: string, clientId: string): Promise<void> {
+  async ensureChannel(roomId: string, helix: HelixFetch): Promise<void> {
     if (this.#channels.has(roomId)) {
       return
     }
     const map = await this.#fetch(
       `${HELIX}/bits/cheermotes?broadcaster_id=${encodeURIComponent(roomId)}`,
-      token,
-      clientId
+      helix
     )
     if (map !== undefined) {
       this.#channels.set(roomId, map)
@@ -94,12 +93,10 @@ export class TwitchCheermoteProvider {
     return undefined
   }
 
-  async #fetch(url: string, token: string, clientId: string): Promise<CheermoteMap | undefined> {
+  async #fetch(url: string, helix: HelixFetch): Promise<CheermoteMap | undefined> {
     try {
-      const response = await proxiedFetch(url, {
-        headers: { Authorization: `Bearer ${token}`, 'Client-Id': clientId }
-      })
-      if (!response.ok) {
+      const response = await helix(url)
+      if (response === undefined || !response.ok) {
         return undefined
       }
       const body = (await response.json()) as HelixCheermoteResponse

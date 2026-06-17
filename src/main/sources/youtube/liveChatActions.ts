@@ -1,4 +1,4 @@
-import type { ChatAction } from '@shared/model'
+import type { ChatAction, HeldAction } from '@shared/model'
 
 /**
  * Parsing for YouTube's live-chat per-message "⋮" menu (`live_chat/get_item_context_menu`). The
@@ -214,7 +214,11 @@ export function findActionEndpoint(data: unknown, actionId: string): RawEndpoint
       if (isPurchase(actionId, menuText(renderer.text))) {
         return undefined
       }
-      return renderer.serviceEndpoint ?? renderer.navigationEndpoint
+      const endpoint = renderer.serviceEndpoint ?? renderer.navigationEndpoint
+      // Enforce the same actionable-endpoint allowlist the menu display used, so a request can't
+      // reach a navigation/report endpoint {@link parseMenuActions} would have hidden — the main
+      // process must not trust the renderer to only send ids that were surfaced as real actions.
+      return hasActionableEndpoint(endpoint) ? endpoint : undefined
     }
   }
   return undefined
@@ -253,4 +257,124 @@ export function resolveConfirmDialog(endpoint: RawEndpoint): RawEndpoint | undef
   }
   const action = renderer['serviceEndpoint'] ?? renderer['navigationEndpoint']
   return isObject(action) ? action : undefined
+}
+
+interface RawButtonRenderer {
+  text?: RawText
+  icon?: { iconType?: string }
+  accessibility?: { label?: string }
+  tooltip?: string
+  serviceEndpoint?: RawEndpoint
+  navigationEndpoint?: RawEndpoint
+  command?: RawEndpoint
+}
+
+/** The endpoint a button replays — YouTube puts it under any of these keys. */
+function buttonEndpoint(renderer: RawButtonRenderer): RawEndpoint | undefined {
+  return renderer.serviceEndpoint ?? renderer.navigationEndpoint ?? renderer.command
+}
+
+/**
+ * A button's label. The held message's Show/Hide buttons carry a `text`; fall back to an
+ * accessibility label or tooltip rather than dropping a button that has an endpoint but no text.
+ */
+function buttonLabel(renderer: RawButtonRenderer): string {
+  return menuText(renderer.text) || (renderer.accessibility?.label ?? renderer.tooltip ?? '')
+}
+
+/** Encode a raw button endpoint into the opaque token the renderer hands back to runHeldAction. */
+function encodeHeldToken(endpoint: RawEndpoint): string {
+  return Buffer.from(JSON.stringify(endpoint), 'utf8').toString('base64')
+}
+
+/** Decode a held-action token back to its raw endpoint, or undefined if malformed. */
+export function decodeHeldToken(token: string): RawEndpoint | undefined {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(token, 'base64').toString('utf8'))
+    return isObject(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The review-decision actions on a YouTube automod "held for review" message — the `moderationButtons`
+ * (Show / keep Hidden), a reversible toggle. Each button's endpoint is replayed verbatim later (see
+ * {@link decodeHeldToken} + the manager), so this never constructs a moderation call. The renderer's
+ * `inlineActionButtons` (per-author Remove / timeout / hide-user) are deliberately not surfaced here:
+ * the held card carries the same `menuToken` as any message, so those actions are reached by
+ * right-clicking the message — repeating them on the card only enlarges it. A purchase CTA (should one
+ * ever appear) is dropped, like the context menu.
+ */
+export function parseHeldActions(renderer: unknown): HeldAction[] {
+  if (!isObject(renderer)) {
+    return []
+  }
+  const actions: HeldAction[] = []
+  collectHeldButtons(renderer['moderationButtons'], actions)
+  return actions
+}
+
+/**
+ * Whether a held-review button HIDES the message (keep hidden) rather than SHOWS it (publish) — used
+ * to optimistically resolve the row to struck-vs-regular. YouTube gives no icon and no distinct
+ * endpoint to tell Show from Hide apart (both carry a bare `moderateLiveChatEndpoint` with no icon),
+ * so classify by the localized label first (robust to the buttons being reordered), and fall back to
+ * YouTube's documented [Show, Hide] order only for the exact two-button set. A genuinely
+ * unrecognized shape returns undefined, so the renderer leaves the row pending until the server echo.
+ */
+const HELD_HIDE_LABEL = /\b(hide|remove|delete|deny|reject|keep hidden)\b/i
+const HELD_SHOW_LABEL = /\b(show|approve|publish|allow|unhide)\b/i
+
+function heldHides(label: string, index: number, count: number): boolean | undefined {
+  if (HELD_HIDE_LABEL.test(label)) {
+    return true
+  }
+  if (HELD_SHOW_LABEL.test(label)) {
+    return false
+  }
+  return count === 2 ? index > 0 : undefined
+}
+
+function collectHeldButtons(buttons: unknown, out: HeldAction[]): void {
+  if (!Array.isArray(buttons)) {
+    return
+  }
+  buttons.forEach((button, index) => {
+    const renderer = isObject(button) ? (button['buttonRenderer'] as RawButtonRenderer) : undefined
+    const endpoint = isObject(renderer) ? buttonEndpoint(renderer) : undefined
+    const label = renderer === undefined ? '' : buttonLabel(renderer)
+    if (renderer === undefined || endpoint === undefined || label === '') {
+      return
+    }
+    const iconType = renderer.icon?.iconType
+    if (isPurchase(iconType, label)) {
+      return
+    }
+    // A held review button must replay a moderation endpoint — Show and Hide both carry one. Drop
+    // anything else rather than encoding a non-moderation endpoint into a replayable token: the
+    // manager refuses to run such a token (see runHeldAction), so surfacing it would only mislead.
+    if (deepModerationParams(endpoint) === undefined) {
+      return
+    }
+    const hides = heldHides(label, index, buttons.length)
+    out.push({
+      id: iconType ?? `review-${index}`,
+      label,
+      ...(hides !== undefined && { hides }),
+      token: encodeHeldToken(endpoint)
+    })
+  })
+}
+
+/**
+ * A `moderateLiveChatEndpoint.params` token anywhere inside an endpoint. A held message's
+ * approve/remove button may carry the moderate endpoint directly or wrapped (e.g. in a command
+ * executor), so this searches the whole endpoint rather than only its top level. Undefined when the
+ * endpoint is not a moderation call (it's then replayed verbatim).
+ */
+export function deepModerationParams(endpoint: RawEndpoint | undefined): string | undefined {
+  const moderate = findFirst(endpoint, 'moderateLiveChatEndpoint')
+  const params = isObject(moderate) ? moderate['params'] : undefined
+  return typeof params === 'string' && params !== '' ? params : undefined
 }

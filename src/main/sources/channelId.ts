@@ -123,6 +123,18 @@ export function isYouTubeHost(hostname: string): boolean {
   return YOUTUBE_HOSTS.test(hostname)
 }
 
+const YOUTUBE_COOKIE_HOSTS = /(?:^|\.)youtube\.com$/i
+
+/**
+ * True if a hostname is a `youtube.com` (sub)domain eligible to receive the pasted browser session
+ * cookies — `www.youtube.com` for InnerTube/page reads, `accounts.youtube.com` for cookie rotation.
+ * Narrower than {@link isYouTubeHost}: a browser never sends `youtube.com` cookies to `youtu.be` or
+ * `youtube-nocookie.com`, so neither may carry (or write back into) the shared session jar.
+ */
+export function isYouTubeCookieHost(hostname: string): boolean {
+  return YOUTUBE_COOKIE_HOSTS.test(hostname)
+}
+
 /**
  * Whether a YouTube target is safe to resolve: a handle, bare name, or video id (resolved
  * against youtube.com), or an http(s) URL on a YouTube host. Rejects arbitrary URLs so the

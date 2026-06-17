@@ -3,6 +3,7 @@ import type { ChatAction, ChatMessage, Platform, SourceStatus, UserProfile } fro
 import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
+import { isAuthError } from '@main/sources/youtube/authError'
 import { LiveChatReader } from '@main/sources/youtube/liveChatReader'
 import { parseReplyThread } from '@main/sources/youtube/normalize'
 import { liveUrl } from '@main/sources/youtube/urls'
@@ -45,8 +46,9 @@ const PROFILE_DESCRIPTION_MAX = 300
  * A monotonic generation token guards the async lifecycle: `connect()`/`disconnect()`
  * bump it and every awaited step re-checks it, so a disconnect (e.g. channel removal)
  * while a `/live` resolve, `getInfo`, or reader poll is in flight can never start or
- * keep a reader behind the UI. The unauthenticated reader is acquired lazily inside
- * `connect()` so creating it never blocks adding the channel.
+ * keep a reader behind the UI. The reader InnerTube is acquired lazily inside `connect()` (the
+ * authenticated session when logged in — so moderator-only held messages arrive — else anonymous)
+ * so creating it never blocks adding the channel.
  */
 export class YouTubeSource extends BaseChatSource {
   readonly id: string
@@ -115,6 +117,9 @@ export class YouTubeSource extends BaseChatSource {
     this.#generation += 1
     this.#stopChat()
     this.#clearTimers()
+    // Drop the cached reader instance so the next connect re-acquires it — a reconnect on YouTube
+    // login/logout must switch the poll between the authenticated and anonymous sessions.
+    this.#yt = undefined
     this.setStatus({ state: 'offline' })
   }
 
@@ -149,6 +154,10 @@ export class YouTubeSource extends BaseChatSource {
 
   runMessageAction(menuToken: string, actionId: string, timeoutSeconds?: number): Promise<void> {
     return this.#auth.runMessageAction(menuToken, actionId, timeoutSeconds)
+  }
+
+  runHeldAction(token: string): Promise<void> {
+    return this.#auth.runHeldAction(token)
   }
 
   /**
@@ -280,9 +289,16 @@ export class YouTubeSource extends BaseChatSource {
     let info: YT.VideoInfo
     try {
       info = await yt.getInfo(videoId)
-    } catch {
+    } catch (error) {
       if (this.#isStale(generation)) {
         return
+      }
+      if (isAuthError(error)) {
+        // A stale authed session 401'd before the live-chat reader exists to recover it on its own.
+        // Drop the cached (stale) instance and rotate/rebuild/reconnect so the next open re-acquires
+        // the rebuilt authed reader instead of looping offline on the dead instance.
+        this.#yt = undefined
+        void this.#auth.recoverReads()
       }
       this.#setStreamStatus({ state: 'offline' })
       this.#scheduleResolve(generation)
@@ -421,6 +437,15 @@ export class YouTubeSource extends BaseChatSource {
           this.emitMessage(message)
         }
       },
+      onReplacements: (replacements) => {
+        if (this.#isStale(generation)) {
+          return
+        }
+        for (const message of replacements) {
+          message.fragments = this.#emotes.tokenize(message.fragments, 'youtube', this.#channelId)
+          this.emitReplace(message)
+        }
+      },
       onClears: (clears) => {
         if (this.#isStale(generation)) {
           return
@@ -444,6 +469,13 @@ export class YouTubeSource extends BaseChatSource {
           this.#refreshStatus()
         }
       },
+      onAuthError: () => {
+        // The authed read session's rotating cookie aged out: recover it (rotate/rebuild) and
+        // reconnect so this reader re-binds to the rebuilt instance. Debounced inside the manager.
+        if (!this.#isStale(generation)) {
+          void this.#auth.recoverReads()
+        }
+      },
       onDegraded: (degraded) => {
         if (!this.#isStale(generation)) {
           this.#chatDegraded = degraded
@@ -457,10 +489,40 @@ export class YouTubeSource extends BaseChatSource {
       }
     })
     this.#reader = reader
-    reader.start()
+    void this.#startReader(reader, continuation, isReplay, generation)
     if (!isReplay && this.#videoId !== undefined) {
       this.#startSignaler(this.#videoId, generation)
     }
+  }
+
+  /**
+   * Start the reader, seeding it with the `live_chat` page snapshot when signed in: that page
+   * carries the standing automod "held for review" queue the `get_live_chat` POST API omits (see
+   * {@link YouTubeAuthManager.fetchLiveChatBootstrap}). Best-effort — a logged-out session or any
+   * fetch/parse failure yields undefined, and the reader just polls the API as before. Replays have
+   * no held queue, so they skip the fetch.
+   */
+  async #startReader(
+    reader: LiveChatReader,
+    continuation: string,
+    isReplay: boolean,
+    generation: number
+  ): Promise<void> {
+    let initial: unknown
+    try {
+      initial = isReplay
+        ? undefined
+        : await this.#auth.fetchLiveChatBootstrap(continuation, this.#videoId)
+    } catch {
+      // The page snapshot is a best-effort enhancement; never let it block ordinary polling.
+      initial = undefined
+    }
+    // A disconnect/roll (or a replaced reader) while the page fetch was in flight must not start a
+    // reader behind the current lifecycle.
+    if (this.#isStale(generation) || this.#reader !== reader) {
+      return
+    }
+    reader.start(initial)
   }
 
   /**
@@ -559,6 +621,10 @@ export class YouTubeSource extends BaseChatSource {
     const generation = this.#begin()
     this.#stopChat()
     this.#clearTimers()
+    // Drop the cached instance so #open re-acquires the current authed reader: a write- or read-path
+    // auth recovery may have rebuilt it, and reusing the superseded instance would keep the reader
+    // bound to the old session.
+    this.#yt = undefined
     await this.#open(generation)
   }
 

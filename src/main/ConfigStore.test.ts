@@ -28,7 +28,6 @@ afterEach(() => {
 
 const DEFAULTS = {
   devMode: false,
-  revealDeleted: true,
   bufferSize: 500,
   highlights: [],
   monitors: [],

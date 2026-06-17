@@ -70,6 +70,9 @@ const api: ChatApi = {
       timeoutSeconds
     ) as Promise<SendResult>
   },
+  runHeldAction(channelId: string, token: string): Promise<SendResult> {
+    return ipcRenderer.invoke('chat:runHeldAction', channelId, token) as Promise<SendResult>
+  },
   getAuthState(): Promise<AuthState> {
     return ipcRenderer.invoke('chat:getAuthState') as Promise<AuthState>
   },

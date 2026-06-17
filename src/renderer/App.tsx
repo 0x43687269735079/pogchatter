@@ -20,6 +20,7 @@ import {
   type ModerationRule,
   type MonitorView,
   type Platform,
+  type SendResult,
   type SourceStatus
 } from '@shared/model'
 import { AddColumn } from '@renderer/components/AddColumn'
@@ -38,7 +39,12 @@ import { YouTubeChannelModal } from '@renderer/components/YouTubeChannelModal'
 import { YouTubeLoginModal } from '@renderer/components/YouTubeLoginModal'
 import { processEvents, seenIdCapacity, SeenMessageIds } from '@renderer/chatEvents'
 import { BacklogGate } from '@renderer/backlogGate'
-import { applyEventsToChannels, applyEventsToMessages, type MessageMap } from '@renderer/chatState'
+import {
+  applyEventsToChannels,
+  applyEventsToMessages,
+  type MessageMap,
+  resolveHeldMessage
+} from '@renderer/chatState'
 import { FLAGGED_COLUMN_ID, reconcileColumnOrder } from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
 import { THEME_PALETTES } from '@renderer/theme'
@@ -284,8 +290,26 @@ export function App(): ReactElement {
     ytUserLogoutRef.current = false
   }, [auth.youtube.loggedIn])
 
-  // The built-in flagged-messages view exists whenever the moderation watchlist has a configured term.
+  // The built-in flagged-messages view exists whenever the moderation watchlist has a configured
+  // term, or a YouTube automod "held for review" message has appeared (only moderators receive
+  // those).
   const hasModerationRules = settings.moderation.rules.some((rule) => rule.pattern.trim() !== '')
+  // Latch on the first held message and stay visible for the session, rather than recomputing from
+  // current buffer contents — otherwise the column would unmount mid-review once the last held row
+  // ages out of the buffers (and mirrors how it stays open while rules exist). The scan runs only
+  // until it latches and only when no watchlist term already shows the view.
+  const [heldSeen, setHeldSeen] = useState(false)
+  useEffect(() => {
+    if (heldSeen || hasModerationRules) {
+      return
+    }
+    if (
+      Object.values(messages).some((list) => list.some((message) => message.held !== undefined))
+    ) {
+      setHeldSeen(true)
+    }
+  }, [messages, heldSeen, hasModerationRules])
+  const flaggedVisible = hasModerationRules || heldSeen
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
 
@@ -313,19 +337,19 @@ export function App(): ReactElement {
     const stored = applyStored ? settingsRef.current.columnOrder : undefined
     setOrder((prev) =>
       reconcileColumnOrder(prev, {
-        flaggedVisible: hasModerationRules,
+        flaggedVisible,
         monitorIds,
         channelIds: channels.map((channel) => channel.id),
         stored
       })
     )
-  }, [channels, monitorIds, hasModerationRules, settings.columnOrder])
+  }, [channels, monitorIds, flaggedVisible, settings.columnOrder])
 
   // Chat columns and monitor views in one ordered list, so both move and reorder the same way.
   const orderedColumns = order
     .map((id): Column | undefined => {
       if (id === FLAGGED_COLUMN_ID) {
-        return hasModerationRules ? { kind: 'flagged', id } : undefined
+        return flaggedVisible ? { kind: 'flagged', id } : undefined
       }
       const channel = channels.find((c) => c.id === id)
       if (channel !== undefined) {
@@ -540,6 +564,25 @@ export function App(): ReactElement {
     })
   }, [])
 
+  // Run a held message's Show/Hide review action, then resolve the row locally to its decided state
+  // (struck if hidden, regular if shown) so the moderation card clears immediately rather than only
+  // when YouTube echoes the change back. Left in place on failure so the moderator can retry.
+  const handleHeldAction = useCallback(
+    async (
+      channelId: string,
+      messageId: string,
+      token: string,
+      hides: boolean | undefined
+    ): Promise<SendResult> => {
+      const result = await window.chat.runHeldAction(channelId, token)
+      if (result.ok) {
+        setMessages((prev) => resolveHeldMessage(prev, channelId, messageId, hides))
+      }
+      return result
+    },
+    []
+  )
+
   function createMonitor(label: string, members: string[]): void {
     const monitor = { id: `mon-${Date.now()}`, label, members }
     updateSettings({ monitors: [...settingsRef.current.monitors, monitor] })
@@ -605,7 +648,6 @@ export function App(): ReactElement {
                 channel={column.channel}
                 messages={messages[column.id] ?? []}
                 canSend={canSendTo(column.channel, auth)}
-                revealDeleted={settings.revealDeleted}
                 pingedAt={pingedAt[column.id]}
                 active={column.id === activeId}
                 palette={palette}
@@ -622,6 +664,7 @@ export function App(): ReactElement {
                 }}
                 onUserActivity={openUserActivity}
                 onDonationReplies={openDonationThread}
+                onHeldAction={handleHeldAction}
                 onScrollPause={reportScrollPause}
                 monitoredKeys={monitoredKeys}
               />
@@ -636,7 +679,6 @@ export function App(): ReactElement {
                   .filter((channel): channel is ChannelInfo => channel !== undefined)}
                 messagesByChannel={messages}
                 cap={settings.bufferSize}
-                revealDeleted={settings.revealDeleted}
                 active={column.id === activeId}
                 palette={palette}
                 width={widths[column.id] ?? DEFAULT_COL_WIDTH}
@@ -646,6 +688,7 @@ export function App(): ReactElement {
                 onJump={jumpToChannel}
                 onUserActivity={openUserActivity}
                 onDonationReplies={openDonationThread}
+                onHeldAction={handleHeldAction}
                 onMove={moveColumn}
                 onRemove={removeMonitor}
                 onResize={(monitorId, value) => {
@@ -664,7 +707,6 @@ export function App(): ReactElement {
                 messagesByChannel={messages}
                 cap={settings.bufferSize}
                 flaggedOnly
-                revealDeleted={settings.revealDeleted}
                 active={column.id === activeId}
                 palette={palette}
                 width={widths[column.id] ?? DEFAULT_COL_WIDTH}
@@ -674,6 +716,7 @@ export function App(): ReactElement {
                 onJump={jumpToChannel}
                 onUserActivity={openUserActivity}
                 onDonationReplies={openDonationThread}
+                onHeldAction={handleHeldAction}
                 onMove={moveColumn}
                 onResize={(viewId, value) => {
                   setWidths((prev) => ({ ...prev, [viewId]: value }))
@@ -768,7 +811,6 @@ export function App(): ReactElement {
             (message) => message.author.id === userActivity.author.id
           )}
           palette={palette}
-          revealDeleted={settings.revealDeleted}
           monitoredKeys={monitoredKeys}
           monitored={monitoredKeys.has(`${userActivity.platform}:${userActivity.author.id}`)}
           onToggleMonitor={() => {
@@ -793,7 +835,6 @@ export function App(): ReactElement {
           threadToken={donationThread.threadToken}
           parentAuthor={donationThread.parentAuthor}
           palette={palette}
-          revealDeleted={settings.revealDeleted}
           monitoredKeys={monitoredKeys}
           onJump={(channelId) => {
             jumpToChannel(channelId)
@@ -810,7 +851,6 @@ export function App(): ReactElement {
           messagesByChannel={messages}
           cap={settings.bufferSize}
           palette={palette}
-          revealDeleted={settings.revealDeleted}
           monitoredKeys={monitoredKeys}
           onJump={jumpToChannel}
           onUserActivity={openUserActivity}

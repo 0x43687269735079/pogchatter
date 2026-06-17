@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { LiveChatReader, type LiveChatHandlers } from '@main/sources/youtube/liveChatReader'
+import {
+  findModerationActivityContinuation,
+  LiveChatReader,
+  type LiveChatHandlers
+} from '@main/sources/youtube/liveChatReader'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -38,6 +42,7 @@ function liveResponse(actions: unknown[], continuation = 'next', timeoutMs = 500
 function handlers(over: Partial<LiveChatHandlers> = {}): LiveChatHandlers {
   return {
     onMessages: vi.fn(),
+    onReplacements: vi.fn(),
     onClears: vi.fn(),
     onEnd: vi.fn(),
     onStall: vi.fn(),
@@ -174,6 +179,53 @@ describe('LiveChatReader failure handling', () => {
       expect(onEnd).not.toHaveBeenCalled()
       expect(onMessages).toHaveBeenCalled()
       expect(execute.mock.calls.length).toBeGreaterThanOrEqual(4)
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fires onAuthError on a 401 poll failure (distinct from onStall) so the owner can recover the session', async () => {
+    vi.useFakeTimers()
+    try {
+      const auth401 = new Error(
+        'Request to https://www.youtube.com/youtubei/v1/live_chat/get_live_chat failed with status code 401'
+      )
+      const execute = vi.fn().mockRejectedValue(auth401)
+      const onAuthError = vi.fn()
+      const reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'c0',
+        false,
+        handlers({ onAuthError })
+      )
+
+      reader.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onAuthError).toHaveBeenCalled()
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not fire onAuthError for an ordinary (non-auth) poll failure', async () => {
+    vi.useFakeTimers()
+    try {
+      const execute = vi.fn().mockRejectedValue(new Error('network'))
+      const onAuthError = vi.fn()
+      const reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'c0',
+        false,
+        handlers({ onAuthError })
+      )
+
+      reader.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onAuthError).not.toHaveBeenCalled()
       reader.stop()
     } finally {
       vi.useRealTimers()
@@ -681,12 +733,12 @@ describe('LiveChatReader sustained degradation', () => {
 })
 
 describe('LiveChatReader live-chat selection (CUB-7)', () => {
-  function withViewSelector(): unknown {
+  function withViewSelector(actions: unknown[] = []): unknown {
     return {
       data: {
         continuationContents: {
           liveChatContinuation: {
-            actions: [],
+            actions,
             continuations: [
               { timedContinuationData: { continuation: 'top-next', timeoutMs: 5000 } }
             ],
@@ -714,6 +766,34 @@ describe('LiveChatReader live-chat selection (CUB-7)', () => {
     }
   }
 
+  const heldAction = {
+    addChatItemAction: {
+      item: {
+        liveChatAutoModMessageRenderer: {
+          id: 'held-1',
+          timestampUsec: '1700000000000000',
+          headerText: { runs: [{ text: 'This message is held for review.' }] },
+          autoModeratedItem: {
+            liveChatTextMessageRenderer: {
+              id: 'held-1',
+              authorName: { simpleText: 'Mallory' },
+              message: { runs: [{ text: 'sketchy' }] },
+              timestampUsec: '1700000000000000'
+            }
+          },
+          moderationButtons: [
+            {
+              buttonRenderer: {
+                text: { simpleText: 'Show' },
+                serviceEndpoint: { moderateLiveChatEndpoint: { params: 'show-token' } }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+
   it('switches from the default Top chat continuation to Live chat, then polls from it', async () => {
     vi.useFakeTimers()
     try {
@@ -735,6 +815,135 @@ describe('LiveChatReader live-chat selection (CUB-7)', () => {
     }
   })
 
+  it('surfaces the switch snapshot actions (held-for-review backlog) before switching', async () => {
+    vi.useFakeTimers()
+    try {
+      // The Top-chat snapshot that triggers the switch also carries the pending automod queue. It
+      // must be dispatched, not discarded — the Live reload is not guaranteed to replay the backlog.
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce(withViewSelector([heldAction]))
+        .mockResolvedValue(liveResponse([], 'next', 5000))
+      const onMessages = vi.fn()
+      const reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'top',
+        false,
+        handlers({ onMessages })
+      )
+
+      reader.start()
+      await vi.advanceTimersByTimeAsync(0) // poll 1 (Top chat) → dispatch snapshot + switch
+      expect(onMessages).toHaveBeenCalledTimes(1)
+      const delivered = onMessages.mock.calls[0]?.[0] as Array<{ id: string; held?: unknown }>
+      expect(delivered).toHaveLength(1)
+      expect(delivered[0]?.id).toBe('held-1')
+      expect(delivered[0]?.held).toBeDefined()
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('dispatches a bootstrap snapshot (held queue) on start, then polls its continuation', async () => {
+    vi.useFakeTimers()
+    try {
+      // The live_chat page snapshot carries the standing held queue + the Top→Live view selector;
+      // start() processes it like a poll, surfacing the held items before any API request.
+      const bootstrap = (withViewSelector([heldAction]) as { data: unknown }).data
+      const execute = vi.fn().mockResolvedValue(liveResponse([], 'next', 5000))
+      const onMessages = vi.fn()
+      const reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'top',
+        false,
+        handlers({ onMessages })
+      )
+
+      reader.start(bootstrap)
+      // The held item is surfaced from the snapshot synchronously, with no API call yet.
+      expect(onMessages).toHaveBeenCalledTimes(1)
+      const delivered = onMessages.mock.calls[0]?.[0] as Array<{ held?: unknown }>
+      expect(delivered[0]?.held).toBeDefined()
+      expect(execute).not.toHaveBeenCalled()
+      // It then polls the Live continuation the snapshot switched to.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute.mock.calls[0]?.[1]).toMatchObject({ continuation: 'live' })
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // The live_chat page's overflow menu carries the moderator "Moderation activity" toggle (icon
+  // SHIELD_OVERFLOW); its "turn on" reload continuation is what makes get_live_chat keep delivering
+  // the held queue. Inject it into a snapshot alongside the ordinary Top→Live view selector.
+  function withModerationToggle(snapshot: unknown): unknown {
+    const live = (
+      snapshot as {
+        data: { continuationContents: { liveChatContinuation: Record<string, unknown> } }
+      }
+    ).data.continuationContents.liveChatContinuation
+    live['actionPanel'] = {
+      menuRenderer: {
+        items: [
+          {
+            toggleMenuServiceItemRenderer: {
+              defaultIcon: { iconType: 'SHIELD_OVERFLOW' },
+              defaultServiceEndpoint: {
+                reloadLiveChatCommand: {
+                  continuation: { reloadContinuationData: { continuation: 'mod-activity' } }
+                }
+              },
+              toggledIcon: { iconType: 'SHIELD_OVERFLOW' },
+              toggledServiceEndpoint: {
+                forceLiveChatContinuationCommand: {
+                  continuation: { timedContinuationData: { continuation: 'mod-off' } }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+    return snapshot
+  }
+
+  it('prefers the Moderation activity continuation over Live when the page offers it', async () => {
+    vi.useFakeTimers()
+    try {
+      // The page snapshot carries both the Top→Live view selector and the Moderation activity toggle;
+      // the reader must poll the moderation continuation (held queue) rather than plain "live".
+      const bootstrap = (withModerationToggle(withViewSelector([heldAction])) as { data: unknown })
+        .data
+      const execute = vi.fn().mockResolvedValue(liveResponse([], 'next', 5000))
+      const onMessages = vi.fn()
+      const reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'top',
+        false,
+        handlers({ onMessages })
+      )
+
+      reader.start(bootstrap)
+      // The held backlog is surfaced from the snapshot before any poll.
+      expect(onMessages).toHaveBeenCalledTimes(1)
+      const delivered = onMessages.mock.calls[0]?.[0] as Array<{ held?: unknown }>
+      expect(delivered[0]?.held).toBeDefined()
+      // Then it polls the moderation continuation — not "live".
+      await vi.advanceTimersByTimeAsync(0)
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute.mock.calls[0]?.[1]).toMatchObject({ continuation: 'mod-activity' })
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('forwards a nudge publish timestamp as invalidationPayloadLastPublishAtUsec', async () => {
     vi.useFakeTimers()
     try {
@@ -748,11 +957,71 @@ describe('LiveChatReader live-chat selection (CUB-7)', () => {
       expect(execute).toHaveBeenCalledTimes(2)
       expect(execute.mock.calls[1]?.[1]).toMatchObject({
         invalidationPayloadLastPublishAtUsec: '1780318288318227',
-        webClientInfo: { isDocumentHidden: true }
+        // Must be false — `true` makes YouTube return held automod items as content-less placeholders.
+        webClientInfo: { isDocumentHidden: false }
       })
       reader.stop()
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('findModerationActivityContinuation', () => {
+  const toggle = (defaultEndpoint: unknown, toggledEndpoint: unknown): unknown => ({
+    continuationContents: {
+      liveChatContinuation: {
+        actionPanel: {
+          menuRenderer: {
+            items: [
+              { menuServiceItemRenderer: { icon: { iconType: 'PERSON' } } },
+              {
+                toggleMenuServiceItemRenderer: {
+                  defaultIcon: { iconType: 'SHIELD_OVERFLOW' },
+                  defaultServiceEndpoint: defaultEndpoint,
+                  toggledIcon: { iconType: 'SHIELD_OVERFLOW' },
+                  toggledServiceEndpoint: toggledEndpoint
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  })
+
+  it('returns the SHIELD toggle reload continuation (turn-on action)', () => {
+    const snapshot = toggle(
+      {
+        reloadLiveChatCommand: {
+          continuation: { reloadContinuationData: { continuation: 'mod-on' } }
+        }
+      },
+      {
+        forceLiveChatContinuationCommand: {
+          continuation: { timedContinuationData: { continuation: 'mod-off' } }
+        }
+      }
+    )
+    expect(findModerationActivityContinuation(snapshot)).toBe('mod-on')
+  })
+
+  it('returns undefined when there is no moderation toggle (non-moderator page)', () => {
+    const snapshot = {
+      continuationContents: {
+        liveChatContinuation: {
+          actionPanel: {
+            menuRenderer: { items: [{ menuServiceItemRenderer: { icon: { iconType: 'PERSON' } } }] }
+          }
+        }
+      }
+    }
+    expect(findModerationActivityContinuation(snapshot)).toBeUndefined()
+  })
+
+  it('ignores a malformed snapshot without throwing', () => {
+    expect(findModerationActivityContinuation(undefined)).toBeUndefined()
+    expect(findModerationActivityContinuation({})).toBeUndefined()
+    expect(findModerationActivityContinuation(null)).toBeUndefined()
   })
 })

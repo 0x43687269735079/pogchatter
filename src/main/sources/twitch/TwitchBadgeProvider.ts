@@ -1,4 +1,4 @@
-import { proxiedFetch } from '@main/net/proxy'
+import type { HelixFetch } from '@main/sources/twitch/TwitchAuthManager'
 
 const HELIX = 'https://api.twitch.tv/helix'
 
@@ -29,24 +29,23 @@ export class TwitchBadgeProvider {
   #global: SetMap | undefined
   readonly #channels = new Map<string, SetMap>()
 
-  async ensureGlobal(token: string, clientId: string): Promise<void> {
+  async ensureGlobal(helix: HelixFetch): Promise<void> {
     if (this.#global !== undefined) {
       return
     }
-    const sets = await this.#fetchSets(`${HELIX}/chat/badges/global`, token, clientId)
+    const sets = await this.#fetchSets(`${HELIX}/chat/badges/global`, helix)
     if (sets !== undefined) {
       this.#global = sets
     }
   }
 
-  async ensureChannel(roomId: string, token: string, clientId: string): Promise<void> {
+  async ensureChannel(roomId: string, helix: HelixFetch): Promise<void> {
     if (this.#channels.has(roomId)) {
       return
     }
     const sets = await this.#fetchSets(
       `${HELIX}/chat/badges?broadcaster_id=${encodeURIComponent(roomId)}`,
-      token,
-      clientId
+      helix
     )
     if (sets !== undefined) {
       this.#channels.set(roomId, sets)
@@ -60,12 +59,10 @@ export class TwitchBadgeProvider {
     return channel ?? this.#global?.get(setId)?.get(version)
   }
 
-  async #fetchSets(url: string, token: string, clientId: string): Promise<SetMap | undefined> {
+  async #fetchSets(url: string, helix: HelixFetch): Promise<SetMap | undefined> {
     try {
-      const response = await proxiedFetch(url, {
-        headers: { Authorization: `Bearer ${token}`, 'Client-Id': clientId }
-      })
-      if (!response.ok) {
+      const response = await helix(url)
+      if (response === undefined || !response.ok) {
         return undefined
       }
       const body = (await response.json()) as HelixBadgeResponse

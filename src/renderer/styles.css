@@ -627,9 +627,16 @@ body,
   background: var(--sel);
   box-shadow: inset 2px 0 0 var(--warn);
 }
+/* A message hidden/removed by decision stays fully visible (a moderator must be able to act on it),
+   in a clearly-marked tinted card with its text struck through — distinct from an automod message
+   still *waiting* for review, which renders as the held card (not struck, still revealable). */
+.pc-msg.del {
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--err);
+}
 .pc-msg.del .pc-text,
 .pc-msg.del .pc-user {
-  opacity: 0.4;
+  opacity: 0.75;
 }
 .pc-msg.del .pc-text {
   text-decoration: line-through;
@@ -756,9 +763,15 @@ body,
 }
 .pc-del-tag {
   font-size: var(--fs-micro);
+  font-weight: 700;
   letter-spacing: 0.5px;
   color: var(--err);
+  background: var(--overlay);
+  border: 1px solid var(--err);
+  padding: 1px 4px;
   margin-right: 5px;
+  border-radius: var(--radius);
+  vertical-align: 1px;
 }
 .pc-flag-tag {
   font-size: var(--fs-micro);
@@ -893,6 +906,81 @@ body,
 .pc-sys b {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* held-for-review card (YouTube automod) — a compact amber-edged block needing a moderator's call.
+   Only the Show / keep-Hidden review buttons live on the card; per-author moderation is on right-click. */
+.pc-held {
+  margin: 2px 10px;
+  border-left: 2px solid var(--warn);
+  background: var(--overlay);
+}
+.pc-held-head {
+  padding: 2px 10px 0;
+  font-size: var(--fs-small);
+  letter-spacing: 0.3px;
+  color: var(--warn);
+}
+/* Body: the message content (user/time line + flagged text) takes the room; the Show/Hide buttons
+   sit stacked on the right so the text gets the full width. */
+.pc-held-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 1px 10px 5px;
+}
+.pc-held-content {
+  flex: 1;
+  min-width: 0;
+}
+.pc-held-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-small);
+  line-height: 1.4;
+}
+.pc-held-meta .pc-user {
+  font-weight: 600;
+}
+.pc-held-meta .pc-time {
+  color: var(--dimmer);
+}
+.pc-held-text {
+  margin-top: 2px;
+  font-size: var(--fs-emph);
+  line-height: 1.5;
+  word-break: break-word;
+  color: var(--fg);
+}
+.pc-held-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.pc-held-actions button {
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--rule);
+  padding: 2px 10px;
+  min-width: 56px;
+  cursor: pointer;
+}
+.pc-held-actions button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.pc-held-actions button:disabled {
+  color: var(--dimmer);
+  cursor: default;
+}
+.pc-held-err {
+  padding: 0 10px 4px;
+  color: var(--err);
+  font-size: var(--fs-small);
 }
 
 /* highlight cards */
@@ -1225,8 +1313,9 @@ body,
   line-height: 1.4;
 }
 /* Auto-growing composer: one line by default, expands with the draft, then scrolls. The four-line
-   cap lives entirely here in `max-height` below (line-height × 4); ChannelColumn's resizeInput only
-   sets height to scrollHeight and lets this max-height clamp it. */
+   cap lives entirely here in `max-height` below (line-height × 4); ChannelColumn's resizeInput sets
+   height to scrollHeight (clamped by this max-height) and toggles overflow-y to `auto` only once the
+   message overflows the cap — so a wrapped placeholder never shows a scrollbar. */
 .pc-inrow textarea {
   flex: 1;
   background: transparent;
@@ -1239,7 +1328,7 @@ body,
   padding: 0;
   margin: 0;
   max-height: calc(1.4em * 4);
-  overflow-y: auto;
+  overflow-y: hidden;
 }
 .pc-inrow textarea::placeholder {
   color: var(--dimmer);

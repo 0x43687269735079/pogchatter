@@ -3,8 +3,11 @@ import { Innertube, YTNodes } from 'youtubei.js'
 import type { AuthStore } from '@main/auth/AuthStore'
 import type { ChatAction, YouTubeChannel } from '@shared/model'
 import { proxiedFetch, proxyUrl } from '@main/net/proxy'
-import { isYouTubeHost } from '@main/sources/channelId'
+import { isYouTubeCookieHost } from '@main/sources/channelId'
+import { isAuthError, NotLoggedInError } from '@main/sources/youtube/authError'
 import {
+  decodeHeldToken,
+  deepModerationParams,
   findActionEndpoint,
   moderationParams,
   parseMenuActions,
@@ -23,6 +26,12 @@ import { collectEmojis, type YouTubeEmoji } from '@main/sources/youtube/youtubeE
 const SEND_DEBUG = process.env['POGCHATTER_SEND_DEBUG'] === '1'
 
 const STORE_KEY = 'youtube'
+// Bound the best-effort live_chat HTML bootstrap so a black-hole connection (no RST/FIN) can't
+// hang forever on the critical path that gates the reader's first poll. Matches httpJson's TIMEOUT_MS.
+const BOOTSTRAP_TIMEOUT_MS = 6000
+// `#rotateCookies` is single-use and invalidates the browser's token copy, so a flurry of read
+// 401s must rotate at most once per window — the reader keeps backing off in between.
+const READ_RECOVERY_DEBOUNCE_MS = 60_000
 const ROTATE_PAGE_URL =
   'https://accounts.youtube.com/RotateCookiesPage?origin=https://www.youtube.com&yt_pid=1'
 const ROTATE_URL = 'https://accounts.youtube.com/RotateCookies'
@@ -114,10 +123,63 @@ function restrictionReason(response: RawChatRestriction): string | undefined {
   return plainText(panel.liveChatRestrictedParticipationRenderer.message) ?? 'Chat is restricted'
 }
 
+/**
+ * Extract the `ytInitialData` JSON object embedded in a `live_chat` HTML page. String-aware brace
+ * matching (so a `{`/`}` inside a chat message can't unbalance the scan); returns undefined if the
+ * marker is absent or the slice doesn't parse.
+ */
+export function extractYtInitialData(html: string): unknown | undefined {
+  // YouTube assigns it as `window["ytInitialData"] = {…}` (sometimes `var ytInitialData = {…}`), so
+  // anchor on the name and take the next object brace rather than a fixed `name = {` shape.
+  const marker = html.indexOf('ytInitialData')
+  if (marker < 0) {
+    return undefined
+  }
+  const start = html.indexOf('{', marker)
+  if (start < 0) {
+    return undefined
+  }
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < html.length; i++) {
+    const ch = html[i]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(start, i + 1))
+        } catch {
+          return undefined
+        }
+      }
+    }
+  }
+  return undefined
+}
+
 /** Parse a pasted `Cookie` header / `name=value` blob into a fresh jar. */
 function parseJar(raw: string): Map<string, string> {
   const jar = new Map<string, string>()
-  for (const part of raw.split(/[;\n]/)) {
+  // Tolerate a pasted `Cookie:` header prefix (copied along with the header name) — without this the
+  // first pair becomes a bogus `Cookie: <name>` entry and the real first cookie (e.g. YSC) is lost,
+  // so YSC goes out corrupted.
+  const cleaned = raw.replace(/^\s*cookie:\s*/i, '')
+  for (const part of cleaned.split(/[;\n]/)) {
     const trimmed = part.trim()
     const eq = trimmed.indexOf('=')
     if (eq > 0) {
@@ -159,10 +221,17 @@ function sendBodySummary(body: unknown): string {
   }
 }
 
-/** Whether a fetch input targets a YouTube host (so the session cookies may be attached). */
+/**
+ * Whether a fetch input is eligible to carry the pasted session cookies: an HTTPS request to a
+ * `youtube.com` (sub)domain — the only hosts a browser would send those cookies to. The HTTPS
+ * requirement stops a downgrade carrying the jar over cleartext; the `youtube.com`-only host scope
+ * (not `youtu.be`/`youtube-nocookie.com`) keeps the broad Google jar off domains the browser never
+ * sends it to and that must not write back into it.
+ */
 function isYouTubeRequest(input: Parameters<typeof fetch>[0]): boolean {
   try {
-    return isYouTubeHost(new URL(requestUrl(input)).hostname)
+    const url = new URL(requestUrl(input))
+    return url.protocol === 'https:' && isYouTubeCookieHost(url.hostname)
   } catch {
     return false
   }
@@ -212,19 +281,14 @@ function applySetCookies(jar: Map<string, string>, setCookies: string[]): string
   return changed
 }
 
-/** youtubei.js surfaces an HTTP error as `…failed with status code <n>`; treat 401/403 as auth. */
-function isAuthError(error: unknown): boolean {
-  return error instanceof Error && /failed with status code (401|403)/.test(error.message)
-}
-
 /**
  * Holds the YouTube login from pasted browser cookies (Google blocks embedded /
  * automated sign-in). Keeps a live cookie jar that captures `Set-Cookie` rotation
  * from every authenticated request (mirroring how a browser stays signed in) and
  * persists it; a stale rotating token is refreshed on demand at restore and on a
  * rejected send (see {@link sendMessage}), not on a timer. Provides an authenticated
- * InnerTube used only for sending; reading stays on the separate unauthenticated
- * instance. `onChange` fires on login/logout.
+ * InnerTube used for sending and (when logged in) reading; reading authenticated is
+ * what surfaces moderator-only content. `onChange` fires on login/logout/recovery.
  *
  * Cookie updates are transactional: a new session is built and validated against a
  * temporary jar, and the live jar/instance are swapped in only on success, so a bad
@@ -249,6 +313,15 @@ export class YouTubeAuthManager {
    * failure — must become a no-op rather than clobber the user's fresh state.
    */
   #epoch = 0
+  /** Last read-recovery time (epoch ms), so repeated read 401s debounce the single-use rotation. */
+  #lastReadRecovery = 0
+  /**
+   * A read recovery rebuilt `#authed` without reconnecting open readers (the bootstrap path, which
+   * runs inside a connect). The next reconnect-requesting recovery fires `#onChange` even if its
+   * rotation is debounced, so the open reader rebinds to the rebuilt instance without waiting out the
+   * debounce/backoff window.
+   */
+  #reconnectPending = false
 
   constructor(
     store: AuthStore,
@@ -273,6 +346,16 @@ export class YouTubeAuthManager {
 
   get isLoggedIn(): boolean {
     return this.#authed !== undefined
+  }
+
+  /**
+   * The authenticated InnerTube to read live chat with when logged in, or undefined when logged
+   * out (callers fall back to the anonymous reader). Reading authenticated is what surfaces the
+   * moderator-only renderers — automod "held for review" messages — that an anonymous poll never
+   * receives. Always read the *current* instance per use: it's rebuilt on cookie rotation/recovery.
+   */
+  readerInnertube(): Innertube | undefined {
+    return this.#authed
   }
 
   /** The account's channels (default identity plus any brand channels). Empty when logged out. */
@@ -301,10 +384,11 @@ export class YouTubeAuthManager {
         // the store now would wipe the cookies the fresh login just persisted.
         return
       }
-      // Discard the credentials only when the session genuinely failed auth (dead cookies). A
-      // transient failure (offline launch, 5xx) stays logged out for now but keeps the stored
-      // cookies so the next launch can restore the session.
-      if (isAuthError(error)) {
+      // Discard the credentials when the session genuinely failed auth (a 401/403 on dead cookies)
+      // or built but isn't logged in (incomplete/expired identity cookies) — neither can ever
+      // restore, so keeping them would fail every launch and leave the user silently anonymous. A
+      // transient failure (offline launch, 5xx) keeps the stored cookies so a later launch can retry.
+      if (isAuthError(error) || error instanceof NotLoggedInError) {
         this.#jar = new Map()
         this.#store.delete(STORE_KEY)
       }
@@ -464,32 +548,18 @@ export class YouTubeAuthManager {
     if (this.#authed === undefined) {
       throw new Error('Log in to YouTube to send messages')
     }
-    try {
-      await this.#deliver(videoId, channelId, text, emojiMap)
-    } catch (error) {
-      if (!isAuthError(error)) {
-        throw error
-      }
-      // A write rejected with auth means our rotating session token (`__Secure-1PSIDTS`) has
-      // gone stale — typically the browser rotated it. Rotate to catch up, rebuild from the
-      // refreshed jar, and retry once.
-      this.#log('send rejected (auth) — rotating cookies, rebuilding session, and retrying')
-      await this.#recoverSend(videoId, channelId, text, emojiMap)
-    }
+    await this.#withAuthRecovery(() => this.#deliver(videoId, channelId, text, emojiMap))
   }
 
   /**
    * The right-click actions available on a chat message for the signed-in account, from YouTube's
    * per-message "⋮" menu. The returned set already reflects the account's role in that chat (viewer
    * block, or moderator/streamer remove/timeout/ban), so the client surfaces it as-is. Returns an
-   * empty list when logged out or on any failure — chat actions are best-effort UI.
+   * empty list when logged out or on any failure — chat actions are best-effort UI. A stale-auth
+   * 401/403 recovers once (rotate/rebuild/reconnect) so the menu isn't lost to an aged-out session.
    */
   async getMessageActions(menuToken: string): Promise<ChatAction[]> {
-    const yt = this.#authed
-    if (yt === undefined) {
-      return []
-    }
-    try {
+    return this.#readWithAuthRecovery<ChatAction[]>(async (yt) => {
       const response = await yt.actions.execute('live_chat/get_item_context_menu', {
         params: menuToken,
         parse: false
@@ -497,10 +567,7 @@ export class YouTubeAuthManager {
       const actions = parseMenuActions(response.data)
       this.#log(`message actions: [${actions.map((a) => `${a.id}:${a.label}`).join(', ')}]`)
       return actions
-    } catch (error) {
-      this.#log(`get message actions failed: ${error instanceof Error ? error.message : error}`)
-      return []
-    }
+    }, [])
   }
 
   /**
@@ -517,38 +584,62 @@ export class YouTubeAuthManager {
     actionId: string,
     timeoutSeconds?: number
   ): Promise<void> {
-    const yt = this.#authed
-    if (yt === undefined) {
+    if (this.#authed === undefined) {
       throw new Error('Log in to YouTube to use chat actions')
     }
-    const response = await yt.actions.execute('live_chat/get_item_context_menu', {
-      params: menuToken,
-      parse: false
+    await this.#withAuthRecovery(async (yt) => {
+      const response = await yt.actions.execute('live_chat/get_item_context_menu', {
+        params: menuToken,
+        parse: false
+      })
+      const menuEndpoint = findActionEndpoint(response.data, actionId)
+      if (menuEndpoint === undefined) {
+        throw new Error('That action is no longer available')
+      }
+      const endpoint = resolveConfirmDialog(menuEndpoint)
+      if (endpoint === undefined) {
+        throw new Error('YouTube changed how this action works — nothing was done')
+      }
+      // Remove / hide carry a direct moderate endpoint. A timeout instead opens a duration dialog
+      // whose options each hold YouTube's own per-duration moderate params; pick the chosen one.
+      const params =
+        timeoutSeconds !== undefined
+          ? timeoutParams(endpoint, timeoutSeconds)
+          : moderationParams(endpoint)
+      if (params !== undefined) {
+        this.#log(`running moderation action ${actionId} via live_chat/moderate`)
+        await yt.actions.execute('live_chat/moderate', { params, parse: false })
+        return
+      }
+      if (timeoutSeconds !== undefined) {
+        throw new Error('That timeout duration is no longer available')
+      }
+      this.#log(`running message action ${actionId}`)
+      await new YTNodes.NavigationEndpoint(endpoint).call(yt.actions, { parse: false })
     })
-    const menuEndpoint = findActionEndpoint(response.data, actionId)
-    if (menuEndpoint === undefined) {
+  }
+
+  /**
+   * Run a held-for-review message's inline action (its {@link HeldAction.token}, an opaque encoding
+   * of YouTube's own button endpoint). A held review button carries a `moderateLiveChatEndpoint`
+   * whose params the web client POSTs to `live_chat/moderate`; replay that exactly. A token that does
+   * not resolve to such params is rejected — never executed as an arbitrary endpoint — so a forged
+   * token or YouTube shape drift can't drive the authed account to an unintended endpoint. Throws
+   * with a user-facing message on failure.
+   */
+  async runHeldAction(token: string): Promise<void> {
+    if (this.#authed === undefined) {
+      throw new Error('Log in to YouTube to use chat actions')
+    }
+    const endpoint = decodeHeldToken(token)
+    const params = endpoint === undefined ? undefined : deepModerationParams(endpoint)
+    if (params === undefined) {
       throw new Error('That action is no longer available')
     }
-    const endpoint = resolveConfirmDialog(menuEndpoint)
-    if (endpoint === undefined) {
-      throw new Error('YouTube changed how this action works — nothing was done')
-    }
-    // Remove / hide carry a direct moderate endpoint. A timeout instead opens a duration dialog
-    // whose options each hold YouTube's own per-duration moderate params; pick the chosen one.
-    const params =
-      timeoutSeconds !== undefined
-        ? timeoutParams(endpoint, timeoutSeconds)
-        : moderationParams(endpoint)
-    if (params !== undefined) {
-      this.#log(`running moderation action ${actionId} via live_chat/moderate`)
+    await this.#withAuthRecovery(async (yt) => {
+      this.#log('running held action via live_chat/moderate')
       await yt.actions.execute('live_chat/moderate', { params, parse: false })
-      return
-    }
-    if (timeoutSeconds !== undefined) {
-      throw new Error('That timeout duration is no longer available')
-    }
-    this.#log(`running message action ${actionId}`)
-    await new YTNodes.NavigationEndpoint(endpoint).call(yt.actions, { parse: false })
+    })
   }
 
   /**
@@ -556,21 +647,89 @@ export class YouTubeAuthManager {
    * Returns the restriction text (e.g. "Subscribers-only mode") when YouTube would reject a send,
    * or undefined when the user can chat or we can't tell. Probed from an authenticated
    * `get_live_chat`, whose action panel reflects the requesting account — so it captures
-   * subscribers-only / members-only chat that a logged-out read can't see.
+   * subscribers-only / members-only chat that a logged-out read can't see. A stale-auth probe
+   * recovers once so the restriction reflects the live session, not a dead one.
    */
   async checkSendRestriction(continuation: string): Promise<string | undefined> {
-    const yt = this.#authed
-    if (yt === undefined) {
-      return undefined
-    }
-    try {
+    // A probe failure must not block sending (the send path still reports a held message), but a
+    // stale-auth probe recovers once so the restriction reflects the live session, not a dead one.
+    return this.#readWithAuthRecovery<string | undefined>(async (yt) => {
       const response = await yt.actions.execute('live_chat/get_live_chat', {
         continuation,
         parse: false
       })
       return restrictionReason(response.data as RawChatRestriction)
-    } catch {
-      // A probe failure must not block sending; the send path still reports a held message.
+    }, undefined)
+  }
+
+  /**
+   * The live-chat initial snapshot, fetched as the signed-in moderator from the `live_chat` HTML
+   * page (`ytInitialData`) — the same data the browser's chat iframe loads. The reader extracts the
+   * "Moderation activity" continuation from this snapshot and switches its polling to it, so the
+   * held-for-review queue keeps arriving. The shape matches a `get_live_chat` response
+   * (`continuationContents.liveChatContinuation`), so the reader processes it identically. The
+   * brand-channel page id rides in the URL (as on the browser's chat iframe) so the page renders the
+   * moderator's view. Returns undefined when logged out or on any failure — the reader then just
+   * polls the API.
+   */
+  async fetchLiveChatBootstrap(
+    continuation: string,
+    videoId?: string
+  ): Promise<unknown | undefined> {
+    if (this.#authed === undefined) {
+      return undefined
+    }
+    const pageId =
+      this.#selectedId === DEFAULT_CHANNEL ? '' : `&pageId=${encodeURIComponent(this.#selectedId)}`
+    const url = `https://www.youtube.com/live_chat?continuation=${encodeURIComponent(continuation)}${pageId}`
+    // Mirror the browser's plain navigation GET (HTML Accept + watch-page Referer), not an XHR/iframe.
+    const headers: Record<string, string> = {
+      'User-Agent': this.#userAgent,
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-GB,en;q=0.9'
+    }
+    if (videoId !== undefined) {
+      headers['Referer'] = `https://www.youtube.com/live/${videoId}`
+    }
+    // This GET sits on the critical path that gates the reader's first poll (YouTubeSource awaits it
+    // before reader.start). A hung connection would never reject, so bound it: on timeout the abort
+    // makes the fetch reject, the catch yields undefined, and the reader falls back to plain polling.
+    const fetchPage = async (): Promise<Response> => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => {
+        controller.abort()
+      }, BOOTSTRAP_TIMEOUT_MS)
+      try {
+        return await this.#makeFetch(this.#jar)(url, { headers, signal: controller.signal })
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    try {
+      let response = await fetchPage()
+      if (response.status === 401 || response.status === 403) {
+        // Stale rotating cookie — refresh the session in place (no reconnect: we're already inside a
+        // connect) and retry once, so the moderator bootstrap doesn't silently miss the held queue.
+        await this.#recoverStaleReadSession(false)
+        response = await fetchPage()
+      }
+      if (!response.ok) {
+        this.#log(`live_chat bootstrap: HTTP ${response.status}`)
+        return undefined
+      }
+      const data = extractYtInitialData(await response.text())
+      if (data === undefined) {
+        this.#log('live_chat bootstrap: no ytInitialData in page')
+        return undefined
+      }
+      if (this.#debug) {
+        // Serializing the whole page snapshot is only for the diagnostic count — skip it otherwise.
+        const held = (JSON.stringify(data).match(/liveChatAutoModMessageRenderer/g) ?? []).length
+        this.#log(`live_chat bootstrap: loaded (${held} held-for-review item(s))`)
+      }
+      return data
+    } catch (error) {
+      this.#log(`live_chat bootstrap failed: ${error instanceof Error ? error.message : error}`)
       return undefined
     }
   }
@@ -578,14 +737,13 @@ export class YouTubeAuthManager {
   /**
    * The chat's proprietary emoji catalog, fetched as the signed-in user — the emoji picker rides on
    * the authenticated message-input renderer, which the anonymous reader never sees. Returns an
-   * empty list when logged out or on any failure (the picker just won't list YouTube emojis).
+   * empty list when logged out or on any failure (the picker just won't list YouTube emojis). A
+   * stale-auth read recovers once so a rotated session keeps the catalog.
    */
   async getEmojiCatalog(continuation: string): Promise<YouTubeEmoji[]> {
-    const yt = this.#authed
-    if (yt === undefined) {
-      return []
-    }
-    try {
+    // Recovers once from a stale-auth read so a rotated session doesn't leave the picker without the
+    // account's emoji catalog; any other failure degrades to an empty list.
+    return this.#readWithAuthRecovery<YouTubeEmoji[]>(async (yt) => {
       const response = await yt.actions.execute('live_chat/get_live_chat', {
         continuation,
         parse: false
@@ -593,36 +751,148 @@ export class YouTubeAuthManager {
       const emojis = collectEmojis(response.data)
       this.#log(`emoji catalog — ${emojis.length} emojis`)
       return emojis
+    }, [])
+  }
+
+  /** The authed InnerTube, or throw — read fresh each time so a recovery rebuild is picked up. */
+  #requireAuthed(): Innertube {
+    if (this.#authed === undefined) {
+      throw new Error('Log in to YouTube first')
+    }
+    return this.#authed
+  }
+
+  /**
+   * Run a write/moderation action against the authed session, recovering once from a stale rotating
+   * token. Every write (send, moderate, held-queue action) authenticates with the same jar, so they
+   * share one failure mode: a 401/403 means `__Secure-1PSIDTS` aged out (typically the browser
+   * rotated it out from under us — reads only degrade silently, but writes reject). Rotate to catch
+   * up, rebuild the instance from the refreshed jar, retry, and — on success — fire {@link #onChange}
+   * so the open readers reconnect onto the rebuilt instance instead of polling the superseded one. A
+   * second auth failure means the cookies are genuinely dead → log out cleanly so the renderer prompts
+   * for a fresh login. Non-auth errors (a held/rejected send, an unavailable action) propagate unchanged.
+   */
+  async #withAuthRecovery<T>(operation: (yt: Innertube) => Promise<T>): Promise<T> {
+    try {
+      return await operation(this.#requireAuthed())
     } catch (error) {
-      this.#log(`emoji catalog fetch failed: ${error instanceof Error ? error.message : error}`)
-      return []
+      if (!isAuthError(error)) {
+        throw error
+      }
+      this.#log('action rejected (auth) — rotating cookies, rebuilding session, and retrying')
+      let rebuilt = false
+      try {
+        await this.#rotateAndRebuild()
+        rebuilt = true
+        const result = await operation(this.#requireAuthed())
+        this.#onChange()
+        return result
+      } catch (retryError) {
+        if (!rebuilt || isAuthError(retryError)) {
+          this.#log('recovery failed — logging out (YouTube session expired)')
+          this.logout()
+          throw new Error('Your YouTube session expired — please log in to YouTube again')
+        }
+        // The session was rebuilt, but the retried write failed for a non-auth reason (slow mode, a
+        // held/rejected send, an unavailable action). Still reconnect readers onto the rebuilt
+        // instance before propagating, so they don't keep polling the superseded one.
+        this.#onChange()
+        throw retryError
+      }
     }
   }
 
-  /** Rotate + rebuild, then retry the send; if it still can't authenticate, log out cleanly. */
-  async #recoverSend(
-    videoId: string,
-    channelId: string | undefined,
-    text: string,
-    emojiMap: Map<string, string>
-  ): Promise<void> {
-    let rebuilt = false
-    try {
-      await this.#rotateCookies()
-      await this.#rebuildAuthed()
-      rebuilt = true
-      await this.#deliver(videoId, channelId, text, emojiMap)
-    } catch (error) {
-      // Rebuild failed (cookies no longer sign in) or the retry was still rejected → the
-      // session is genuinely dead. Log out so the renderer prompts for a fresh login,
-      // instead of leaving a "signed in" state that can never send.
-      if (!rebuilt || isAuthError(error)) {
-        this.#log('recovery failed — logging out (YouTube session expired)')
-        this.logout()
-        throw new Error('Your YouTube session expired — please log in to YouTube again')
-      }
-      throw error
+  /**
+   * Recover the live-chat reader's READ path after a 401/403 poll failure from a stale rotating
+   * cookie: rotate, rebuild, and reconnect the open readers onto the rebuilt instance. Called by the
+   * source on the reader's `onAuthError`. A no-op when logged out.
+   */
+  async recoverReads(): Promise<void> {
+    await this.#recoverStaleReadSession(true)
+  }
+
+  /**
+   * Refresh a stale read session in place: rotate the cookies once and rebuild the authed instance,
+   * then (when `reconnect`) fire {@link #onChange} so open readers re-bind to the rebuilt instance.
+   * Debounced ({@link READ_RECOVERY_DEBOUNCE_MS}) because {@link #rotateCookies} is single-use — a
+   * burst of read 401s (poll, menu, restriction probe) rotates at most once per window. Error-safe:
+   * a failed rotate/rebuild logs and leaves the session as-is, and it never logs out — a background
+   * read must not sign the moderator out mid-session. Callers read the (possibly rebuilt) authed
+   * instance fresh afterwards. `reconnect` is false on the bootstrap path, which already runs inside
+   * a connect and must not trigger a reconnect of itself.
+   */
+  async #recoverStaleReadSession(reconnect: boolean): Promise<void> {
+    if (this.#authed === undefined) {
+      return
     }
+    const now = Date.now()
+    if (now - this.#lastReadRecovery < READ_RECOVERY_DEBOUNCE_MS) {
+      // Rotation is debounced, but if an earlier recovery rebuilt auth without reconnecting (the
+      // bootstrap path), still reconnect now so the open reader rebinds to the already-rebuilt
+      // instance instead of polling the superseded one until the debounce window passes.
+      if (reconnect && this.#reconnectPending) {
+        this.#reconnectPending = false
+        this.#onChange()
+      }
+      return
+    }
+    this.#lastReadRecovery = now
+    this.#log('read rejected (auth) — rotating cookies and rebuilding the read session')
+    try {
+      await this.#rotateAndRebuild()
+    } catch (error) {
+      this.#log(`read recovery failed: ${error instanceof Error ? error.message : error}`)
+      return
+    }
+    if (reconnect) {
+      this.#reconnectPending = false
+      this.#onChange()
+    } else {
+      // Rebuilt the session but left the open readers on the old instance (we're inside a connect);
+      // remember that a reconnect is owed so the reader's next auth-error recovery fires it.
+      this.#reconnectPending = true
+    }
+  }
+
+  /**
+   * Run a best-effort authed READ (the per-message action menu, send-restriction probe, emoji
+   * catalog), recovering once from a stale rotating token: on a 401/403 rotate, rebuild, reconnect
+   * the open readers, and retry. Unlike {@link #withAuthRecovery} it never logs out or throws on a
+   * dead session — a background read must degrade to `fallback`, not sign the moderator out
+   * mid-session. Returns `fallback` when logged out, on a non-auth failure, or if the retry still
+   * fails.
+   */
+  async #readWithAuthRecovery<T>(
+    operation: (yt: Innertube) => Promise<T>,
+    fallback: T
+  ): Promise<T> {
+    const yt = this.#authed
+    if (yt === undefined) {
+      return fallback
+    }
+    try {
+      return await operation(yt)
+    } catch (error) {
+      if (!isAuthError(error)) {
+        return fallback
+      }
+      await this.#recoverStaleReadSession(true)
+      const rebuilt = this.#authed
+      if (rebuilt === undefined) {
+        return fallback
+      }
+      try {
+        return await operation(rebuilt)
+      } catch {
+        return fallback
+      }
+    }
+  }
+
+  /** Rotate the session cookies and rebuild the authed instance from the refreshed jar. */
+  async #rotateAndRebuild(): Promise<void> {
+    await this.#rotateCookies()
+    await this.#rebuildAuthed()
   }
 
   /**
@@ -733,7 +1003,7 @@ export class YouTubeAuthManager {
       ...(onBehalfOfUser !== undefined ? { on_behalf_of_user: onBehalfOfUser } : {})
     })
     if (!yt.session.logged_in) {
-      throw new Error('Those cookies are not signed in to YouTube — copy them while logged in')
+      throw new NotLoggedInError()
     }
     return yt
   }

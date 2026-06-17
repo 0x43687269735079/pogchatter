@@ -5,7 +5,8 @@ import {
   applyEventsToMessages,
   FLAGGED_RETENTION,
   type MessageMap,
-  PAUSED_TRIM_HEADROOM
+  PAUSED_TRIM_HEADROOM,
+  resolveHeldMessage
 } from '@renderer/chatState'
 
 function message(id: string, channelId = 'youtube:c', authorId = 'u1'): ChatMessage {
@@ -43,6 +44,24 @@ describe('applyEventsToMessages', () => {
     const first = applyEventsToMessages({}, [messageEvent('a'), messageEvent('b')])
     const second = applyEventsToMessages(first, [messageEvent('b'), messageEvent('c')])
     expect(second['youtube:c']?.map((m) => m.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('slots a held-for-review message into chat order by its original timestamp', () => {
+    // A live chat with messages at t=100 and t=300; a held-backlog item sent at t=200 must land
+    // between them, not be appended to the bottom.
+    const tsMessage = (id: string, timestamp: number): ChatEvent => ({
+      kind: 'message',
+      channelId: 'youtube:c',
+      message: { ...message(id), timestamp }
+    })
+    const heldEvent: ChatEvent = {
+      kind: 'message',
+      channelId: 'youtube:c',
+      message: { ...message('held-2'), timestamp: 200, held: { actions: [] } }
+    }
+    const seeded = applyEventsToMessages({}, [tsMessage('m1', 100), tsMessage('m3', 300)])
+    const out = applyEventsToMessages(seeded, [heldEvent])
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['m1', 'held-2', 'm3'])
   })
 
   it('dedups duplicates within a single batch', () => {
@@ -146,6 +165,19 @@ describe('applyEventsToMessages', () => {
     expect(out['youtube:c']?.find((m) => m.id === 'b')?.deleted).toBeUndefined()
   })
 
+  it('clears the held card when a held message is deleted', () => {
+    // A held message that gets hidden/removed (its own id marked deleted) has been decided, so it
+    // must stop rendering as an "awaiting review" card and become a struck line.
+    const held: ChatMessage = { ...message('held-a'), held: { actions: [] } }
+    const seeded: MessageMap = { 'youtube:c': [held] }
+    const out = applyEventsToMessages(seeded, [
+      { kind: 'clear', channelId: 'youtube:c', target: { messageId: 'held-a' } }
+    ])
+    const row = out['youtube:c']?.find((m) => m.id === 'held-a')
+    expect(row?.deleted).toBe(true)
+    expect(row?.held).toBeUndefined()
+  })
+
   it('marks every message from a user deleted', () => {
     const seeded = applyEventsToMessages({}, [
       messageEvent('a', 'youtube:c', 'spammer'),
@@ -176,6 +208,103 @@ describe('applyEventsToMessages', () => {
       { kind: 'channels', channels: [{ id: 'youtube:c' } as ChannelInfo] }
     ])
     expect(Object.keys(out)).toEqual(['youtube:c'])
+  })
+})
+
+describe('applyEventsToMessages replace', () => {
+  function heldMessage(id: string, channelId = 'youtube:c'): ChatMessage {
+    return { ...message(id, channelId), held: { actions: [] } }
+  }
+  function replaceEvent(msg: ChatMessage): ChatEvent {
+    return { kind: 'replace', channelId: msg.channelId, message: msg }
+  }
+
+  it('updates a buffered row in place without moving it', () => {
+    const seeded = applyEventsToMessages({}, [messageEvent('a'), messageEvent('b')])
+    const out = applyEventsToMessages(seeded, [replaceEvent(heldMessage('a'))])
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['a', 'b'])
+    expect(out['youtube:c']?.find((m) => m.id === 'a')?.held).toBeDefined()
+  })
+
+  it('surfaces an unbuffered held replacement as a new row (standing backlog)', () => {
+    const seeded = applyEventsToMessages({}, [messageEvent('a')])
+    const out = applyEventsToMessages(seeded, [replaceEvent(heldMessage('held-x'))])
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['a', 'held-x'])
+    expect(out['youtube:c']?.find((m) => m.id === 'held-x')?.held).toBeDefined()
+  })
+
+  it('surfaces an unbuffered already-hidden replacement as a struck row', () => {
+    const seeded = applyEventsToMessages({}, [messageEvent('a')])
+    const out = applyEventsToMessages(seeded, [
+      replaceEvent({ ...message('hidden-x'), deleted: true })
+    ])
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['a', 'hidden-x'])
+    expect(out['youtube:c']?.find((m) => m.id === 'hidden-x')?.deleted).toBe(true)
+  })
+
+  it('ignores an unbuffered replacement that is neither held nor hidden', () => {
+    const seeded = applyEventsToMessages({}, [messageEvent('a')])
+    const out = applyEventsToMessages(seeded, [replaceEvent(message('approved-gone'))])
+    expect(out).toBe(seeded)
+  })
+
+  it('does not double-add a held replacement that is already buffered', () => {
+    const seeded = applyEventsToMessages({}, [replaceEvent(heldMessage('held-x'))])
+    const out = applyEventsToMessages(seeded, [replaceEvent(heldMessage('held-x'))])
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['held-x'])
+  })
+
+  it('inserts a surfaced backlog item at its send-time slot, not the end', () => {
+    const tsMessage = (id: string, timestamp: number): ChatEvent => ({
+      kind: 'message',
+      channelId: 'youtube:c',
+      message: { ...message(id), timestamp }
+    })
+    const seeded = applyEventsToMessages({}, [tsMessage('m1', 100), tsMessage('m3', 300)])
+    // A held item sent at t=200 (its original predates this connection) must slot between m1 and m3.
+    const backlog: ChatMessage = { ...message('held-2'), timestamp: 200, held: { actions: [] } }
+    const out = applyEventsToMessages(seeded, [replaceEvent(backlog)])
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['m1', 'held-2', 'm3'])
+  })
+})
+
+describe('resolveHeldMessage', () => {
+  const held = (id: string): ChatMessage => ({ ...message(id), held: { actions: [] } })
+
+  it('resolves a hidden decision to a struck row and clears the held card', () => {
+    const seeded: MessageMap = { 'youtube:c': [held('h1')] }
+    const out = resolveHeldMessage(seeded, 'youtube:c', 'h1', true)
+    const row = out['youtube:c']?.find((m) => m.id === 'h1')
+    expect(row?.held).toBeUndefined()
+    expect(row?.deleted).toBe(true)
+  })
+
+  it('resolves a shown decision to a regular row and clears the held card', () => {
+    const seeded: MessageMap = { 'youtube:c': [held('h1')] }
+    const out = resolveHeldMessage(seeded, 'youtube:c', 'h1', false)
+    const row = out['youtube:c']?.find((m) => m.id === 'h1')
+    expect(row?.held).toBeUndefined()
+    expect(row?.deleted).toBe(false)
+  })
+
+  it('leaves other rows untouched and keeps position', () => {
+    const seeded: MessageMap = { 'youtube:c': [message('a'), held('h1'), message('b')] }
+    const out = resolveHeldMessage(seeded, 'youtube:c', 'h1', true)
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['a', 'h1', 'b'])
+  })
+
+  it('returns the same map when the message is not buffered or not held', () => {
+    const seeded: MessageMap = { 'youtube:c': [message('a')] }
+    expect(resolveHeldMessage(seeded, 'youtube:c', 'missing', true)).toBe(seeded)
+    // A buffered-but-not-held id is a no-op too (nothing to resolve).
+    expect(resolveHeldMessage(seeded, 'youtube:c', 'a', true)).toBe(seeded)
+  })
+
+  it('leaves the row pending (unchanged) when the decision is unclassifiable', () => {
+    const seeded: MessageMap = { 'youtube:c': [held('h1')] }
+    // An unclassifiable action (hides === undefined) must not optimistically flip the row — the held
+    // card stays until the server echo resolves it.
+    expect(resolveHeldMessage(seeded, 'youtube:c', 'h1', undefined)).toBe(seeded)
   })
 })
 

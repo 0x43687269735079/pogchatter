@@ -123,7 +123,56 @@ export interface ChatMessage {
   ping?: { color: string }
   /** Set when the message matched a moderation watchlist term — flagged for a moderator to review. */
   flagged?: boolean
+  /**
+   * Set on a YouTube message YouTube's automod held for review (only delivered to moderators/the
+   * broadcaster): the explanatory header plus YouTube's own inline approve/remove actions. The
+   * message renders as a distinct "held for review" card; the `⋮` menu (see {@link menuToken})
+   * still offers the per-author moderation actions (hide/ban/timeout).
+   */
+  held?: HeldReview
 }
+
+/** A YouTube automod "held for review" message's header and inline moderation actions. */
+export interface HeldReview {
+  /** YouTube's explanatory line, e.g. "Held for review". */
+  headerText?: string
+  /** The review-decision buttons YouTube offers on the held message (Show / keep Hidden). */
+  actions: HeldAction[]
+}
+
+/**
+ * One review-decision action on a held-for-review message (Show / keep Hidden); its `token` is
+ * replayed by the main process. Per-author moderation (remove/timeout/hide) isn't here — it's on the
+ * message's right-click menu (see {@link ChatMessage.menuToken}).
+ */
+export interface HeldAction {
+  /** Stable id for the action (the button's icon type, or its index when none). */
+  id: string
+  /** Human label as YouTube names it (e.g. "Show", "Hide"). */
+  label: string
+  /**
+   * Whether running this action keeps the message hidden (Hide) rather than publishing it (Show) —
+   * so the UI can resolve the held row to its decided state (struck/hidden vs. a regular message)
+   * without waiting for YouTube to echo the change back. Omitted when the action can't be classified
+   * as Show or Hide (a non-standard button shape); the renderer then leaves the row pending until the
+   * server echo resolves it.
+   */
+  hides?: boolean
+  /** Opaque token the main process replays to perform the action (see ChatApi.runHeldAction). */
+  token: string
+}
+
+/**
+ * Runs a held message's Show/Hide review action and resolves the row to its decided state. `hides`
+ * is the chosen action's {@link HeldAction.hides} (undefined when unclassifiable — the row is left
+ * pending for the server echo); `messageId` identifies the row to resolve.
+ */
+export type HeldActionHandler = (
+  channelId: string,
+  messageId: string,
+  token: string,
+  hides: boolean | undefined
+) => Promise<SendResult>
 
 /**
  * One right-click action available on a chat message for the signed-in account. The set reflects
@@ -383,8 +432,6 @@ export const FONT_SIZE_OPTIONS = [11, 12, 13, 14, 15, 16] as const
 export interface AppSettings {
   /** Reveals the Developer section — the home for experimental features and debug toggles. */
   devMode: boolean
-  /** Keep deleted messages readable (dimmed + struck) instead of hiding their text. */
-  revealDeleted: boolean
   /**
    * Messages kept per chat (scrollback, and the pool the monitor/flagged/search views draw from).
    * A bigger buffer holds more history at the cost of memory — clamped to
@@ -447,7 +494,6 @@ export const BUFFER_SIZE_OPTIONS = [100, 500, 1000, 2000, 5000] as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
   devMode: false,
-  revealDeleted: true,
   bufferSize: DEFAULT_BUFFER_SIZE,
   highlights: [],
   monitors: [],
@@ -479,6 +525,12 @@ export type TwitchLoginPrompt =
 /** Events pushed from the main process to the renderer. */
 export type ChatEvent =
   | { kind: 'message'; channelId: string; message: ChatMessage }
+  /**
+   * Replace an existing message in place, keyed by `message.id` (YouTube `replaceChatItemAction` —
+   * e.g. an automod held message becoming the approved text, or a hidden deleted-state placeholder).
+   * Updates the buffered row without re-firing alerts or moving it; ignored if the row is gone.
+   */
+  | { kind: 'replace'; channelId: string; message: ChatMessage }
   | { kind: 'status'; channelId: string; status: SourceStatus }
   /** The signed-in user's ability to send here changed (reason set = blocked, undefined = allowed). */
   | { kind: 'sendRestriction'; channelId: string; reason: string | undefined }
@@ -524,6 +576,8 @@ export interface ChatApi {
     actionId: string,
     timeoutSeconds?: number
   ): Promise<SendResult>
+  /** Run a held-for-review message's inline action ({@link HeldAction.token}); approve/remove. */
+  runHeldAction(channelId: string, token: string): Promise<SendResult>
   /** Custom emotes (7TV/BTTV/FFZ global + this channel's) for input autocomplete and the picker. */
   getEmotes(channelId: string): Promise<ChannelEmote[]>
   /** A Super Chat's reply thread (the donation first, then its replies) for the reply-thread view. */

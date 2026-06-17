@@ -6,7 +6,7 @@ vi.mock('youtubei.js', () => ({
 
 import { Innertube } from 'youtubei.js'
 import type { AuthStore } from '@main/auth/AuthStore'
-import { YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManager'
+import { extractYtInitialData, YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManager'
 
 const create = vi.mocked(Innertube.create)
 
@@ -68,6 +68,11 @@ function newManager(store: FakeStore): YouTubeAuthManager {
   )
 }
 
+/** A manager with an observable `onChange` (fired on login/logout/channel-switch and auth recovery). */
+function newManagerWith(store: FakeStore, onChange: () => void): YouTubeAuthManager {
+  return new YouTubeAuthManager(store as unknown as AuthStore, 'UA', () => undefined, onChange)
+}
+
 describe('YouTubeAuthManager transactional cookie updates', () => {
   beforeEach(() => {
     create.mockReset()
@@ -82,6 +87,18 @@ describe('YouTubeAuthManager transactional cookie updates', () => {
 
     expect(manager.isLoggedIn).toBe(true)
     expect(store.get('youtube')).toEqual({ cookie: 'SAPISID=abc; SID=xyz' })
+  })
+
+  it('strips a pasted "Cookie:" header prefix so the first cookie is not mangled', () => {
+    const store = new FakeStore()
+    const manager = newManager(store)
+    create.mockResolvedValueOnce(session(true) as never)
+
+    // Pasting the whole header (with "Cookie: ") must not turn the first cookie into a "Cookie: YSC"
+    // entry — the stored jar should be clean.
+    return manager.setCookies('Cookie: YSC=abc; SID=xyz').then(() => {
+      expect(store.get('youtube')).toEqual({ cookie: 'YSC=abc; SID=xyz' })
+    })
   })
 
   it('keeps the working session and stored cookies when an update fails validation', async () => {
@@ -156,6 +173,98 @@ describe('YouTubeAuthManager transactional cookie updates', () => {
     vi.stubGlobal('fetch', () =>
       Promise.resolve({
         url: 'https://evil.example.com/landing',
+        headers: { getSetCookie: () => ['INJECT=1; Path=/'] }
+      } as never)
+    )
+    try {
+      await wrappedFetch('https://www.youtube.com/youtubei/v1/next')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(store.get('youtube')).toEqual(before)
+  })
+
+  it('does not attach the cookie jar to an http (non-https) YouTube URL', async () => {
+    const store = new FakeStore()
+    let captured: typeof fetch | undefined
+    create.mockImplementationOnce((options) => {
+      captured = (options as { fetch: typeof fetch }).fetch
+      return Promise.resolve(session(true) as never)
+    })
+    await newManager(store).setCookies('SAPISID=abc; SID=xyz')
+
+    const wrappedFetch = captured
+    if (wrappedFetch === undefined) {
+      throw new Error('Innertube.create was not given a fetch implementation')
+    }
+    let cookie: string | null = 'unset'
+    vi.stubGlobal('fetch', (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      cookie = new Headers(init?.headers).get('cookie')
+      return Promise.resolve(new Response('', { status: 200 }))
+    })
+    try {
+      // Same host, but cleartext — the cookie jar must not ride along over http.
+      await wrappedFetch('http://www.youtube.com/youtubei/v1/next')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(cookie).toBeNull()
+  })
+
+  it('does not attach the cookie jar to youtu.be or youtube-nocookie.com (S2-7)', async () => {
+    const store = new FakeStore()
+    let captured: typeof fetch | undefined
+    create.mockImplementationOnce((options) => {
+      captured = (options as { fetch: typeof fetch }).fetch
+      return Promise.resolve(session(true) as never)
+    })
+    await newManager(store).setCookies('SAPISID=abc; SID=xyz')
+
+    const wrappedFetch = captured
+    if (wrappedFetch === undefined) {
+      throw new Error('Innertube.create was not given a fetch implementation')
+    }
+
+    const seen: Array<{ url: string; cookie: string | null }> = []
+    vi.stubGlobal('fetch', (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      seen.push({ url: String(input), cookie: new Headers(init?.headers).get('cookie') })
+      return Promise.resolve(new Response('', { status: 200 }))
+    })
+    try {
+      // A browser never sends youtube.com cookies to these domains, so neither may carry the jar.
+      await wrappedFetch('https://youtu.be/abc')
+      await wrappedFetch('https://www.youtube-nocookie.com/embed/abc')
+      // accounts.youtube.com (cookie rotation) still receives the jar — it's a youtube.com subdomain.
+      await wrappedFetch('https://accounts.youtube.com/RotateCookies')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(seen[0]?.cookie).toBeNull()
+    expect(seen[1]?.cookie).toBeNull()
+    expect(seen[2]?.cookie).toContain('SAPISID=abc')
+  })
+
+  it('does not merge Set-Cookie when the final response URL downgrades to http', async () => {
+    const store = new FakeStore()
+    let captured: typeof fetch | undefined
+    create.mockImplementationOnce((options) => {
+      captured = (options as { fetch: typeof fetch }).fetch
+      return Promise.resolve(session(true) as never)
+    })
+    await newManager(store).setCookies('SAPISID=abc; SID=xyz')
+    const before = store.get('youtube')
+
+    const wrappedFetch = captured
+    if (wrappedFetch === undefined) {
+      throw new Error('Innertube.create was not given a fetch implementation')
+    }
+    // An https YouTube request whose final response URL is http (a downgrade) returning Set-Cookie.
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve({
+        url: 'http://www.youtube.com/landing',
         headers: { getSetCookie: () => ['INJECT=1; Path=/'] }
       } as never)
     )
@@ -399,6 +508,63 @@ describe('YouTubeAuthManager send resilience', () => {
     expect(create).toHaveBeenCalledTimes(2)
   })
 
+  it('reconnects open readers (onChange) after a send recovers from a 401', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create
+      .mockResolvedValueOnce(sendInstance(() => Promise.reject(AUTH_401)) as never)
+      .mockResolvedValueOnce(
+        sendInstance(() =>
+          Promise.resolve(rawResponse({ actions: [{ addChatItemAction: {} }] }))
+        ) as never
+      )
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear() // setCookies fired onChange once
+
+    await manager.sendMessage('vid12345678', undefined, 'hello')
+
+    // The rebuilt instance superseded the one open readers hold, so they reconnect onto it.
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not reconnect readers when a send succeeds without recovery', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create.mockResolvedValueOnce(
+      sendInstance(() =>
+        Promise.resolve(rawResponse({ actions: [{ addChatItemAction: {} }] }))
+      ) as never
+    )
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    await manager.sendMessage('vid12345678', 'UCxyz', 'hello')
+
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('reconnects readers after a rebuild even when the retried send fails non-auth (F3-5)', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create
+      .mockResolvedValueOnce(sendInstance(() => Promise.reject(AUTH_401)) as never)
+      // After the rebuild, the retry reaches YouTube but is held (a non-auth application failure).
+      .mockResolvedValueOnce(
+        sendInstance(() =>
+          Promise.resolve(rawResponse({ actions: [{ dimChatItemAction: { itemId: 'x' } }] }))
+        ) as never
+      )
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    await expect(manager.sendMessage('vid12345678', undefined, 'hello')).rejects.toThrow(
+      /held your message/
+    )
+    // The session was rebuilt, so readers reconnect onto it even though the retry failed non-auth.
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(manager.isLoggedIn).toBe(true)
+  })
+
   it('does not retry a non-auth send failure', async () => {
     const store = new FakeStore()
     const manager = newManager(store)
@@ -433,6 +599,20 @@ describe('YouTubeAuthManager send resilience', () => {
       session: { logged_in: true },
       account: { getInfo: vi.fn().mockRejectedValue(AUTH_401) }
     } as never)
+
+    await manager.init()
+
+    expect(manager.isLoggedIn).toBe(false)
+    expect(store.get('youtube')).toBeUndefined()
+  })
+
+  it('discards stored cookies when restore builds a session that is not logged in (S2-8)', async () => {
+    const store = new FakeStore()
+    store.set('youtube', { cookie: 'SAPISID=abc; SID=xyz' })
+    const manager = newManager(store)
+    // The cookies build a session but it isn't signed in (incomplete/expired identity cookies) —
+    // no rotating-token to refresh, so restore must discard rather than keep retrying every launch.
+    create.mockResolvedValue(session(false) as never)
 
     await manager.init()
 
@@ -529,6 +709,364 @@ describe('YouTubeAuthManager.runMessageAction', () => {
     )
     // Only the menu fetch ran — the broken endpoint was never executed.
     expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('rebuilds the session and retries once when a moderation action is rejected with 401', async () => {
+    const store = new FakeStore()
+    const manager = newManager(store)
+    const dialog = {
+      content: {
+        confirmDialogRenderer: {
+          confirmButton: {
+            buttonRenderer: {
+              serviceEndpoint: { moderateLiveChatEndpoint: { params: 'block-token' } }
+            }
+          }
+        }
+      }
+    }
+    // Stale rotating token → the first menu fetch 401s; after rotate+rebuild the retry succeeds.
+    const retryExecute = vi
+      .fn()
+      .mockResolvedValueOnce(menuResponse([blockItem(dialog)]))
+      .mockResolvedValueOnce({ data: {} })
+    create
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: { execute: vi.fn().mockRejectedValue(AUTH_401) }
+      } as never)
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: { execute: retryExecute }
+      } as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+
+    await expect(manager.runMessageAction('menu-token', 'NOT_INTERESTED')).resolves.toBeUndefined()
+    // One create for login, one for the post-401 rebuild.
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(retryExecute).toHaveBeenCalledWith('live_chat/moderate', {
+      params: 'block-token',
+      parse: false
+    })
+  })
+
+  it('logs out when a moderation action still fails auth after rebuilding', async () => {
+    const store = new FakeStore()
+    const manager = newManager(store)
+    create
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: { execute: vi.fn().mockRejectedValue(AUTH_401) }
+      } as never)
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: { execute: vi.fn().mockRejectedValue(AUTH_401) }
+      } as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+
+    await expect(manager.runMessageAction('menu-token', 'NOT_INTERESTED')).rejects.toThrow(
+      /log in to YouTube/
+    )
+    expect(manager.isLoggedIn).toBe(false)
+    expect(store.get('youtube')).toBeUndefined()
+  })
+})
+
+describe('YouTubeAuthManager.getMessageActions', () => {
+  beforeEach(() => {
+    create.mockReset()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })))
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function menuResponse(items: unknown[]): unknown {
+    return { data: { liveChatItemContextMenuSupportedRenderers: { menuRenderer: { items } } } }
+  }
+  const removeItem = {
+    menuServiceItemRenderer: {
+      text: { runs: [{ text: 'Remove' }] },
+      icon: { iconType: 'DELETE' },
+      serviceEndpoint: { moderateLiveChatEndpoint: { params: 'p' } }
+    }
+  }
+
+  function instanceExecuting(execute: ReturnType<typeof vi.fn>): unknown {
+    return {
+      session: { logged_in: true },
+      account: { getInfo: vi.fn().mockResolvedValue([]) },
+      actions: { execute }
+    }
+  }
+
+  it('recovers from a stale-session 401 on the menu fetch and returns the parsed actions', async () => {
+    const manager = newManager(new FakeStore())
+    create
+      .mockResolvedValueOnce(instanceExecuting(vi.fn().mockRejectedValue(AUTH_401)) as never)
+      .mockResolvedValueOnce(
+        instanceExecuting(vi.fn().mockResolvedValue(menuResponse([removeItem]))) as never
+      )
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+
+    await expect(manager.getMessageActions('menu-token')).resolves.toMatchObject([{ id: 'DELETE' }])
+    // One create for login, one for the post-401 rebuild.
+    expect(create).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns [] without logging out when the menu stays 401 after a rebuild', async () => {
+    const manager = newManager(new FakeStore())
+    create.mockResolvedValue(instanceExecuting(vi.fn().mockRejectedValue(AUTH_401)) as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+
+    // A best-effort background read degrades to [] — it must never sign the moderator out.
+    await expect(manager.getMessageActions('menu-token')).resolves.toEqual([])
+    expect(manager.isLoggedIn).toBe(true)
+  })
+
+  it('returns [] when logged out', async () => {
+    await expect(newManager(new FakeStore()).getMessageActions('menu-token')).resolves.toEqual([])
+  })
+
+  it('reconnects open readers after the menu recovery rebuilds the session', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create
+      .mockResolvedValueOnce(instanceExecuting(vi.fn().mockRejectedValue(AUTH_401)) as never)
+      .mockResolvedValueOnce(
+        instanceExecuting(vi.fn().mockResolvedValue(menuResponse([removeItem]))) as never
+      )
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    await manager.getMessageActions('menu-token')
+
+    // The rebuilt session must reach open readers, like the write-path recovery (S2-5).
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('YouTubeAuthManager.recoverReads', () => {
+  beforeEach(() => {
+    create.mockReset()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })))
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('rotates, rebuilds, and reconnects readers on a read auth failure', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create
+      .mockResolvedValueOnce(session(true) as never) // login
+      .mockResolvedValueOnce(session(true) as never) // rebuild
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    await manager.recoverReads()
+
+    // login + rebuild = 2 creates; the rebuild reconnects open readers via onChange.
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('debounces repeated read recoveries so the single-use rotation is not hammered', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create.mockResolvedValue(session(true) as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    await manager.recoverReads()
+    await manager.recoverReads() // within the debounce window → a no-op
+
+    expect(create).toHaveBeenCalledTimes(2) // login + a single rebuild
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('is a no-op when logged out', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+
+    await manager.recoverReads()
+
+    expect(create).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+})
+
+describe('YouTubeAuthManager.fetchLiveChatBootstrap', () => {
+  beforeEach(() => {
+    create.mockReset()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  async function loggedInManager(): Promise<YouTubeAuthManager> {
+    const manager = newManager(new FakeStore())
+    create.mockResolvedValueOnce(session(true) as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    return manager
+  }
+
+  it('resolves to undefined instead of hanging when the bootstrap GET stalls past the timeout', async () => {
+    const manager = await loggedInManager()
+    vi.useFakeTimers()
+    // A black-hole connection: never settles on its own, but honors the abort signal.
+    vi.stubGlobal('fetch', (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new Error('aborted'))
+        })
+      })
+    })
+    try {
+      const pending = manager.fetchLiveChatBootstrap('cont-token', 'vid12345678')
+      await vi.advanceTimersByTimeAsync(6000)
+      await expect(pending).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('returns the parsed page snapshot, unaffected by the debug-gated held count', async () => {
+    const manager = await loggedInManager()
+    const html =
+      '<script>window["ytInitialData"] = {"x":1,"r":"liveChatAutoModMessageRenderer"};</script>'
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(html, { status: 200 })))
+
+    await expect(manager.fetchLiveChatBootstrap('cont-token', 'vid12345678')).resolves.toEqual({
+      x: 1,
+      r: 'liveChatAutoModMessageRenderer'
+    })
+  })
+
+  it('recovers from a 401 on the bootstrap GET, then returns the retried snapshot (S2-4)', async () => {
+    const manager = newManager(new FakeStore())
+    create
+      .mockResolvedValueOnce(session(true) as never) // login
+      .mockResolvedValueOnce(session(true) as never) // rebuild after the rotate
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+
+    const html = '<script>window["ytInitialData"] = {"ok":true};</script>'
+    let liveChatHits = 0
+    vi.stubGlobal('fetch', (input: unknown) => {
+      const url = String(input)
+      if (url.includes('/live_chat?')) {
+        liveChatHits += 1
+        // First GET is rejected by a stale rotating cookie; after the rotate the retry succeeds.
+        return Promise.resolve(
+          liveChatHits === 1
+            ? new Response('', { status: 401 })
+            : new Response(html, { status: 200 })
+        )
+      }
+      if (url.includes('RotateCookiesPage')) {
+        return Promise.resolve(new Response("init('-1', 0.0)", { status: 200 }))
+      }
+      return Promise.resolve(new Response('', { status: 200 }))
+    })
+
+    await expect(manager.fetchLiveChatBootstrap('cont-token', 'vid12345678')).resolves.toEqual({
+      ok: true
+    })
+    expect(liveChatHits).toBe(2)
+  })
+
+  it('a debounced recoverReads after a bootstrap rebuild still reconnects open readers (F3-2)', async () => {
+    const onChange = vi.fn()
+    const manager = newManagerWith(new FakeStore(), onChange)
+    create
+      .mockResolvedValueOnce(session(true) as never) // login
+      .mockResolvedValueOnce(session(true) as never) // rebuild during the bootstrap recovery
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    onChange.mockClear()
+
+    const html = '<script>window["ytInitialData"] = {"ok":true};</script>'
+    let liveChatHits = 0
+    vi.stubGlobal('fetch', (input: unknown) => {
+      const url = String(input)
+      if (url.includes('/live_chat?')) {
+        liveChatHits += 1
+        return Promise.resolve(
+          liveChatHits === 1
+            ? new Response('', { status: 401 })
+            : new Response(html, { status: 200 })
+        )
+      }
+      if (url.includes('RotateCookiesPage')) {
+        return Promise.resolve(new Response("init('-1', 0.0)", { status: 200 }))
+      }
+      return Promise.resolve(new Response('', { status: 200 }))
+    })
+
+    // Bootstrap recovery rebuilds auth without reconnecting (it runs inside a connect).
+    await manager.fetchLiveChatBootstrap('cont-token', 'vid12345678')
+    expect(onChange).not.toHaveBeenCalled()
+
+    // The reader's first poll 401s → recoverReads. Its rotation is debounced (the bootstrap just
+    // rotated), but the pending reconnect from that rebuild still fires so the reader rebinds.
+    await manager.recoverReads()
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('YouTubeAuthManager.runHeldAction', () => {
+  beforeEach(() => {
+    create.mockReset()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })))
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const encodeToken = (endpoint: unknown): string =>
+    Buffer.from(JSON.stringify(endpoint), 'utf8').toString('base64')
+
+  async function loggedIn(execute: ReturnType<typeof vi.fn>): Promise<YouTubeAuthManager> {
+    const manager = newManager(new FakeStore())
+    create.mockResolvedValueOnce({
+      session: { logged_in: true },
+      account: { getInfo: vi.fn().mockResolvedValue([]) },
+      actions: { execute }
+    } as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+    return manager
+  }
+
+  it('replays a moderation held token via live_chat/moderate', async () => {
+    const execute = vi.fn().mockResolvedValue({ data: {} })
+    const manager = await loggedIn(execute)
+
+    await manager.runHeldAction(encodeToken({ moderateLiveChatEndpoint: { params: 'SHOW' } }))
+
+    expect(execute).toHaveBeenCalledWith('live_chat/moderate', { params: 'SHOW', parse: false })
+  })
+
+  it('rejects a held token that is not a moderation action, executing nothing (S2-6)', async () => {
+    const execute = vi.fn()
+    const manager = await loggedIn(execute)
+
+    await expect(
+      manager.runHeldAction(encodeToken({ urlEndpoint: { url: 'https://evil/' } }))
+    ).rejects.toThrow(/no longer available/)
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed token', async () => {
+    const execute = vi.fn()
+    const manager = await loggedIn(execute)
+
+    await expect(manager.runHeldAction('@@not-base64-json@@')).rejects.toThrow(
+      /no longer available/
+    )
+    expect(execute).not.toHaveBeenCalled()
   })
 })
 
@@ -656,6 +1194,96 @@ describe('YouTubeAuthManager.checkSendRestriction', () => {
     const manager = newManager(new FakeStore())
     await expect(manager.checkSendRestriction('cont-token')).resolves.toBeUndefined()
   })
+
+  it('recovers from a stale-auth 401 and reports the restriction after the rebuild (S2-4)', async () => {
+    const manager = newManager(new FakeStore())
+    create
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: { execute: vi.fn().mockRejectedValue(AUTH_401) }
+      } as never)
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: {
+          execute: vi.fn().mockResolvedValue(
+            chatResponse({
+              liveChatRestrictedParticipationRenderer: {
+                message: { runs: [{ text: 'Members-only mode' }] }
+              }
+            })
+          )
+        }
+      } as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+
+    await expect(manager.checkSendRestriction('cont-token')).resolves.toBe('Members-only mode')
+    expect(create).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('YouTubeAuthManager.getEmojiCatalog', () => {
+  beforeEach(() => {
+    create.mockReset()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })))
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('recovers from a stale-auth 401 and returns the catalog after the rebuild (S2-4)', async () => {
+    const manager = newManager(new FakeStore())
+    const emojiResponse = {
+      data: {
+        continuationContents: {
+          liveChatContinuation: {
+            actionPanel: {
+              liveChatMessageInputRenderer: {
+                emojiPickerRenderer: {
+                  categories: [
+                    {
+                      emojiPickerCategoryRenderer: {
+                        emojiIds: ['x'],
+                        categoryId: 'c',
+                        emoji: [
+                          {
+                            emojiId: 'room/abc',
+                            shortcuts: [':kappa:'],
+                            image: { thumbnails: [{ url: 'http://e/kappa.png' }] }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    create
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: { execute: vi.fn().mockRejectedValue(AUTH_401) }
+      } as never)
+      .mockResolvedValueOnce({
+        session: { logged_in: true },
+        account: { getInfo: vi.fn().mockResolvedValue([]) },
+        actions: { execute: vi.fn().mockResolvedValue(emojiResponse) }
+      } as never)
+    await manager.setCookies('SAPISID=abc; SID=xyz')
+
+    const emojis = await manager.getEmojiCatalog('cont-token')
+    expect(emojis.length).toBeGreaterThan(0)
+    expect(create).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns [] when logged out', async () => {
+    await expect(newManager(new FakeStore()).getEmojiCatalog('cont-token')).resolves.toEqual([])
+  })
 })
 
 describe('YouTubeAuthManager init/auth-change races', () => {
@@ -710,5 +1338,28 @@ describe('YouTubeAuthManager init/auth-change races', () => {
 
     expect(manager.isLoggedIn).toBe(false)
     expect(store.get('youtube')).toBeUndefined()
+  })
+})
+
+describe('extractYtInitialData (live_chat page bootstrap)', () => {
+  it('extracts the embedded ytInitialData object', () => {
+    const html = `<html><script>var ytInitialData = {"a":1,"b":{"c":"x"}};</script></html>`
+    expect(extractYtInitialData(html)).toEqual({ a: 1, b: { c: 'x' } })
+  })
+
+  it('is not unbalanced by braces inside a message string', () => {
+    // A chat message containing braces must not end the object scan early.
+    const html = `window["ytInitialData"] = {"msg":"a } b { c","ok":true};\n</script>`
+    expect(extractYtInitialData(html)).toEqual({ msg: 'a } b { c', ok: true })
+  })
+
+  it('handles an escaped quote inside a string', () => {
+    const html = `ytInitialData = {"t":"say \\"hi\\" }","n":2};`
+    expect(extractYtInitialData(html)).toEqual({ t: 'say "hi" }', n: 2 })
+  })
+
+  it('returns undefined when the marker is absent or the slice is not JSON', () => {
+    expect(extractYtInitialData('<html>no data here</html>')).toBeUndefined()
+    expect(extractYtInitialData('ytInitialData = {not valid json}')).toBeUndefined()
   })
 })

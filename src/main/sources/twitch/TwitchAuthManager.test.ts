@@ -20,6 +20,10 @@ vi.mock('@main/sources/twitch/twitchAuth', async (importOriginal) => {
   }
 })
 
+// Helix GETs go through proxiedFetch; mock it so helixFetch's recovery can be exercised offline.
+const proxiedFetch = vi.hoisted(() => vi.fn())
+vi.mock('@main/net/proxy', () => ({ proxiedFetch }))
+
 function makeTokens(overrides: Partial<TwitchTokens> = {}): TwitchTokens {
   return {
     accessToken: 'access-1',
@@ -71,6 +75,66 @@ function deferred<T>(): {
 afterEach(() => {
   vi.useRealTimers()
   vi.resetAllMocks()
+})
+
+describe('helixFetch (S2-3)', () => {
+  it('retries once with a fresh token after a 401 from a revoked-but-unexpired token', async () => {
+    const { store } = fakeStore(makeTokens())
+    const manager = new TwitchAuthManager('client-id', store, vi.fn())
+    twitchAuth.refreshTokens.mockResolvedValueOnce(makeTokens({ accessToken: 'access-2' }))
+    const auths: Array<string | null> = []
+    proxiedFetch
+      .mockImplementationOnce((_url: string, init?: RequestInit) => {
+        auths.push(new Headers(init?.headers).get('authorization'))
+        return Promise.resolve({ status: 401, ok: false })
+      })
+      .mockImplementationOnce((_url: string, init?: RequestInit) => {
+        auths.push(new Headers(init?.headers).get('authorization'))
+        return Promise.resolve({ status: 200, ok: true })
+      })
+
+    const response = await manager.helixFetch('https://api.twitch.tv/helix/users')
+
+    expect(response?.ok).toBe(true)
+    expect(proxiedFetch).toHaveBeenCalledTimes(2)
+    expect(auths).toEqual(['Bearer access-1', 'Bearer access-2'])
+  })
+
+  it('returns undefined without calling Helix when logged out', async () => {
+    const { store } = fakeStore()
+    const manager = new TwitchAuthManager('client-id', store, vi.fn())
+
+    expect(await manager.helixFetch('https://api.twitch.tv/helix/users')).toBeUndefined()
+    expect(proxiedFetch).not.toHaveBeenCalled()
+  })
+
+  it('does not force recovery for a non-auth non-OK response', async () => {
+    const { store } = fakeStore(makeTokens())
+    const manager = new TwitchAuthManager('client-id', store, vi.fn())
+    proxiedFetch.mockResolvedValueOnce({ status: 500, ok: false })
+
+    const response = await manager.helixFetch('https://api.twitch.tv/helix/users')
+
+    expect(response?.status).toBe(500)
+    expect(proxiedFetch).toHaveBeenCalledTimes(1)
+    expect(twitchAuth.refreshTokens).not.toHaveBeenCalled()
+  })
+
+  it('does not force recovery on a 403 (missing scope), keeping the login (F3-3)', async () => {
+    const { store, data } = fakeStore(makeTokens())
+    const manager = new TwitchAuthManager('client-id', store, vi.fn())
+    // A login without `user:read:emotes` 403s on the user-emotes endpoint — that's a missing scope,
+    // not a dead token, so it must degrade (return the 403) rather than refresh/log the user out.
+    proxiedFetch.mockResolvedValueOnce({ status: 403, ok: false })
+
+    const response = await manager.helixFetch('https://api.twitch.tv/helix/chat/emotes/user')
+
+    expect(response?.status).toBe(403)
+    expect(proxiedFetch).toHaveBeenCalledTimes(1)
+    expect(twitchAuth.refreshTokens).not.toHaveBeenCalled()
+    expect(manager.isLoggedIn).toBe(true)
+    expect(data.has('twitch')).toBe(true)
+  })
 })
 
 describe('ensureValid', () => {
@@ -272,6 +336,41 @@ describe('handleAuthFailure', () => {
     expect(data.has('twitch')).toBe(false)
     expect(onChange).toHaveBeenCalledTimes(1)
   })
+
+  it('reconnects once after joining a routine refresh that rotated the token (S2-2)', async () => {
+    const { store } = fakeStore(expiredTokens())
+    const onChange = vi.fn()
+    const manager = new TwitchAuthManager('client-id', store, onChange)
+    const gate = deferred<TwitchTokens>()
+    twitchAuth.refreshTokens.mockReturnValueOnce(gate.promise)
+
+    // A routine (expiry-driven) refresh is in flight; it rotates the token but does not reconnect.
+    const refreshing = manager.ensureValid()
+    // A source's auth failure joins that refresh instead of spending the refresh token again.
+    const failure = manager.handleAuthFailure()
+    gate.resolve(makeTokens({ accessToken: 'access-2', refreshToken: 'refresh-2' }))
+    await Promise.all([refreshing, failure])
+
+    expect(twitchAuth.refreshTokens).toHaveBeenCalledTimes(1)
+    // Without the reconnect, the failed source would stay disconnected despite fresh credentials.
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('fires onChange once across concurrent forced failures that share a refresh (S2-2)', async () => {
+    const { store } = fakeStore(makeTokens())
+    const onChange = vi.fn()
+    const manager = new TwitchAuthManager('client-id', store, onChange)
+    const gate = deferred<TwitchTokens>()
+    twitchAuth.refreshTokens.mockReturnValueOnce(gate.promise)
+
+    const columnA = manager.handleAuthFailure()
+    const columnB = manager.handleAuthFailure()
+    gate.resolve(makeTokens({ accessToken: 'access-2', refreshToken: 'refresh-2' }))
+    await Promise.all([columnA, columnB])
+
+    // The owner and the joiner observe the same rotated token — exactly one reconnect, not two.
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('login', () => {
@@ -282,6 +381,37 @@ describe('login', () => {
     expires_in: 30,
     interval: 1
   }
+
+  it('a login completing during an in-flight refresh is not overwritten by it (S2-1)', async () => {
+    const { store, data } = fakeStore(expiredTokens())
+    const manager = new TwitchAuthManager('client-id', store, vi.fn())
+    const gate = deferred<TwitchTokens>()
+    twitchAuth.refreshTokens.mockReturnValueOnce(gate.promise)
+
+    // A routine refresh of the stored (expired) token is in flight.
+    const refreshing = manager.ensureValid()
+
+    // The user logs in to a different account before that refresh resolves.
+    twitchAuth.requestDeviceCode.mockResolvedValueOnce({ ...device, interval: 0 })
+    const fresh = makeTokens({
+      accessToken: 'fresh-access',
+      refreshToken: 'fresh-refresh',
+      userId: '99',
+      userName: 'newaccount'
+    })
+    twitchAuth.pollDeviceToken.mockResolvedValueOnce(fresh)
+    await manager.login(() => {})
+    expect(manager.userName).toBe('newaccount')
+
+    // The stale refresh now resolves — its commit must be superseded, not overwrite the new login.
+    gate.resolve(
+      makeTokens({ accessToken: 'stale-refreshed', userId: '42', userName: 'somestreamer' })
+    )
+    await refreshing
+
+    expect(manager.userName).toBe('newaccount')
+    expect(data.get('twitch')).toEqual(fresh)
+  })
 
   it('keeps polling through transient poll failures', async () => {
     vi.useFakeTimers()

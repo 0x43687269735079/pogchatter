@@ -224,9 +224,6 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof input['devMode'] === 'boolean') {
     settings.devMode = input['devMode']
   }
-  if (typeof input['revealDeleted'] === 'boolean') {
-    settings.revealDeleted = input['revealDeleted']
-  }
   if (typeof input['bufferSize'] === 'number' && Number.isFinite(input['bufferSize'])) {
     // Clamp to the supported range, so a hand-edited file can't ask for an unrenderable buffer.
     settings.bufferSize = Math.max(

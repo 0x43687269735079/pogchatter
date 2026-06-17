@@ -44,6 +44,9 @@ export class SourceManager {
     const onMessage = (message: ChatMessage): void => {
       this.#onEvent({ kind: 'message', channelId: source.id, message })
     }
+    const onReplace = (message: ChatMessage): void => {
+      this.#onEvent({ kind: 'replace', channelId: source.id, message })
+    }
     const onStatus = (status: SourceStatus): void => {
       this.#onEvent({ kind: 'status', channelId: source.id, status })
     }
@@ -69,6 +72,7 @@ export class SourceManager {
       this.#onEvent({ kind: 'authorUpdate', channelId: source.id, login, avatarUrl })
     }
     source.on('message', onMessage)
+    source.on('replace', onReplace)
     source.on('status', onStatus)
     source.on('clear', onClear)
     source.on('restriction', onRestriction)
@@ -77,6 +81,7 @@ export class SourceManager {
     source.on('authorUpdate', onAuthorUpdate)
     this.#detachers.set(source.id, () => {
       source.off('message', onMessage)
+      source.off('replace', onReplace)
       source.off('status', onStatus)
       source.off('clear', onClear)
       source.off('restriction', onRestriction)
@@ -259,6 +264,14 @@ export class SourceManager {
       throw new Error('No chat actions available for this channel')
     }
     await source.runMessageAction(menuToken, actionId, timeoutSeconds)
+  }
+
+  async runHeldAction(channelId: string, token: string): Promise<void> {
+    const source = this.#sources.get(channelId)
+    if (source?.runHeldAction === undefined) {
+      throw new Error('No chat actions available for this channel')
+    }
+    await source.runHeldAction(token)
   }
 
   /** A Super Chat's reply thread (donation + replies); empty if the source can't fetch one. */

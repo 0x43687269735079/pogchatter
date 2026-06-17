@@ -7,7 +7,7 @@ import {
   useRef,
   useState
 } from 'react'
-import type { ChannelInfo, ChatMessage } from '@shared/model'
+import type { ChannelInfo, ChatMessage, HeldActionHandler } from '@shared/model'
 import { EmojiAutocomplete } from '@renderer/components/EmojiAutocomplete'
 import { EmojiPicker } from '@renderer/components/EmojiPicker'
 import { atName } from '@renderer/format'
@@ -23,8 +23,6 @@ interface ChannelColumnProps {
   channel: ChannelInfo
   messages: ChatMessage[]
   canSend: boolean
-  /** Show deleted messages' original text (dimmed + struck) instead of "message removed". */
-  revealDeleted: boolean
   /** Timestamp of the last highlight in this column; a change briefly flashes the column. */
   pingedAt: number | undefined
   active: boolean
@@ -40,6 +38,8 @@ interface ChannelColumnProps {
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */
   onDonationReplies: (message: ChatMessage) => void
+  /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
+  onHeldAction: HeldActionHandler
   /**
    * Report which channels this column wants buffer-trimming paused for (scrolled up, reading
    * history); an empty list clears the pause. Keyed by this column's id.
@@ -59,7 +59,6 @@ export function ChannelColumn({
   channel,
   messages,
   canSend,
-  revealDeleted,
   pingedAt,
   active,
   palette,
@@ -72,6 +71,7 @@ export function ChannelColumn({
   onResize,
   onUserActivity,
   onDonationReplies,
+  onHeldAction,
   onScrollPause,
   monitoredKeys
 }: ChannelColumnProps): ReactElement {
@@ -216,7 +216,17 @@ export function ChannelColumn({
       return
     }
     el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
+    if (el.value === '') {
+      // Empty: stay one line (the rows=1 default). A long placeholder (the stream title) must not
+      // grow the box or — the bug this fixes — trigger a scrollbar; it's simply clipped.
+      el.style.height = ''
+      el.style.overflowY = 'hidden'
+    } else {
+      el.style.height = `${el.scrollHeight}px`
+      // Only scroll once the message overflows the four-line cap: clientHeight is the (clamped)
+      // visible height, so scrollHeight exceeds it exactly when there are more than four lines.
+      el.style.overflowY = el.scrollHeight > el.clientHeight ? 'auto' : 'hidden'
+    }
     const body = bodyRef.current
     if (body !== null && atBottomRef.current) {
       body.scrollTop = body.scrollHeight
@@ -245,12 +255,12 @@ export function ChannelColumn({
           key={message.id}
           message={message}
           palette={palette}
-          revealDeleted={revealDeleted}
           onContextMenu={openContextMenu}
+          onHeldAction={onHeldAction}
           monitoredKeys={monitoredKeys}
         />
       )),
-    [messages, palette, revealDeleted, openContextMenu, monitoredKeys]
+    [messages, palette, openContextMenu, onHeldAction, monitoredKeys]
   )
 
   function startReply(message: ChatMessage): void {

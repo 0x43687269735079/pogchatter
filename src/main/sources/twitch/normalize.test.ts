@@ -17,6 +17,11 @@ function ircMessage(author: { userId?: string; userName?: string } = {}): Twitch
     isFirst: false,
     isReply: false,
     parentMessageId: null,
+    parentMessageText: null,
+    parentMessageUserName: null,
+    parentMessageUserDisplayName: null,
+    threadMessageId: null,
+    threadMessageUserId: null,
     userInfo: {
       userId: author.userId ?? 'u100',
       userName: author.userName ?? 'alice',
@@ -102,6 +107,44 @@ describe('normalizeTwitchMessage highlights', () => {
     expect(normalizeTwitchMessage('s', 'hi', first).highlight).toEqual({ kind: 'first_message' })
     ;(first as { bits: number }).bits = 1
     expect(normalizeTwitchMessage('s', 'hi', first).highlight).toEqual({ kind: 'bits', amount: 1 })
+  })
+})
+
+describe('normalizeTwitchMessage reply threads', () => {
+  // A reply carrying parent + thread-root tags, with the root distinct from the direct parent.
+  function threadedReply(overrides: Record<string, unknown> = {}): TwitchChatMessage {
+    const msg = ircMessage()
+    Object.assign(msg, {
+      isReply: true,
+      parentMessageId: 'p1',
+      parentMessageUserName: 'bob',
+      parentMessageUserDisplayName: 'Bob',
+      parentMessageText: 'hello',
+      threadMessageId: 'root1',
+      ...overrides
+    })
+    return msg
+  }
+
+  it('records the thread root id, with no author when the root is not the parent', () => {
+    const message = normalizeTwitchMessage('s', 'reply', threadedReply())
+    expect(message.reply).toEqual({
+      parentId: 'p1',
+      parentAuthor: 'Bob',
+      parentText: 'hello',
+      threadId: 'root1'
+    })
+    expect(message.reply?.threadAuthor).toBeUndefined()
+  })
+
+  it('carries the thread author when the parent is itself the root', () => {
+    const message = normalizeTwitchMessage(
+      's',
+      'reply',
+      threadedReply({ parentMessageId: 'root1' })
+    )
+    expect(message.reply?.threadId).toBe('root1')
+    expect(message.reply?.threadAuthor).toBe('Bob')
   })
 })
 

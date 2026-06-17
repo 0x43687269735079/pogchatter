@@ -155,6 +155,14 @@ interface MessageRowProps {
    * list does — a toggle re-renders the memoized rows once, ordinary traffic doesn't.
    */
   monitoredKeys?: ReadonlySet<string> | undefined
+  /**
+   * This Twitch message is part of a reply thread (a reply into one, or a root with buffered
+   * replies). Computed once per column from the buffer and passed as a value so the memoized row
+   * only re-renders when its own membership changes.
+   */
+  inThread?: boolean | undefined
+  /** Reply count when this message is a thread root; undefined otherwise. Drives the `↳ N` tag. */
+  threadReplyCount?: number | undefined
 }
 
 /**
@@ -263,7 +271,9 @@ export const MessageRow = memo(function MessageRow({
   originLabel,
   originColor,
   onOriginClick,
-  monitoredKeys
+  monitoredKeys,
+  inThread,
+  threadReplyCount
 }: MessageRowProps): ReactElement {
   const handleContextMenu =
     onContextMenu !== undefined
@@ -459,6 +469,18 @@ export const MessageRow = memo(function MessageRow({
           {message.deleted === true ? (
             <span className="pc-del-tag" title="Hidden by a moderator — visible to you only">
               HIDDEN
+            </span>
+          ) : null}
+          {threadReplyCount !== undefined ? (
+            <span
+              className="pc-thread-tag"
+              title={`${threadReplyCount} repl${threadReplyCount === 1 ? 'y' : 'ies'} in this thread`}
+            >
+              ↳ {threadReplyCount}
+            </span>
+          ) : inThread === true ? (
+            <span className="pc-thread-tag" title="Part of a thread">
+              ↳ thread
             </span>
           ) : null}
           <Badges badges={message.author.badges} />

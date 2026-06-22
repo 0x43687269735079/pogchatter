@@ -120,6 +120,17 @@ export interface ChatMessage {
   fragments: Fragment[]
   highlight?: Highlight
   reply?: ReplyContext
+  /**
+   * Twitch channel-points "Highlight My Message" reward (twurple `isHighlight`). Renders a purple
+   * row accent, NOT a {@link Highlight} card. Orthogonal to {@link highlight} and {@link reply}.
+   */
+  highlighted?: boolean
+  /**
+   * Twitch message sent through a custom channel-points reward with a text prompt (IRC
+   * `custom-reward-id`). `id` is the reward UUID; `name` is resolvable only on a channel the user
+   * broadcasts (deferred) — render generic wording, never the UUID.
+   */
+  reward?: { id: string; name?: string }
   /** Non-chat event line (sub, member, raid, ...). */
   system?: boolean
   deleted?: boolean

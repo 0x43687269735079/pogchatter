@@ -376,6 +376,14 @@ export function normalizeTwitchMessage(
     message.highlight = highlight
   }
 
+  // Channel-points highlight and custom-reward message are independent signals a message may carry.
+  if (msg.isHighlight) {
+    message.highlighted = true
+  }
+  if (msg.rewardId !== null) {
+    message.reward = { id: msg.rewardId }
+  }
+
   const reply = buildReplyContext(msg)
   if (reply !== undefined) {
     message.reply = reply

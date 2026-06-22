@@ -15,6 +15,8 @@ function ircMessage(author: { userId?: string; userName?: string } = {}): Twitch
     emoteOffsets: new Map(),
     bits: 0,
     isFirst: false,
+    isHighlight: false,
+    rewardId: null,
     isReply: false,
     parentMessageId: null,
     parentMessageText: null,
@@ -145,6 +147,30 @@ describe('normalizeTwitchMessage reply threads', () => {
     )
     expect(message.reply?.threadId).toBe('root1')
     expect(message.reply?.threadAuthor).toBe('Bob')
+  })
+})
+
+describe('normalizeTwitchMessage channel points', () => {
+  it('marks a channel-points "Highlight My Message" message', () => {
+    const msg = ircMessage()
+    ;(msg as { isHighlight: boolean }).isHighlight = true
+    const message = normalizeTwitchMessage('s', 'look at me', msg)
+    expect(message.highlighted).toBe(true)
+    expect(message.reward).toBeUndefined()
+  })
+
+  it('tags a custom-reward message with the reward id only (never a name)', () => {
+    const msg = ircMessage()
+    ;(msg as { rewardId: string | null }).rewardId = 'reward-uuid'
+    const message = normalizeTwitchMessage('s', 'redeemed text', msg)
+    expect(message.reward).toEqual({ id: 'reward-uuid' })
+    expect(message.reward?.name).toBeUndefined()
+  })
+
+  it('leaves an ordinary message free of channel-points marks', () => {
+    const message = normalizeTwitchMessage('s', 'hi', ircMessage())
+    expect(message.highlighted).toBeUndefined()
+    expect(message.reward).toBeUndefined()
   })
 })
 

@@ -59,6 +59,8 @@ interface RawRenderer {
   sticker?: RawThumbs
   headerSubtext?: RawText
   headerPrimaryText?: RawText
+  /** On a `liveChatSponsorshipsHeaderRenderer` (gift purchase): the "Gifted N memberships" line. */
+  primaryText?: RawText
   /** The "⋮" menu token; opens the per-message action menu (report/block/moderation). */
   contextMenuEndpoint?: { liveChatItemContextMenuEndpoint?: { params?: string } }
   /** On a `liveChatAutoModMessageRenderer`: the wrapped message held for review. */
@@ -95,6 +97,22 @@ interface RawItem {
   liveChatPaidStickerRenderer?: RawRenderer
   liveChatMembershipItemRenderer?: RawRenderer
   liveChatAutoModMessageRenderer?: RawRenderer
+  /** "X gifted N memberships" — author + `primaryText` live in the nested header renderer. */
+  liveChatSponsorshipsGiftPurchaseAnnouncementRenderer?: {
+    id?: string
+    timestampUsec?: string
+    authorExternalChannelId?: string
+    header?: { liveChatSponsorshipsHeaderRenderer?: RawRenderer }
+  }
+  /** "X was gifted a membership by Y" — a top-level author + `message`. */
+  liveChatSponsorshipsGiftRedemptionAnnouncementRenderer?: RawRenderer
+  /** "Slow mode is on", "Members-only mode is on", … — a YouTube-authored mode notice. */
+  liveChatModeChangeMessageRenderer?: {
+    id?: string
+    timestampUsec?: string
+    text?: RawText
+    subtext?: RawText
+  }
 }
 export interface RawAction {
   addChatItemAction?: { item?: RawItem }
@@ -428,7 +446,10 @@ const KNOWN_ITEM_KEYS = new Set([
   'liveChatPaidMessageRenderer',
   'liveChatPaidStickerRenderer',
   'liveChatMembershipItemRenderer',
-  'liveChatAutoModMessageRenderer'
+  'liveChatAutoModMessageRenderer',
+  'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
+  'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
+  'liveChatModeChangeMessageRenderer'
 ])
 // Item renderers we recognize and deliberately don't render — informational, not chat content.
 // Classified here so they don't trip the parse-health warning (seen in the field: the
@@ -571,6 +592,64 @@ function collect(
     }
     message.highlight = highlight
     messages.push(message)
+  } else if (item.liveChatSponsorshipsGiftPurchaseAnnouncementRenderer !== undefined) {
+    const renderer = item.liveChatSponsorshipsGiftPurchaseAnnouncementRenderer
+    const header = renderer.header?.liveChatSponsorshipsHeaderRenderer
+    if (header !== undefined) {
+      const message: ChatMessage = {
+        id: renderer.id ?? `${sourceId}:gift:${renderer.timestampUsec ?? '0'}`,
+        platform: 'youtube',
+        channelId: sourceId,
+        timestamp: usecToMs(renderer.timestampUsec),
+        author: toAuthor(header),
+        fragments: [],
+        system: true
+      }
+      const headerText = textToString(header.primaryText)
+      message.highlight =
+        headerText !== '' ? { kind: 'membership_gift', headerText } : { kind: 'membership_gift' }
+      messages.push(message)
+    }
+  } else if (item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer !== undefined) {
+    const message = baseMessage(
+      sourceId,
+      item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer
+    )
+    message.system = true
+    // The "was gifted a membership by X" line is the whole content, so carry it on the header.
+    const headerText = textToString(
+      item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer.message
+    )
+    message.highlight =
+      headerText !== '' ? { kind: 'membership', headerText } : { kind: 'membership' }
+    message.fragments = []
+    messages.push(message)
+  } else if (item.liveChatModeChangeMessageRenderer !== undefined) {
+    messages.push(modeChangeMessage(sourceId, item.liveChatModeChangeMessageRenderer))
+  }
+}
+
+/** A YouTube mode-change notice (slow mode, members-only, …) as a system line authored by YouTube. */
+function modeChangeMessage(
+  sourceId: string,
+  renderer: { id?: string; timestampUsec?: string; text?: RawText; subtext?: RawText }
+): ChatMessage {
+  const text = textToString(renderer.text)
+  const subtext = textToString(renderer.subtext)
+  return {
+    id: renderer.id ?? `${sourceId}:mode:${renderer.timestampUsec ?? '0'}`,
+    platform: 'youtube',
+    channelId: sourceId,
+    timestamp: usecToMs(renderer.timestampUsec),
+    author: {
+      id: 'youtube',
+      name: 'YouTube',
+      displayName: 'YouTube',
+      badges: [],
+      roles: { broadcaster: false, moderator: false }
+    },
+    fragments: [{ type: 'text', text: subtext !== '' ? `${text} — ${subtext}` : text }],
+    system: true
   }
 }
 

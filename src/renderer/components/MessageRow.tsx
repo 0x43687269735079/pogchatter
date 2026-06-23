@@ -424,6 +424,11 @@ export const MessageRow = memo(function MessageRow({
   if (message.ping !== undefined) {
     classes.push('ping')
   }
+  // A channel-points "Highlight My Message" gives the whole row a purple accent (distinct from the
+  // ping/keyword accent).
+  if (message.highlighted === true) {
+    classes.push('pc-cp')
+  }
   // A highlight rule's accent colours the row (via the --ping custom property); deletion dimming
   // still applies on top.
   const rowStyle =
@@ -435,6 +440,11 @@ export const MessageRow = memo(function MessageRow({
         <div className="pc-reply">
           ↳ <span>{atName(message.reply.parentAuthor)}</span>{' '}
           <span className="q">{message.reply.parentText}</span>
+        </div>
+      ) : null}
+      {message.reward !== undefined ? (
+        <div className="pc-cp-reward" title="Sent through a channel-points reward">
+          <span className="ic">★</span> redeemed {message.reward.name ?? 'a channel-points reward'}
         </div>
       ) : null}
       <div className={classes.join(' ')} style={rowStyle} onContextMenu={handleContextMenu}>

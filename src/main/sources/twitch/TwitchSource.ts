@@ -14,6 +14,7 @@ import {
 } from '@main/sources/twitch/normalize'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
+import { TwitchRewardProvider } from '@main/sources/twitch/TwitchRewardProvider'
 import type { HelixFetch, TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
 import type { TwitchBadgeProvider } from '@main/sources/twitch/TwitchBadgeProvider'
 import type { TwitchCheermoteProvider } from '@main/sources/twitch/TwitchCheermoteProvider'
@@ -54,6 +55,9 @@ const ORPHAN_REQUIT_LIMIT = 5
 
 /** Remembered community-gift batch ids (each one suppresses its per-recipient notice spam). */
 const COMMUNITY_GIFT_IDS_MAX = 200
+
+/** Cap on reward redemptions buffered for name back-fill while the catalog is still loading. */
+const PENDING_REWARDS_MAX = 100
 
 /**
  * The moderation actions Twitch offers a moderator/broadcaster, each a distinct Helix call (there
@@ -126,6 +130,16 @@ export class TwitchSource extends BaseChatSource {
       this.emitAuthorUpdate(login, avatarUrl)
     }
   )
+  // Channel-points reward names (UUID → title) for this channel, read once from Twitch's public
+  // GraphQL catalog since IRC carries only the reward id. Anonymous; no auth needed.
+  readonly #rewards = new TwitchRewardProvider()
+  // The catalog loads asynchronously: a redemption that lands before it does is emitted with generic
+  // wording and remembered here, then back-filled with its title via a `replace` once it resolves.
+  #rewardsReady = false
+  #pendingRewards: ChatMessage[] = []
+  // Bumped on every connect/disconnect so a catalog load from a superseded connection (the same
+  // source instance is reused across login/reconnect/re-add) can't flush a newer connection's queue.
+  #rewardGeneration = 0
   // Announced community-gift batch ids — Twitch follows "X is gifting N subs" with N individual
   // gift notices carrying the same msg-param-community-gift-id, which would spam the column.
   // Bounded so a very long session can't grow it unboundedly.
@@ -165,6 +179,15 @@ export class TwitchSource extends BaseChatSource {
     const client = new ChatClient(options)
     this.#client = client
     void this.#loadBadges()
+    // Pre-load the reward catalog by login (available upfront, unlike the numeric room id) so a
+    // redemption message can be named the moment it arrives; back-fill any that raced the load.
+    this.#rewardsReady = false
+    this.#pendingRewards = []
+    this.#rewardGeneration += 1
+    const rewardGeneration = this.#rewardGeneration
+    void this.#rewards.ensureChannel(this.#login).then(() => {
+      this.#flushPendingRewards(rewardGeneration)
+    })
 
     this.#listeners = [
       client.onConnect(() => {
@@ -212,6 +235,7 @@ export class TwitchSource extends BaseChatSource {
         const message = normalizeTwitchMessage(this.id, text, msg, this.#normalizeOptions())
         message.fragments = this.#emotes.tokenize(message.fragments, 'twitch', this.#roomId)
         this.emitMessage(message)
+        this.#bufferPendingReward(message)
       }),
       client.onSub((channel, _user, subInfo, msg) => {
         if (this.#matches(channel)) {
@@ -350,6 +374,11 @@ export class TwitchSource extends BaseChatSource {
     // Re-check the moderator role on the next connect (login changes reconnect the source).
     this.#modStatus = undefined
     this.#pollGeneration += 1
+    // Invalidate any in-flight reward-catalog load and drop buffered redemptions, so a removed or
+    // reconnecting source emits no stale back-fill replacements.
+    this.#rewardGeneration += 1
+    this.#rewardsReady = false
+    this.#pendingRewards = []
     if (this.#liveTimer !== undefined) {
       clearTimeout(this.#liveTimer)
       this.#liveTimer = undefined
@@ -521,6 +550,50 @@ export class TwitchSource extends BaseChatSource {
       cheermotes: {
         names: () => this.#cheermotes.names(this.#roomId),
         resolve: (name, bits) => this.#cheermotes.resolve(this.#roomId, name, bits)
+      },
+      resolveReward: (rewardId) => this.#rewards.resolve(this.#login, rewardId)
+    }
+  }
+
+  /**
+   * Remember a redemption still missing its reward name (the catalog hadn't loaded when it arrived),
+   * so {@link #flushPendingRewards} can back-fill the title once it does. Bounded; a no-op once the
+   * catalog is ready (later redemptions resolve their name at normalize time).
+   */
+  #bufferPendingReward(message: ChatMessage): void {
+    if (
+      !this.#rewardsReady &&
+      message.reward !== undefined &&
+      message.reward.name === undefined &&
+      this.#pendingRewards.length < PENDING_REWARDS_MAX
+    ) {
+      this.#pendingRewards.push(message)
+    }
+  }
+
+  /**
+   * The reward catalog finished loading: re-emit each buffered redemption as a `replace` carrying its
+   * now-known title, so a row first shown with generic wording updates in place. Redemptions whose id
+   * still isn't in the catalog keep the generic wording.
+   */
+  #flushPendingRewards(generation: number): void {
+    // A disconnect/reconnect superseded the load this `.then` belongs to: it must not mark the new
+    // connection ready or drain its (different) pending queue — the worst case being an old failed
+    // load clearing a redemption the newer, successful load could have named.
+    if (generation !== this.#rewardGeneration) {
+      return
+    }
+    this.#rewardsReady = true
+    const pending = this.#pendingRewards
+    this.#pendingRewards = []
+    for (const message of pending) {
+      const reward = message.reward
+      if (reward === undefined) {
+        continue
+      }
+      const name = this.#rewards.resolve(this.#login, reward.id)
+      if (name !== undefined) {
+        this.emitReplace({ ...message, reward: { id: reward.id, name } })
       }
     }
   }

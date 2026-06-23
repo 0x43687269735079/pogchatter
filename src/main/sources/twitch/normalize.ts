@@ -85,6 +85,8 @@ export interface NormalizeOptions {
   selfUserId?: string | undefined
   /** Cheermote names + art ({@link CheermoteResolver}); only consulted on bits messages. */
   cheermotes?: CheermoteResolver | undefined
+  /** Channel-points reward title lookup by reward id; only consulted on custom-reward messages. */
+  resolveReward?: ((rewardId: string) => string | undefined) | undefined
 }
 
 /**
@@ -374,6 +376,19 @@ export function normalizeTwitchMessage(
   const highlight = toHighlight(msg)
   if (highlight !== undefined) {
     message.highlight = highlight
+  }
+
+  // Channel-points highlight and custom-reward message are independent signals a message may carry.
+  if (msg.isHighlight) {
+    message.highlighted = true
+  }
+  if (msg.rewardId !== null) {
+    const reward: { id: string; name?: string } = { id: msg.rewardId }
+    const name = options.resolveReward?.(msg.rewardId)
+    if (name !== undefined) {
+      reward.name = name
+    }
+    message.reward = reward
   }
 
   const reply = buildReplyContext(msg)

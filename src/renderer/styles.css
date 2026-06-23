@@ -32,6 +32,7 @@ body,
   --warn: #ebcb8b;
   --err: #e07a7a;
   --accent: #88c0d0;
+  --cp: #9147ff; /* Twitch channel-points purple */
   --vip: #d3a0c8;
   --vipBg: rgba(211, 160, 200, 0.16);
   --modeFg: #1b2027;
@@ -56,6 +57,7 @@ body,
   --warn: #f2c66b;
   --err: #ff7a7a;
   --accent: #56c2d6;
+  --cp: #a970ff; /* Twitch channel-points purple (brighter for the dark palette) */
   --vip: #ff79c6;
   --vipBg: rgba(255, 121, 198, 0.14);
   --modeFg: #06121a;
@@ -799,6 +801,11 @@ body,
   background: color-mix(in srgb, var(--ping) 11%, transparent);
   box-shadow: inset 2px 0 0 var(--ping);
 }
+/* A channel-points "Highlight My Message" gives the row a purple accent, like the Twitch client. */
+.pc-msg.pc-cp {
+  background: color-mix(in srgb, var(--cp) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--cp);
+}
 /* A flagged message outranks a highlight tint so moderation stands out. */
 .pc-msg.flag {
   background: color-mix(in srgb, var(--err) 14%, transparent);
@@ -1047,6 +1054,19 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The compact "redeemed a channel-points reward" annotation above a custom-reward message. */
+.pc-cp-reward {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--cp);
+  font-size: var(--fs-small);
+  padding: 0 var(--gut) 0 40px;
+  margin-top: 1px;
+}
+.pc-cp-reward .ic {
+  font-size: var(--fs-micro);
 }
 .pc-sys {
   padding: 4px var(--gut);

@@ -159,12 +159,21 @@ describe('normalizeTwitchMessage channel points', () => {
     expect(message.reward).toBeUndefined()
   })
 
-  it('tags a custom-reward message with the reward id only (never a name)', () => {
+  it('tags a custom-reward message with the reward id, with no name when unresolved', () => {
     const msg = ircMessage()
     ;(msg as { rewardId: string | null }).rewardId = 'reward-uuid'
     const message = normalizeTwitchMessage('s', 'redeemed text', msg)
     expect(message.reward).toEqual({ id: 'reward-uuid' })
     expect(message.reward?.name).toBeUndefined()
+  })
+
+  it('fills the reward name when the resolver knows the reward', () => {
+    const msg = ircMessage()
+    ;(msg as { rewardId: string | null }).rewardId = 'reward-uuid'
+    const message = normalizeTwitchMessage('s', 'redeemed text', msg, {
+      resolveReward: (id) => (id === 'reward-uuid' ? 'Hydrate!' : undefined)
+    })
+    expect(message.reward).toEqual({ id: 'reward-uuid', name: 'Hydrate!' })
   })
 
   it('leaves an ordinary message free of channel-points marks', () => {

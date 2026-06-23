@@ -14,6 +14,7 @@ import {
 } from '@main/sources/twitch/normalize'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
+import { TwitchRewardProvider } from '@main/sources/twitch/TwitchRewardProvider'
 import type { HelixFetch, TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
 import type { TwitchBadgeProvider } from '@main/sources/twitch/TwitchBadgeProvider'
 import type { TwitchCheermoteProvider } from '@main/sources/twitch/TwitchCheermoteProvider'
@@ -126,6 +127,9 @@ export class TwitchSource extends BaseChatSource {
       this.emitAuthorUpdate(login, avatarUrl)
     }
   )
+  // Channel-points reward names (UUID → title) for this channel, read once from Twitch's public
+  // GraphQL catalog since IRC carries only the reward id. Anonymous; no auth needed.
+  readonly #rewards = new TwitchRewardProvider()
   // Announced community-gift batch ids — Twitch follows "X is gifting N subs" with N individual
   // gift notices carrying the same msg-param-community-gift-id, which would spam the column.
   // Bounded so a very long session can't grow it unboundedly.
@@ -165,6 +169,9 @@ export class TwitchSource extends BaseChatSource {
     const client = new ChatClient(options)
     this.#client = client
     void this.#loadBadges()
+    // Pre-load the reward catalog by login (available upfront, unlike the numeric room id) so a
+    // redemption message can be named the moment it arrives.
+    void this.#rewards.ensureChannel(this.#login)
 
     this.#listeners = [
       client.onConnect(() => {
@@ -521,7 +528,8 @@ export class TwitchSource extends BaseChatSource {
       cheermotes: {
         names: () => this.#cheermotes.names(this.#roomId),
         resolve: (name, bits) => this.#cheermotes.resolve(this.#roomId, name, bits)
-      }
+      },
+      resolveReward: (rewardId) => this.#rewards.resolve(this.#login, rewardId)
     }
   }
 

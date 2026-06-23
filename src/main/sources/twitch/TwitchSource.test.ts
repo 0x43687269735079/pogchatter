@@ -194,6 +194,8 @@ function ircMessage(login: string): TwitchChatMessage {
     emoteOffsets: new Map(),
     bits: 0,
     isFirst: false,
+    isHighlight: false,
+    rewardId: null,
     isReply: false,
     parentMessageId: null,
     channelId: '500',
@@ -904,6 +906,55 @@ describe('TwitchSource sub events', () => {
     const actions = await source.getMessageActions(cardToken)
     // No 'remove': Helix cannot delete USERNOTICEs, so the action would always fail.
     expect(actions.map((action) => action.id)).toEqual(['timeout', 'ban'])
+    await source.disconnect()
+  })
+})
+
+describe('TwitchSource channel-points reward back-fill', () => {
+  it('back-fills a reward name via replace once the catalog loads after the redemption', async () => {
+    let resolveCatalog: (value: { ok: true; json: () => Promise<unknown> }) => void = () => {}
+    const catalog = new Promise<{ ok: true; json: () => Promise<unknown> }>((resolve) => {
+      resolveCatalog = resolve
+    })
+    // The reward catalog (GraphQL) stays pending until we resolve it; everything else answers id 500.
+    proxiedFetch.mockImplementation((url: unknown) =>
+      typeof url === 'string' && url.includes('gql.twitch.tv')
+        ? catalog
+        : Promise.resolve({ ok: true, json: async () => ({ data: [{ id: '500' }] }) })
+    )
+    const source = makeSource(makeAuth())
+    const messages: ChatMessage[] = []
+    const replaced: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    source.on('replace', (message) => replaced.push(message))
+    const client = await connectSource(source)
+
+    const redemption = ircMessage('alice')
+    ;(redemption as { rewardId: string | null }).rewardId = 'reward-uuid'
+    client.handlers.get('message')?.('#somechannel', 'alice', 'redeemed text', redemption)
+    // Emitted immediately with the reward id but no name yet — the catalog is still loading.
+    expect(messages.at(-1)?.reward).toEqual({ id: 'reward-uuid' })
+    expect(replaced).toHaveLength(0)
+
+    resolveCatalog({
+      ok: true,
+      json: async () => ({
+        data: {
+          user: {
+            channel: {
+              communityPointsSettings: {
+                customRewards: [{ id: 'reward-uuid', title: 'Hydrate!' }]
+              }
+            }
+          }
+        }
+      })
+    })
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    // The catalog resolved, so the redemption is re-emitted with its title via a replace.
+    expect(replaced.at(-1)?.reward).toEqual({ id: 'reward-uuid', name: 'Hydrate!' })
     await source.disconnect()
   })
 })

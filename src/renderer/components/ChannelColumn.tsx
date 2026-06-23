@@ -7,13 +7,14 @@ import {
   useRef,
   useState
 } from 'react'
-import type { ChannelInfo, ChatMessage, HeldActionHandler } from '@shared/model'
+import type { ChannelInfo, ChatMessage, HeldActionHandler, SendReply } from '@shared/model'
 import { EmojiAutocomplete } from '@renderer/components/EmojiAutocomplete'
 import { EmojiPicker } from '@renderer/components/EmojiPicker'
-import { atName } from '@renderer/format'
+import { atName, plainText } from '@renderer/format'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { StatusChip } from '@renderer/components/StatusChip'
+import { isInThread, threadCounts } from '@renderer/threads'
 import { useEmojiInput } from '@renderer/useEmojiInput'
 
 const MIN_COL_WIDTH = 240
@@ -38,6 +39,8 @@ interface ChannelColumnProps {
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */
   onDonationReplies: (message: ChatMessage) => void
+  /** Open the Twitch thread modal for a message that's part of a reply thread. */
+  onViewThread: (message: ChatMessage) => void
   /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
   onHeldAction: HeldActionHandler
   /**
@@ -76,6 +79,7 @@ export function ChannelColumn({
   onResize,
   onUserActivity,
   onDonationReplies,
+  onViewThread,
   onHeldAction,
   onScrollPause,
   monitoredKeys,
@@ -92,10 +96,11 @@ export function ChannelColumn({
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | undefined>(undefined)
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
-  // Twitch native reply target; YouTube tags inline instead, so it needs no state.
-  const [replyTarget, setReplyTarget] = useState<{ id: string; author: string } | undefined>(
-    undefined
-  )
+  // Twitch native reply target; YouTube tags inline instead, so it needs no state. Carries the
+  // parent's text + thread root so the sent echo renders (and threads) like any other reply.
+  const [replyTarget, setReplyTarget] = useState<
+    { id: string; author: string; text: string; threadId: string } | undefined
+  >(undefined)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [flashing, setFlashing] = useState(false)
   const emoji = useEmojiInput(channel.id, inputRef, setDraft)
@@ -250,6 +255,10 @@ export function ChannelColumn({
     setMenu({ message, x, y })
   }, [])
 
+  // Reply-thread membership for this column, recomputed only when the buffer changes (so the
+  // indicator and the right-click "view thread" reflect the latest replies without per-keystroke work).
+  const counts = useMemo(() => threadCounts(messages), [messages])
+
   // Render the rows once per message/identity change, not on every keystroke or status update —
   // on a fast, full chat this keeps typing from re-rendering the whole list (see MessageRow memo).
   // The right-click menu is always available — it offers "User activity" for any line, plus reply
@@ -264,15 +273,29 @@ export function ChannelColumn({
           onContextMenu={openContextMenu}
           onHeldAction={onHeldAction}
           monitoredKeys={monitoredKeys}
+          inThread={isInThread(message, counts)}
+          threadReplyCount={counts.get(message.id)}
         />
       )),
-    [messages, palette, openContextMenu, onHeldAction, monitoredKeys]
+    [messages, palette, openContextMenu, onHeldAction, monitoredKeys, counts]
   )
 
   function startReply(message: ChatMessage): void {
     setMenu(undefined)
+    // Replying to a message already in a thread opens the thread modal (with its own composer)
+    // instead of the inline reply, so the reply lands in — and the user sees — the whole thread.
+    if (channel.platform === 'twitch' && isInThread(message, counts)) {
+      onViewThread(message)
+      return
+    }
     if (channel.platform === 'twitch') {
-      setReplyTarget({ id: message.id, author: message.author.displayName })
+      setReplyTarget({
+        id: message.id,
+        author: message.author.displayName,
+        text: plainText(message.fragments),
+        // A reply to a not-yet-threaded message starts a thread rooted at that message.
+        threadId: message.reply?.threadId ?? message.id
+      })
     } else {
       const mention = `${atName(message.author.displayName)} `
       setDraft((current) => (current.startsWith(mention) ? current : `${mention}${current}`))
@@ -285,7 +308,16 @@ export function ChannelColumn({
     if (text === '' || !canSend) {
       return
     }
-    const replyTo = replyTarget?.id
+    const reply: SendReply | undefined =
+      replyTarget !== undefined
+        ? {
+            parentId: replyTarget.id,
+            parentAuthor: replyTarget.author,
+            parentText: replyTarget.text,
+            threadId: replyTarget.threadId,
+            threadAuthor: replyTarget.author
+          }
+        : undefined
     // Optimistic clear: empty the composer immediately so it feels instant despite YouTube's ~1s
     // send latency (the message still posts in the background). Snapshot what we cleared and, if the
     // send fails, restore it — but only if the user hasn't started a new message, so a late failure
@@ -304,7 +336,7 @@ export function ChannelColumn({
     setError(undefined)
     const startedAt = performance.now()
     try {
-      const result = await window.chat.send(channel.id, text, replyTo)
+      const result = await window.chat.send(channel.id, text, reply)
       if (import.meta.env.DEV) {
         const ms = Math.round(performance.now() - startedAt)
         console.debug(`[send] ${channel.id}: round-trip ${ms}ms (${result.ok ? 'ok' : 'rejected'})`)
@@ -565,6 +597,8 @@ export function ChannelColumn({
           onReply={canSend ? startReply : undefined}
           onUserActivity={onUserActivity}
           onDonationReplies={onDonationReplies}
+          onViewThread={onViewThread}
+          isThreaded={isInThread(menu.message, counts)}
         />
       ) : null}
 

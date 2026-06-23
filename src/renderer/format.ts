@@ -1,6 +1,15 @@
+import type { Fragment } from '@shared/model'
+
 /** Prefix a single `@`, leaving names that already carry one (e.g. YouTube handles) untouched. */
 export function atName(name: string): string {
   return name.startsWith('@') ? name : `@${name}`
+}
+
+/** Flatten message fragments to plain text (emotes/cheers become their code), for a reply quote. */
+export function plainText(fragments: Fragment[]): string {
+  return fragments
+    .map((fragment) => (fragment.type === 'emote' ? fragment.code : fragment.text))
+    .join('')
 }
 
 function pad2(value: number): string {

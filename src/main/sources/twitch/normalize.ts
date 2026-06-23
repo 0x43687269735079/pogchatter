@@ -7,7 +7,7 @@ import {
   type ChatSubInfo,
   type ChatUser
 } from '@twurple/chat'
-import type { Author, Badge, ChatMessage, Fragment, Highlight } from '@shared/model'
+import type { Author, Badge, ChatMessage, Fragment, Highlight, ReplyContext } from '@shared/model'
 
 /**
  * The slice of twurple's UserNotice the sub-event builders read. Structural (rather than the
@@ -179,6 +179,29 @@ function toAuthor(user: ChatUser, options: NormalizeOptions): Author {
     author.avatarUrl = avatar
   }
   return author
+}
+
+/**
+ * Build the reply context for a Twitch message: the directly-replied-to parent plus, when present,
+ * the thread root id. The thread starter's display name is only carried when the parent is itself
+ * the root (IRC gives no display name for the thread root otherwise — the renderer resolves it).
+ */
+function buildReplyContext(msg: TwitchChatMessage): ReplyContext | undefined {
+  if (!msg.isReply || msg.parentMessageId === null) {
+    return undefined
+  }
+  const reply: ReplyContext = {
+    parentId: msg.parentMessageId,
+    parentAuthor: msg.parentMessageUserDisplayName ?? msg.parentMessageUserName ?? '',
+    parentText: msg.parentMessageText ?? ''
+  }
+  if (msg.threadMessageId !== null) {
+    reply.threadId = msg.threadMessageId
+    if (msg.threadMessageId === msg.parentMessageId && reply.parentAuthor !== '') {
+      reply.threadAuthor = reply.parentAuthor
+    }
+  }
+  return reply
 }
 
 function toHighlight(msg: TwitchChatMessage): Highlight | undefined {
@@ -353,12 +376,9 @@ export function normalizeTwitchMessage(
     message.highlight = highlight
   }
 
-  if (msg.isReply && msg.parentMessageId !== null) {
-    message.reply = {
-      parentId: msg.parentMessageId,
-      parentAuthor: msg.parentMessageUserDisplayName ?? msg.parentMessageUserName ?? '',
-      parentText: msg.parentMessageText ?? ''
-    }
+  const reply = buildReplyContext(msg)
+  if (reply !== undefined) {
+    message.reply = reply
   }
 
   return message

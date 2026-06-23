@@ -19,6 +19,7 @@ import {
 } from '@shared/model'
 import { type ConfigStore, sanitizeBanRule, sanitizeModerationRule } from '@main/ConfigStore'
 import { debugLog, debugLogEnabled } from '@main/debugLog'
+import { isValidSendReply } from '@main/sendReply'
 import type { SourceManager } from '@main/SourceManager'
 import type { AuthStore } from '@main/auth/AuthStore'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
@@ -92,12 +93,8 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle('chat:listChannels', () => activeManager.list())
   handle('chat:getBacklog', () => deps.backlogSnapshot())
-  handle('chat:send', async (_event, channelId, text, replyTo, clientTime): Promise<SendResult> => {
-    if (
-      typeof channelId !== 'string' ||
-      typeof text !== 'string' ||
-      (replyTo !== undefined && typeof replyTo !== 'string')
-    ) {
+  handle('chat:send', async (_event, channelId, text, reply, clientTime): Promise<SendResult> => {
+    if (typeof channelId !== 'string' || typeof text !== 'string' || !isValidSendReply(reply)) {
       return { ok: false, error: 'Invalid send request' }
     }
     if (sendDebug && typeof clientTime === 'number') {
@@ -106,7 +103,7 @@ export function registerIpc(deps: IpcDeps): void {
     }
     const startedAt = sendDebug || debugLogEnabled() ? performance.now() : 0
     try {
-      await activeManager.send(channelId, text, replyTo)
+      await activeManager.send(channelId, text, reply)
       if (sendDebug) {
         console.log(`[send] ${channelId}: ok in ${Math.round(performance.now() - startedAt)}ms`)
       }

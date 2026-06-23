@@ -12,9 +12,11 @@ import { type MessageMap, PAUSED_TRIM_HEADROOM } from '@renderer/chatState'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { buildOrigins, mergeMonitorMessages } from '@renderer/monitor'
+import { isInThread, threadCounts, type ThreadCounts } from '@renderer/threads'
 
 const MIN_COL_WIDTH = 240
 const MAX_COL_WIDTH = 820
+const EMPTY_COUNTS: ThreadCounts = new Map()
 
 interface CombinedColumnProps {
   id: string
@@ -40,6 +42,8 @@ interface CombinedColumnProps {
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */
   onDonationReplies: (message: ChatMessage) => void
+  /** Open the Twitch thread modal for a message that's part of a reply thread. */
+  onViewThread: (message: ChatMessage) => void
   /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
   onHeldAction: HeldActionHandler
   onMove: (id: string, direction: -1 | 1) => void
@@ -90,6 +94,7 @@ export function CombinedColumn({
   onJump,
   onUserActivity,
   onDonationReplies,
+  onViewThread,
   onHeldAction,
   onMove,
   onRemove,
@@ -120,6 +125,16 @@ export function CombinedColumn({
   // Cheap to rebuild each render; MessageRow compares the origin label/colour by value, so this
   // doesn't force the rows to re-render.
   const origins = buildOrigins(members)
+
+  // Thread membership per source channel: a row in this merged feed belongs to a thread in its own
+  // chat's buffer, so each member is tallied separately and looked up by the row's channelId.
+  const countsByChannel = useMemo(() => {
+    const map = new Map<string, ThreadCounts>()
+    for (const channelId of memberIds) {
+      map.set(channelId, threadCounts(messagesByChannel[channelId] ?? []))
+    }
+    return map
+  }, [memberIds, messagesByChannel])
 
   const openContextMenu = useCallback((message: ChatMessage, x: number, y: number) => {
     setMenu({ message, x, y })
@@ -271,6 +286,7 @@ export function CombinedColumn({
           ) : (
             merged.map((message) => {
               const origin = origins.get(message.channelId)
+              const counts = countsByChannel.get(message.channelId) ?? EMPTY_COUNTS
               return (
                 <MessageRow
                   key={`${message.channelId} ${message.id}`}
@@ -282,6 +298,8 @@ export function CombinedColumn({
                   originColor={origin?.color}
                   onOriginClick={onJump}
                   monitoredKeys={monitoredKeys}
+                  inThread={isInThread(message, counts)}
+                  threadReplyCount={counts.get(message.id)}
                 />
               )
             })
@@ -301,6 +319,11 @@ export function CombinedColumn({
           onJump={onJump}
           onUserActivity={onUserActivity}
           onDonationReplies={onDonationReplies}
+          onViewThread={onViewThread}
+          isThreaded={isInThread(
+            menu.message,
+            countsByChannel.get(menu.message.channelId) ?? EMPTY_COUNTS
+          )}
         />
       ) : null}
 

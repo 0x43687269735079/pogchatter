@@ -1,6 +1,6 @@
 import { ApiClient } from '@twurple/api'
 import { ChatClient, type ChatClientOptions } from '@twurple/chat'
-import type { ChatAction, ChatMessage, Platform, UserProfile } from '@shared/model'
+import type { ChatAction, ChatMessage, Platform, SendReply, UserProfile } from '@shared/model'
 import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import {
@@ -363,7 +363,7 @@ export class TwitchSource extends BaseChatSource {
     return this.#roomId === undefined ? undefined : { platform: 'twitch', channelId: this.#roomId }
   }
 
-  async send(text: string, replyTo?: string): Promise<void> {
+  async send(text: string, reply?: SendReply): Promise<void> {
     if (!this.#auth.isLoggedIn) {
       throw new Error('Log in to Twitch to send messages')
     }
@@ -371,6 +371,7 @@ export class TwitchSource extends BaseChatSource {
     if (client === undefined || !client.isConnected) {
       throw new Error('Not connected to Twitch — message not sent')
     }
+    const replyTo = reply?.parentId
     let timer: NodeJS.Timeout | undefined
     let timedOut = false
     const timeout = new Promise<never>((_, reject) => {
@@ -387,7 +388,7 @@ export class TwitchSource extends BaseChatSource {
     void delivery.then(
       () => {
         if (timedOut) {
-          this.#echo(text)
+          this.#echo(text, reply)
         }
       },
       () => {}
@@ -401,7 +402,7 @@ export class TwitchSource extends BaseChatSource {
     // message locally. say() resolving only means the line was handed to the socket — Twitch
     // sends no positive ack, so this echo can still overstate delivery (rejections arrive later
     // as NOTICEs via the onMessageFailed/onNoPermission/onMessageRatelimit handlers above).
-    this.#echo(text)
+    this.#echo(text, reply)
   }
 
   /**
@@ -722,7 +723,7 @@ export class TwitchSource extends BaseChatSource {
     }
   }
 
-  #echo(text: string): void {
+  #echo(text: string, reply?: SendReply): void {
     const name = this.#auth.userName ?? 'you'
     this.#echoCount += 1
     const message: ChatMessage = {
@@ -741,6 +742,21 @@ export class TwitchSource extends BaseChatSource {
         roles: { broadcaster: false, moderator: false }
       },
       fragments: this.#emotes.tokenize([{ type: 'text', text }], 'twitch', this.#roomId)
+    }
+    // Twitch echoes nothing back over the sender's connection, so carry the reply/thread context the
+    // renderer supplied — the echoed line then renders as a threaded reply (quote + indicator).
+    if (reply !== undefined) {
+      message.reply = {
+        parentId: reply.parentId,
+        parentAuthor: reply.parentAuthor ?? '',
+        parentText: reply.parentText ?? ''
+      }
+      if (reply.threadId !== undefined) {
+        message.reply.threadId = reply.threadId
+        if (reply.threadAuthor !== undefined) {
+          message.reply.threadAuthor = reply.threadAuthor
+        }
+      }
     }
     this.emitMessage(message)
   }

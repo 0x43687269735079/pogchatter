@@ -1,5 +1,12 @@
 import type { Innertube, YT } from 'youtubei.js'
-import type { ChatAction, ChatMessage, Platform, SourceStatus, UserProfile } from '@shared/model'
+import type {
+  ChatAction,
+  ChatMessage,
+  Platform,
+  SendReply,
+  SourceStatus,
+  UserProfile
+} from '@shared/model'
 import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
@@ -134,8 +141,8 @@ export class YouTubeSource extends BaseChatSource {
     return this.#videoId
   }
 
-  // YouTube has no native reply; the renderer tags the user inline, so `replyTo` is unused here.
-  async send(text: string, _replyTo?: string): Promise<void> {
+  // YouTube has no native reply; the renderer tags the user inline, so `reply` is unused here.
+  async send(text: string, _reply?: SendReply): Promise<void> {
     if (this.#videoId === undefined) {
       throw new Error('No live video to send to')
     }

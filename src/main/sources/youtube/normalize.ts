@@ -188,6 +188,22 @@ function fallbackId(sourceId: string, renderer: RawRenderer): string {
 }
 
 /**
+ * A stable id for an id-less synthetic event (gift purchase, mode change). Like {@link fallbackId} it
+ * folds in the event kind, the raw timestamp, the author, and a hash of the visible text — so two
+ * distinct id-less events of the same kind don't collapse to a shared `…:0` id and get deduped away
+ * (and it never uses {@link usecToMs}'s Date.now() fallback, which would make every re-send look new).
+ */
+function syntheticId(
+  sourceId: string,
+  kind: string,
+  usec: string | undefined,
+  author: string,
+  text: string
+): string {
+  return `${sourceId}-${kind}-${usec ?? '0'}-${author}-${hashString(text)}`
+}
+
+/**
  * The full URL behind a link run. YouTube truncates a link's displayed `text` (e.g.
  * `https://example.com/very/long...`) and keeps the real target in the run's navigation endpoint,
  * wrapped in a `youtube.com/redirect?…&q=<encoded url>`. Unwrap the `q` param to the real URL so the
@@ -250,7 +266,9 @@ function toFragments(message: RawText | undefined): Fragment[] {
   return fragments
 }
 
-function toAuthor(renderer: RawRenderer): Author {
+// `idOverride` carries a stable channel id that lives outside `renderer` — e.g. a gift purchase
+// keeps the gifter's id on the outer announcement renderer, not the nested header passed here.
+function toAuthor(renderer: RawRenderer, idOverride?: string): Author {
   const badges: Badge[] = []
   const roles = { broadcaster: false, moderator: false, member: false, verified: false }
   for (const badge of renderer.authorBadges ?? []) {
@@ -274,7 +292,7 @@ function toAuthor(renderer: RawRenderer): Author {
   }
   const name = textToString(renderer.authorName) || 'Unknown'
   const author: Author = {
-    id: renderer.authorExternalChannelId ?? name,
+    id: idOverride ?? renderer.authorExternalChannelId ?? name,
     name,
     displayName: name,
     badges,
@@ -596,16 +614,26 @@ function collect(
     const renderer = item.liveChatSponsorshipsGiftPurchaseAnnouncementRenderer
     const header = renderer.header?.liveChatSponsorshipsHeaderRenderer
     if (header !== undefined) {
+      const headerText = textToString(header.primaryText)
       const message: ChatMessage = {
-        id: renderer.id ?? `${sourceId}:gift:${renderer.timestampUsec ?? '0'}`,
+        id:
+          renderer.id ??
+          syntheticId(
+            sourceId,
+            'gift',
+            renderer.timestampUsec,
+            renderer.authorExternalChannelId ?? '',
+            headerText
+          ),
         platform: 'youtube',
         channelId: sourceId,
         timestamp: usecToMs(renderer.timestampUsec),
-        author: toAuthor(header),
+        // The gifter's stable channel id is on the outer renderer, not the nested header — carry it
+        // so the log/UI key the gift to the actual channel, not the mutable display name.
+        author: toAuthor(header, renderer.authorExternalChannelId),
         fragments: [],
         system: true
       }
-      const headerText = textToString(header.primaryText)
       message.highlight =
         headerText !== '' ? { kind: 'membership_gift', headerText } : { kind: 'membership_gift' }
       messages.push(message)
@@ -637,7 +665,9 @@ function modeChangeMessage(
   const text = textToString(renderer.text)
   const subtext = textToString(renderer.subtext)
   return {
-    id: renderer.id ?? `${sourceId}:mode:${renderer.timestampUsec ?? '0'}`,
+    id:
+      renderer.id ??
+      syntheticId(sourceId, 'mode', renderer.timestampUsec, '', `${text} ${subtext}`),
     platform: 'youtube',
     channelId: sourceId,
     timestamp: usecToMs(renderer.timestampUsec),

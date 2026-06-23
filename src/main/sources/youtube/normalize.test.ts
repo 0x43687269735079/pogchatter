@@ -602,10 +602,32 @@ describe('YouTube membership gifts and mode changes', () => {
       })
     )
     expect(messages[0]?.author.name).toBe('Gifter')
+    // The gifter's stable channel id lives on the outer renderer, not the nested header.
+    expect(messages[0]?.author.id).toBe('UCgifter')
     expect(messages[0]?.highlight).toEqual({
       kind: 'membership_gift',
       headerText: 'Gifted 5 memberships'
     })
+  })
+
+  it('gives id-less gift/mode events distinct fallback ids instead of collapsing them', () => {
+    const giftId = (text: string): string | undefined =>
+      normalizeAction(
+        'src',
+        item({
+          liveChatSponsorshipsGiftPurchaseAnnouncementRenderer: {
+            header: { liveChatSponsorshipsHeaderRenderer: { primaryText: { runs: [{ text }] } } }
+          }
+        })
+      ).messages[0]?.id
+    const modeId = (text: string): string | undefined =>
+      normalizeAction(
+        'src',
+        item({ liveChatModeChangeMessageRenderer: { text: { runs: [{ text }] } } })
+      ).messages[0]?.id
+    // No id and no timestamp on either event — they must still differ by content (not both `…:0`).
+    expect(giftId('Gifted 5 memberships')).not.toBe(giftId('Gifted 10 memberships'))
+    expect(modeId('Slow mode is on')).not.toBe(modeId('Slow mode is off'))
   })
 
   it('captures a gift redemption as a membership highlight carrying the line', () => {

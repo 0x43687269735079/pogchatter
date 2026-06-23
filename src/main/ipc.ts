@@ -14,12 +14,12 @@ import {
   type ModerationRule,
   type Platform,
   type PrebanImport,
-  type SendReply,
   type SendResult,
   type TwitchLoginPrompt
 } from '@shared/model'
 import { type ConfigStore, sanitizeBanRule, sanitizeModerationRule } from '@main/ConfigStore'
 import { debugLog, debugLogEnabled } from '@main/debugLog'
+import { isValidSendReply } from '@main/sendReply'
 import type { SourceManager } from '@main/SourceManager'
 import type { AuthStore } from '@main/auth/AuthStore'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
@@ -27,16 +27,6 @@ import { isTrustedRendererUrl } from '@main/net/origin'
 import { isPlatform } from '@main/sources/channelId'
 import type { TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
 import type { YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManager'
-
-/** Validate the optional reply payload from `chat:send`: absent, or an object with a string parentId. */
-function isValidSendReply(value: unknown): value is SendReply | undefined {
-  if (value === undefined) {
-    return true
-  }
-  return (
-    typeof value === 'object' && value !== null && typeof (value as SendReply).parentId === 'string'
-  )
-}
 
 /** Adds/removes chat columns and persists the channel list (implemented by the composition root). */
 export interface ChannelService {

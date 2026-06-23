@@ -91,6 +91,30 @@ vi.mock('@twurple/chat', async (importOriginal) => {
     onCommunitySub(fn: (...args: unknown[]) => void): { unbind: () => void } {
       return this.#bind('communitySub', fn)
     }
+    onRaid(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('raid', fn)
+    }
+    onAnnouncement(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('announcement', fn)
+    }
+    onPrimePaidUpgrade(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('primePaidUpgrade', fn)
+    }
+    onGiftPaidUpgrade(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('giftPaidUpgrade', fn)
+    }
+    onStandardPayForward(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('standardPayForward', fn)
+    }
+    onCommunityPayForward(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('communityPayForward', fn)
+    }
+    onSubExtend(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('subExtend', fn)
+    }
+    onBitsBadgeUpgrade(fn: (...args: unknown[]) => void): { unbind: () => void } {
+      return this.#bind('bitsBadgeUpgrade', fn)
+    }
     onTimeout(fn: (...args: unknown[]) => void): { unbind: () => void } {
       return this.#bind('timeout', fn)
     }
@@ -1017,6 +1041,64 @@ describe('TwitchSource channel-points reward back-fill', () => {
       await new Promise((resolve) => setImmediate(resolve))
     }
     expect(replaced.at(-1)?.reward).toEqual({ id: 'reward-uuid', name: 'Hydrate!' })
+    await source.disconnect()
+  })
+})
+
+describe('TwitchSource notice events', () => {
+  it('emits a system line for an incoming raid', async () => {
+    const source = makeSource(makeAuth())
+    const messages: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    const client = await connectSource(source)
+    client.handlers.get('raid')?.(
+      '#somechannel',
+      'raider',
+      { displayName: 'Raider', viewerCount: 50 },
+      subNotice('raider')
+    )
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.system).toBe(true)
+    expect(messages[0]?.fragments).toEqual([
+      { type: 'text', text: 'Raider is raiding with 50 viewers' }
+    ])
+    await source.disconnect()
+  })
+
+  it('emits a system line for an announcement, carrying its body', async () => {
+    const source = makeSource(makeAuth())
+    const messages: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    const client = await connectSource(source)
+    client.handlers.get('announcement')?.(
+      '#somechannel',
+      'mod',
+      { color: 'PRIMARY' },
+      { ...subNotice('mod'), text: 'stream starting soon' }
+    )
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.system).toBe(true)
+    expect(messages[0]?.fragments[0]).toEqual({ type: 'text', text: '📣 mod: ' })
+    expect(messages[0]?.fragments[1]).toEqual({ type: 'text', text: 'stream starting soon' })
+    await source.disconnect()
+  })
+
+  it('emits a system line for a sub-extend (the minor notice family)', async () => {
+    const source = makeSource(makeAuth())
+    const messages: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    const client = await connectSource(source)
+    client.handlers.get('subExtend')?.(
+      '#somechannel',
+      'carol',
+      { userId: 'id-carol', displayName: 'Carol', plan: '1000', months: 7, endMonth: 9 },
+      subNotice('carol')
+    )
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.system).toBe(true)
+    expect(messages[0]?.fragments).toEqual([
+      { type: 'text', text: 'Carol extended their subscription (7 months)' }
+    ])
     await source.disconnect()
   })
 })

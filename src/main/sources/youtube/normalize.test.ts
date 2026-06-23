@@ -579,6 +579,101 @@ function heldAction(overrides: Record<string, unknown> = {}): RawAction {
   } as RawAction
 }
 
+describe('YouTube membership gifts and mode changes', () => {
+  function item(renderer: Record<string, unknown>): RawAction {
+    return { addChatItemAction: { item: renderer } } as RawAction
+  }
+
+  it('captures a gift purchase as a membership_gift highlight from the nested header', () => {
+    const { messages } = normalizeAction(
+      'src',
+      item({
+        liveChatSponsorshipsGiftPurchaseAnnouncementRenderer: {
+          id: 'gift1',
+          timestampUsec: '1700000000000000',
+          authorExternalChannelId: 'UCgifter',
+          header: {
+            liveChatSponsorshipsHeaderRenderer: {
+              authorName: { simpleText: 'Gifter' },
+              primaryText: { runs: [{ text: 'Gifted ' }, { text: '5' }, { text: ' memberships' }] }
+            }
+          }
+        }
+      })
+    )
+    expect(messages[0]?.author.name).toBe('Gifter')
+    // The gifter's stable channel id lives on the outer renderer, not the nested header.
+    expect(messages[0]?.author.id).toBe('UCgifter')
+    expect(messages[0]?.highlight).toEqual({
+      kind: 'membership_gift',
+      headerText: 'Gifted 5 memberships'
+    })
+  })
+
+  it('gives id-less gift/mode events distinct fallback ids instead of collapsing them', () => {
+    const giftId = (text: string): string | undefined =>
+      normalizeAction(
+        'src',
+        item({
+          liveChatSponsorshipsGiftPurchaseAnnouncementRenderer: {
+            header: { liveChatSponsorshipsHeaderRenderer: { primaryText: { runs: [{ text }] } } }
+          }
+        })
+      ).messages[0]?.id
+    const modeId = (text: string): string | undefined =>
+      normalizeAction(
+        'src',
+        item({ liveChatModeChangeMessageRenderer: { text: { runs: [{ text }] } } })
+      ).messages[0]?.id
+    // No id and no timestamp on either event — they must still differ by content (not both `…:0`).
+    expect(giftId('Gifted 5 memberships')).not.toBe(giftId('Gifted 10 memberships'))
+    expect(modeId('Slow mode is on')).not.toBe(modeId('Slow mode is off'))
+  })
+
+  it('captures a gift redemption as a membership highlight carrying the line', () => {
+    const { messages } = normalizeAction(
+      'src',
+      item({
+        liveChatSponsorshipsGiftRedemptionAnnouncementRenderer: {
+          id: 'redeem1',
+          authorName: { simpleText: 'Recipient' },
+          message: { runs: [{ text: 'was gifted a membership by Gifter' }] }
+        }
+      })
+    )
+    expect(messages[0]?.author.name).toBe('Recipient')
+    expect(messages[0]?.highlight).toEqual({
+      kind: 'membership',
+      headerText: 'was gifted a membership by Gifter'
+    })
+  })
+
+  it('captures a mode change as a YouTube-authored system line', () => {
+    const { messages } = normalizeAction(
+      'src',
+      item({
+        liveChatModeChangeMessageRenderer: {
+          id: 'mode1',
+          text: { runs: [{ text: 'Slow mode is on' }] },
+          subtext: { runs: [{ text: 'Send a message every 30 seconds' }] }
+        }
+      })
+    )
+    expect(messages[0]?.system).toBe(true)
+    expect(messages[0]?.author.name).toBe('YouTube')
+    expect(messages[0]?.fragments).toEqual([
+      { type: 'text', text: 'Slow mode is on — Send a message every 30 seconds' }
+    ])
+  })
+
+  it('no longer flags the gift/mode renderers as unknown parse-health keys', () => {
+    expect(
+      unknownActionKeys(item({ liveChatSponsorshipsGiftPurchaseAnnouncementRenderer: {} }))
+    ).toEqual([])
+    expect(unknownActionKeys(item({ liveChatModeChangeMessageRenderer: {} }))).toEqual([])
+  })
+})
+
 describe('YouTube held-for-review messages', () => {
   it('surfaces the wrapped message, the review header, and only the Show/Hide review buttons', () => {
     const { messages } = normalizeAction('src', heldAction())

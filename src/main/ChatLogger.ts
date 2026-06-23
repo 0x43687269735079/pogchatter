@@ -19,12 +19,19 @@ const SEED_TAIL_BYTES = 512 * 1024
 const SEEN_CAP = 8192
 
 /**
- * Dedup key for a loggable event: the message id, or the cleared message's id. User- and whole-chat
- * clears have no stable identity and always log.
+ * Dedup key for a loggable event: the message id, the cleared message's id, or a replace keyed by
+ * the message's resolved state so a held→shown/hidden transition logs once while YouTube's poll
+ * re-sends of the same transition don't. User- and whole-chat clears have no stable identity and
+ * always log.
  */
 function eventKey(event: ChatEvent): string | undefined {
   if (event.kind === 'message') {
     return `m:${event.message.id}`
+  }
+  if (event.kind === 'replace') {
+    const message = event.message
+    const state = message.deleted === true ? 'del' : message.held !== undefined ? 'held' : 'shown'
+    return `r:${message.id}:${state}`
   }
   if (event.kind === 'clear' && event.target.messageId !== undefined) {
     return `c:${event.target.messageId}`
@@ -33,11 +40,12 @@ function eventKey(event: ChatEvent): string | undefined {
 }
 
 /**
- * Appends every chat message and moderation clear to one local JSONL file (one event per line),
- * across every open chat and every session, for a long-term moderation record that's easy to search.
- * Messages are recorded as they arrive — before any deletion is applied — so the log preserves
- * messages a moderator later removes; the matching `clear` events are logged too, so the record shows
- * what was deleted. Each line carries its `at` timestamp and `channelId`. Enabled from Settings → Chat
+ * Appends every chat message, moderation clear, and held-message outcome to one local JSONL file
+ * (one event per line), across every open chat and every session, for a long-term moderation record
+ * that's easy to search. Messages are recorded as they arrive — before any deletion is applied — so
+ * the log preserves messages a moderator later removes; the matching `clear` events are logged too,
+ * so the record shows what was deleted, and `replace` events capture a held message becoming approved
+ * or hidden. Each line carries its `at` timestamp and `channelId`. Enabled from Settings → Chat
  * logging; off by default.
  *
  * The single `chat.jsonl` is opened lazily (append) on the first event, so a session with no chat
@@ -67,9 +75,13 @@ export class ChatLogger {
     return this.#dir
   }
 
-  /** Record a chat event. Only `message` and `clear` events are logged; the rest are ignored. */
+  /**
+   * Record a chat event. Content events are logged — `message` (every chat line and system notice:
+   * donations, redeems, subs, raids, …), `replace` (a held message's approved/hidden outcome), and
+   * `clear` (a moderation removal). Connection/UI events (status, auth, …) are ignored.
+   */
   record(event: ChatEvent): void {
-    if (event.kind !== 'message' && event.kind !== 'clear') {
+    if (event.kind !== 'message' && event.kind !== 'replace' && event.kind !== 'clear') {
       return
     }
     const stream = this.#ensureStream()

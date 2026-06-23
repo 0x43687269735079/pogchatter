@@ -59,6 +59,8 @@ interface RawRenderer {
   sticker?: RawThumbs
   headerSubtext?: RawText
   headerPrimaryText?: RawText
+  /** On a `liveChatSponsorshipsHeaderRenderer` (gift purchase): the "Gifted N memberships" line. */
+  primaryText?: RawText
   /** The "⋮" menu token; opens the per-message action menu (report/block/moderation). */
   contextMenuEndpoint?: { liveChatItemContextMenuEndpoint?: { params?: string } }
   /** On a `liveChatAutoModMessageRenderer`: the wrapped message held for review. */
@@ -95,6 +97,22 @@ interface RawItem {
   liveChatPaidStickerRenderer?: RawRenderer
   liveChatMembershipItemRenderer?: RawRenderer
   liveChatAutoModMessageRenderer?: RawRenderer
+  /** "X gifted N memberships" — author + `primaryText` live in the nested header renderer. */
+  liveChatSponsorshipsGiftPurchaseAnnouncementRenderer?: {
+    id?: string
+    timestampUsec?: string
+    authorExternalChannelId?: string
+    header?: { liveChatSponsorshipsHeaderRenderer?: RawRenderer }
+  }
+  /** "X was gifted a membership by Y" — a top-level author + `message`. */
+  liveChatSponsorshipsGiftRedemptionAnnouncementRenderer?: RawRenderer
+  /** "Slow mode is on", "Members-only mode is on", … — a YouTube-authored mode notice. */
+  liveChatModeChangeMessageRenderer?: {
+    id?: string
+    timestampUsec?: string
+    text?: RawText
+    subtext?: RawText
+  }
 }
 export interface RawAction {
   addChatItemAction?: { item?: RawItem }
@@ -170,6 +188,22 @@ function fallbackId(sourceId: string, renderer: RawRenderer): string {
 }
 
 /**
+ * A stable id for an id-less synthetic event (gift purchase, mode change). Like {@link fallbackId} it
+ * folds in the event kind, the raw timestamp, the author, and a hash of the visible text — so two
+ * distinct id-less events of the same kind don't collapse to a shared `…:0` id and get deduped away
+ * (and it never uses {@link usecToMs}'s Date.now() fallback, which would make every re-send look new).
+ */
+function syntheticId(
+  sourceId: string,
+  kind: string,
+  usec: string | undefined,
+  author: string,
+  text: string
+): string {
+  return `${sourceId}-${kind}-${usec ?? '0'}-${author}-${hashString(text)}`
+}
+
+/**
  * The full URL behind a link run. YouTube truncates a link's displayed `text` (e.g.
  * `https://example.com/very/long...`) and keeps the real target in the run's navigation endpoint,
  * wrapped in a `youtube.com/redirect?…&q=<encoded url>`. Unwrap the `q` param to the real URL so the
@@ -232,7 +266,9 @@ function toFragments(message: RawText | undefined): Fragment[] {
   return fragments
 }
 
-function toAuthor(renderer: RawRenderer): Author {
+// `idOverride` carries a stable channel id that lives outside `renderer` — e.g. a gift purchase
+// keeps the gifter's id on the outer announcement renderer, not the nested header passed here.
+function toAuthor(renderer: RawRenderer, idOverride?: string): Author {
   const badges: Badge[] = []
   const roles = { broadcaster: false, moderator: false, member: false, verified: false }
   for (const badge of renderer.authorBadges ?? []) {
@@ -256,7 +292,7 @@ function toAuthor(renderer: RawRenderer): Author {
   }
   const name = textToString(renderer.authorName) || 'Unknown'
   const author: Author = {
-    id: renderer.authorExternalChannelId ?? name,
+    id: idOverride ?? renderer.authorExternalChannelId ?? name,
     name,
     displayName: name,
     badges,
@@ -428,7 +464,10 @@ const KNOWN_ITEM_KEYS = new Set([
   'liveChatPaidMessageRenderer',
   'liveChatPaidStickerRenderer',
   'liveChatMembershipItemRenderer',
-  'liveChatAutoModMessageRenderer'
+  'liveChatAutoModMessageRenderer',
+  'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
+  'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
+  'liveChatModeChangeMessageRenderer'
 ])
 // Item renderers we recognize and deliberately don't render — informational, not chat content.
 // Classified here so they don't trip the parse-health warning (seen in the field: the
@@ -571,6 +610,76 @@ function collect(
     }
     message.highlight = highlight
     messages.push(message)
+  } else if (item.liveChatSponsorshipsGiftPurchaseAnnouncementRenderer !== undefined) {
+    const renderer = item.liveChatSponsorshipsGiftPurchaseAnnouncementRenderer
+    const header = renderer.header?.liveChatSponsorshipsHeaderRenderer
+    if (header !== undefined) {
+      const headerText = textToString(header.primaryText)
+      const message: ChatMessage = {
+        id:
+          renderer.id ??
+          syntheticId(
+            sourceId,
+            'gift',
+            renderer.timestampUsec,
+            renderer.authorExternalChannelId ?? '',
+            headerText
+          ),
+        platform: 'youtube',
+        channelId: sourceId,
+        timestamp: usecToMs(renderer.timestampUsec),
+        // The gifter's stable channel id is on the outer renderer, not the nested header — carry it
+        // so the log/UI key the gift to the actual channel, not the mutable display name.
+        author: toAuthor(header, renderer.authorExternalChannelId),
+        fragments: [],
+        system: true
+      }
+      message.highlight =
+        headerText !== '' ? { kind: 'membership_gift', headerText } : { kind: 'membership_gift' }
+      messages.push(message)
+    }
+  } else if (item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer !== undefined) {
+    const message = baseMessage(
+      sourceId,
+      item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer
+    )
+    message.system = true
+    // The "was gifted a membership by X" line is the whole content, so carry it on the header.
+    const headerText = textToString(
+      item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer.message
+    )
+    message.highlight =
+      headerText !== '' ? { kind: 'membership', headerText } : { kind: 'membership' }
+    message.fragments = []
+    messages.push(message)
+  } else if (item.liveChatModeChangeMessageRenderer !== undefined) {
+    messages.push(modeChangeMessage(sourceId, item.liveChatModeChangeMessageRenderer))
+  }
+}
+
+/** A YouTube mode-change notice (slow mode, members-only, …) as a system line authored by YouTube. */
+function modeChangeMessage(
+  sourceId: string,
+  renderer: { id?: string; timestampUsec?: string; text?: RawText; subtext?: RawText }
+): ChatMessage {
+  const text = textToString(renderer.text)
+  const subtext = textToString(renderer.subtext)
+  return {
+    id:
+      renderer.id ??
+      syntheticId(sourceId, 'mode', renderer.timestampUsec, '', `${text} ${subtext}`),
+    platform: 'youtube',
+    channelId: sourceId,
+    timestamp: usecToMs(renderer.timestampUsec),
+    author: {
+      id: 'youtube',
+      name: 'YouTube',
+      displayName: 'YouTube',
+      badges: [],
+      roles: { broadcaster: false, moderator: false }
+    },
+    fragments: [{ type: 'text', text: subtext !== '' ? `${text} — ${subtext}` : text }],
+    system: true
   }
 }
 

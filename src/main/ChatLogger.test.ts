@@ -104,7 +104,7 @@ describe('ChatLogger', () => {
     expect(JSON.parse(fs.writes[1] ?? '{}')['target'].messageId).toBe('doomed')
   })
 
-  it('ignores non-message/clear events', () => {
+  it('ignores connection/UI events (status, channels)', () => {
     reset()
     const logger = new ChatLogger('/tmp/logs')
     logger.record({ kind: 'status', channelId: 'youtube:c', status: { state: 'live' } })
@@ -112,6 +112,40 @@ describe('ChatLogger', () => {
 
     expect(fs.created).toHaveLength(0)
     expect(fs.writes).toHaveLength(0)
+  })
+
+  it('logs replace outcomes distinctly from the message, deduping re-sends but keeping each state', () => {
+    reset()
+    const logger = new ChatLogger('/tmp/logs')
+    const base: ChatMessage = {
+      id: 'h1',
+      channelId: 'youtube:c',
+      platform: 'youtube',
+      timestamp: 0,
+      author: {
+        id: 'a',
+        name: 'a',
+        displayName: 'A',
+        badges: [],
+        roles: { broadcaster: false, moderator: false }
+      },
+      fragments: []
+    }
+    // The original held message, then its approved (shown) and later hidden (deleted) outcomes.
+    logger.record({
+      kind: 'message',
+      channelId: 'youtube:c',
+      message: { ...base, held: { actions: [] } }
+    })
+    logger.record({ kind: 'replace', channelId: 'youtube:c', message: { ...base } })
+    logger.record({ kind: 'replace', channelId: 'youtube:c', message: { ...base } }) // re-sent across polls
+    logger.record({ kind: 'replace', channelId: 'youtube:c', message: { ...base, deleted: true } })
+
+    // message + shown replace + hidden replace = 3 lines; the duplicate shown replace is dropped.
+    expect(fs.writes).toHaveLength(3)
+    expect(JSON.parse(fs.writes[0] ?? '{}')['kind']).toBe('message')
+    expect(JSON.parse(fs.writes[1] ?? '{}')['kind']).toBe('replace')
+    expect(JSON.parse(fs.writes[2] ?? '{}')['message'].deleted).toBe(true)
   })
 
   it('ends the stream on close, and a late event cannot reopen it', () => {

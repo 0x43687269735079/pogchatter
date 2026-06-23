@@ -3,7 +3,9 @@ import type { ChatMessage as TwitchChatMessage } from '@twurple/chat'
 import {
   decodeTwitchMenuToken,
   encodeTwitchMenuToken,
+  normalizeTwitchAnnouncement,
   normalizeTwitchMessage,
+  normalizeTwitchNotice,
   normalizeTwitchSubGift
 } from '@main/sources/twitch/normalize'
 
@@ -217,6 +219,25 @@ describe('normalizeTwitchSubGift moderation context', () => {
     const message = normalizeTwitchSubGift('s', subInfo, msg)
     expect(message.author.displayName).toBe('Anonymous')
     expect(message.menuToken).toBeUndefined()
+  })
+})
+
+describe('normalizeTwitchNotice', () => {
+  it('renders a system line carrying the description while keeping the author for the log', () => {
+    const msg = ircMessage({ userId: 'u-raider', userName: 'raider' })
+    const message = normalizeTwitchNotice('s', msg, 'Raider is raiding with 50 viewers')
+    expect(message.system).toBe(true)
+    expect(message.fragments).toEqual([{ type: 'text', text: 'Raider is raiding with 50 viewers' }])
+    expect(message.author.name).toBe('raider')
+  })
+})
+
+describe('normalizeTwitchAnnouncement', () => {
+  it('prefixes the announcer name and tokenizes the announcement body', () => {
+    const message = normalizeTwitchAnnouncement('s', 'hello chat', ircMessage({ userName: 'mod' }))
+    expect(message.system).toBe(true)
+    expect(message.fragments[0]).toEqual({ type: 'text', text: '📣 Alice: ' })
+    expect(message.fragments[1]).toEqual({ type: 'text', text: 'hello chat' })
   })
 })
 

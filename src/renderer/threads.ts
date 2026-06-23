@@ -41,19 +41,34 @@ export function threadMessages(messages: readonly ChatMessage[], rootId: string)
   return thread
 }
 
+/** A Twitch reply thread reconstructed from a column buffer, ready to hand to the thread modal. */
+export interface ThreadView {
+  /** The root (when buffered) followed by its replies, oldest→newest. */
+  messages: ChatMessage[]
+  /** The thread starter's display name, when known. */
+  rootAuthor: string | undefined
+  /** Whether the root message is present in the buffer (false → some earlier messages aren't shown). */
+  rootBuffered: boolean
+}
+
 /**
- * The thread starter's display name: the buffered root message's author if present, otherwise any
- * reply's `reply.threadAuthor` (set only when a reply's parent was the root). Undefined when neither
- * is known — the root isn't buffered and no reply carried the name.
+ * Reconstruct a thread from a column buffer: its messages, its starter, and whether the root is
+ * buffered. The root is located once here so that "is the root present" and "who started it" stay a
+ * single source of truth rather than being re-derived by callers. The starter's name comes from the
+ * buffered root when present, otherwise from any reply's `reply.threadAuthor` (set when a reply's
+ * parent was the root); it is undefined when neither is known.
  */
-export function threadRootAuthor(
-  messages: readonly ChatMessage[],
-  rootId: string
-): string | undefined {
+export function buildThreadView(messages: readonly ChatMessage[], rootId: string): ThreadView {
   const root = messages.find((message) => message.id === rootId)
-  if (root !== undefined) {
-    return root.author.displayName
+  return {
+    messages: threadMessages(messages, rootId),
+    rootAuthor: root?.author.displayName ?? replyThreadAuthor(messages, rootId),
+    rootBuffered: root !== undefined
   }
+}
+
+/** Fallback thread-starter name when the root isn't buffered: the first reply that carried it. */
+function replyThreadAuthor(messages: readonly ChatMessage[], rootId: string): string | undefined {
   for (const message of messages) {
     if (message.reply?.threadId === rootId && message.reply.threadAuthor !== undefined) {
       return message.reply.threadAuthor

@@ -27,7 +27,7 @@ import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
 import { DonationThreadModal } from '@renderer/components/DonationThreadModal'
 import { ThreadModal } from '@renderer/components/ThreadModal'
-import { threadMessages, threadRootAuthor } from '@renderer/threads'
+import { buildThreadView } from '@renderer/threads'
 import { SearchModal } from '@renderer/components/SearchModal'
 import { ModalShell } from '@renderer/components/ModalShell'
 import { MonitorComposer } from '@renderer/components/MonitorComposer'
@@ -827,7 +827,10 @@ export function App(): ReactElement {
 
   // Rebuild the open Twitch thread from the live buffer each render so a just-posted reply appears.
   // Twitch has no chat-history API, so an unbuffered root surfaces as a note inside the modal.
-  const threadBuffer = threadView !== undefined ? (messages[threadView.channelId] ?? []) : []
+  const thread =
+    threadView !== undefined
+      ? buildThreadView(messages[threadView.channelId] ?? [], threadView.rootId)
+      : undefined
   const threadChannel =
     threadView !== undefined
       ? channels.find((channel) => channel.id === threadView.channelId)
@@ -1006,13 +1009,13 @@ export function App(): ReactElement {
           }}
         />
       ) : null}
-      {threadView !== undefined ? (
+      {threadView !== undefined && thread !== undefined ? (
         <ThreadModal
           channelId={threadView.channelId}
-          messages={threadMessages(threadBuffer, threadView.rootId)}
+          messages={thread.messages}
           rootId={threadView.rootId}
-          rootAuthor={threadRootAuthor(threadBuffer, threadView.rootId)}
-          rootBuffered={threadBuffer.some((message) => message.id === threadView.rootId)}
+          rootAuthor={thread.rootAuthor}
+          rootBuffered={thread.rootBuffered}
           canSend={threadChannel !== undefined && canSendTo(threadChannel, auth)}
           palette={palette}
           monitoredKeys={monitoredKeys}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '@shared/model'
-import { isInThread, threadCounts, threadMessages, threadRootAuthor } from '@renderer/threads'
+import { buildThreadView, isInThread, threadCounts, threadMessages } from '@renderer/threads'
 
 /** A bare chat message; `reply.threadId` makes it part of a thread rooted at that id. */
 function msg(
@@ -89,18 +89,25 @@ describe('threadMessages', () => {
   })
 })
 
-describe('threadRootAuthor', () => {
-  it('uses the buffered root message author', () => {
+describe('buildThreadView', () => {
+  it('gathers the thread, names the buffered root, and marks it present', () => {
     const messages = [msg('root', { author: 'Streamer' }), msg('r1', { threadId: 'root' })]
-    expect(threadRootAuthor(messages, 'root')).toBe('Streamer')
+    const view = buildThreadView(messages, 'root')
+    expect(view.messages.map((m) => m.id)).toEqual(['root', 'r1'])
+    expect(view.rootAuthor).toBe('Streamer')
+    expect(view.rootBuffered).toBe(true)
   })
 
-  it('falls back to a reply’s threadAuthor when the root is not buffered', () => {
-    const messages = [msg('r1', { threadId: 'gone', threadAuthor: 'Bob' })]
-    expect(threadRootAuthor(messages, 'gone')).toBe('Bob')
+  it('falls back to a reply’s threadAuthor and flags the root absent when not buffered', () => {
+    const view = buildThreadView([msg('r1', { threadId: 'gone', threadAuthor: 'Bob' })], 'gone')
+    expect(view.messages.map((m) => m.id)).toEqual(['r1'])
+    expect(view.rootAuthor).toBe('Bob')
+    expect(view.rootBuffered).toBe(false)
   })
 
-  it('is undefined when neither the root nor a thread author is known', () => {
-    expect(threadRootAuthor([msg('r1', { threadId: 'gone' })], 'gone')).toBeUndefined()
+  it('leaves the author undefined when neither the root nor a thread author is known', () => {
+    const view = buildThreadView([msg('r1', { threadId: 'gone' })], 'gone')
+    expect(view.rootAuthor).toBeUndefined()
+    expect(view.rootBuffered).toBe(false)
   })
 })

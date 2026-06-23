@@ -594,7 +594,7 @@ export interface ChatApi {
    */
   getBacklog(): Promise<ChatEvent[]>
   listChannels(): Promise<ChannelInfo[]>
-  /** Send a message. `replyTo` is a Twitch parent message id (native reply); YouTube tags inline instead. */
+  /** Send a message. `reply` carries the Twitch native-reply + thread target; YouTube tags the user inline and ignores it. */
   send(channelId: string, text: string, reply?: SendReply): Promise<SendResult>
   getAuthState(): Promise<AuthState>
   /** Start Twitch device-code login. Returns the code to enter; completion arrives via an `auth` event. */

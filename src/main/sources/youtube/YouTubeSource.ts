@@ -141,7 +141,7 @@ export class YouTubeSource extends BaseChatSource {
     return this.#videoId
   }
 
-  // YouTube has no native reply; the renderer tags the user inline, so `replyTo` is unused here.
+  // YouTube has no native reply; the renderer tags the user inline, so `reply` is unused here.
   async send(text: string, _reply?: SendReply): Promise<void> {
     if (this.#videoId === undefined) {
       throw new Error('No live video to send to')

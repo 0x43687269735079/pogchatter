@@ -137,6 +137,9 @@ export class TwitchSource extends BaseChatSource {
   // wording and remembered here, then back-filled with its title via a `replace` once it resolves.
   #rewardsReady = false
   #pendingRewards: ChatMessage[] = []
+  // Bumped on every connect/disconnect so a catalog load from a superseded connection (the same
+  // source instance is reused across login/reconnect/re-add) can't flush a newer connection's queue.
+  #rewardGeneration = 0
   // Announced community-gift batch ids — Twitch follows "X is gifting N subs" with N individual
   // gift notices carrying the same msg-param-community-gift-id, which would spam the column.
   // Bounded so a very long session can't grow it unboundedly.
@@ -180,8 +183,10 @@ export class TwitchSource extends BaseChatSource {
     // redemption message can be named the moment it arrives; back-fill any that raced the load.
     this.#rewardsReady = false
     this.#pendingRewards = []
+    this.#rewardGeneration += 1
+    const rewardGeneration = this.#rewardGeneration
     void this.#rewards.ensureChannel(this.#login).then(() => {
-      this.#flushPendingRewards()
+      this.#flushPendingRewards(rewardGeneration)
     })
 
     this.#listeners = [
@@ -369,6 +374,11 @@ export class TwitchSource extends BaseChatSource {
     // Re-check the moderator role on the next connect (login changes reconnect the source).
     this.#modStatus = undefined
     this.#pollGeneration += 1
+    // Invalidate any in-flight reward-catalog load and drop buffered redemptions, so a removed or
+    // reconnecting source emits no stale back-fill replacements.
+    this.#rewardGeneration += 1
+    this.#rewardsReady = false
+    this.#pendingRewards = []
     if (this.#liveTimer !== undefined) {
       clearTimeout(this.#liveTimer)
       this.#liveTimer = undefined
@@ -566,7 +576,13 @@ export class TwitchSource extends BaseChatSource {
    * now-known title, so a row first shown with generic wording updates in place. Redemptions whose id
    * still isn't in the catalog keep the generic wording.
    */
-  #flushPendingRewards(): void {
+  #flushPendingRewards(generation: number): void {
+    // A disconnect/reconnect superseded the load this `.then` belongs to: it must not mark the new
+    // connection ready or drain its (different) pending queue — the worst case being an old failed
+    // load clearing a redemption the newer, successful load could have named.
+    if (generation !== this.#rewardGeneration) {
+      return
+    }
     this.#rewardsReady = true
     const pending = this.#pendingRewards
     this.#pendingRewards = []

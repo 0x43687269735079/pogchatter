@@ -957,4 +957,66 @@ describe('TwitchSource channel-points reward back-fill', () => {
     expect(replaced.at(-1)?.reward).toEqual({ id: 'reward-uuid', name: 'Hydrate!' })
     await source.disconnect()
   })
+
+  it('does not let a superseded catalog load clear a reconnect’s pending back-fill (FFR-1)', async () => {
+    function deferred(): {
+      promise: Promise<{ ok: boolean; json: () => Promise<unknown> }>
+      resolve: (value: { ok: boolean; json: () => Promise<unknown> }) => void
+    } {
+      let resolve!: (value: { ok: boolean; json: () => Promise<unknown> }) => void
+      const promise = new Promise<{ ok: boolean; json: () => Promise<unknown> }>((r) => {
+        resolve = r
+      })
+      return { promise, resolve }
+    }
+    const first = deferred()
+    const second = deferred()
+    let gqlCalls = 0
+    proxiedFetch.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('gql.twitch.tv')) {
+        gqlCalls += 1
+        return gqlCalls === 1 ? first.promise : second.promise
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ data: [{ id: '500' }] }) })
+    })
+    const source = makeSource(makeAuth())
+    const replaced: ChatMessage[] = []
+    source.on('replace', (message) => replaced.push(message))
+
+    // First connect starts catalog load #1; a reconnect on the same source starts load #2 (load #1
+    // hasn't cached yet, so the provider fetches again).
+    await connectSource(source)
+    await source.disconnect()
+    const client = await connectSource(source)
+
+    const redemption = ircMessage('alice')
+    ;(redemption as { rewardId: string | null }).rewardId = 'reward-uuid'
+    client.handlers.get('message')?.('#somechannel', 'alice', 'redeemed text', redemption)
+
+    // The OLD load fails and resolves first — its stale flush must not drain the new pending queue.
+    first.resolve({ ok: false, json: async () => ({}) })
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    expect(replaced).toHaveLength(0)
+
+    // The new load succeeds: the still-pending redemption is back-filled with its title.
+    second.resolve({
+      ok: true,
+      json: async () => ({
+        data: {
+          user: {
+            channel: {
+              communityPointsSettings: { customRewards: [{ id: 'reward-uuid', title: 'Hydrate!' }] }
+            }
+          }
+        }
+      })
+    })
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    expect(replaced.at(-1)?.reward).toEqual({ id: 'reward-uuid', name: 'Hydrate!' })
+    await source.disconnect()
+  })
 })

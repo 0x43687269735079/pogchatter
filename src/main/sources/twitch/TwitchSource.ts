@@ -5,12 +5,15 @@ import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import {
   decodeTwitchMenuToken,
+  normalizeTwitchAnnouncement,
   normalizeTwitchCommunitySub,
   normalizeTwitchMessage,
+  normalizeTwitchNotice,
   normalizeTwitchSub,
   normalizeTwitchSubGift,
   type NormalizeOptions,
-  type TwitchMenuContext
+  type TwitchMenuContext,
+  type TwitchUserNotice
 } from '@main/sources/twitch/normalize'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
@@ -277,6 +280,63 @@ export class TwitchSource extends BaseChatSource {
         }
         this.#emitUserNotice(
           normalizeTwitchCommunitySub(this.id, subInfo, msg, this.#normalizeOptions())
+        )
+      }),
+      client.onRaid((channel, _user, raidInfo, msg) => {
+        const plural = raidInfo.viewerCount === 1 ? 'viewer' : 'viewers'
+        this.#notice(
+          channel,
+          msg,
+          `${raidInfo.displayName} is raiding with ${raidInfo.viewerCount} ${plural}`
+        )
+      }),
+      client.onAnnouncement((channel, _user, _info, msg) => {
+        if (this.#matches(channel)) {
+          this.#emitUserNotice(
+            normalizeTwitchAnnouncement(this.id, msg.text ?? '', msg, this.#normalizeOptions())
+          )
+        }
+      }),
+      client.onPrimePaidUpgrade((channel, _user, subInfo, msg) => {
+        this.#notice(
+          channel,
+          msg,
+          `${subInfo.displayName} converted from a Prime sub to a paid sub`
+        )
+      }),
+      client.onGiftPaidUpgrade((channel, _user, subInfo, msg) => {
+        this.#notice(
+          channel,
+          msg,
+          `${subInfo.displayName} continued their gift sub from ${subInfo.gifterDisplayName}`
+        )
+      }),
+      client.onStandardPayForward((channel, _user, forwardInfo, msg) => {
+        this.#notice(
+          channel,
+          msg,
+          `${forwardInfo.displayName} is paying forward a gift sub to ${forwardInfo.recipientDisplayName}`
+        )
+      }),
+      client.onCommunityPayForward((channel, _user, forwardInfo, msg) => {
+        this.#notice(
+          channel,
+          msg,
+          `${forwardInfo.displayName} is paying forward their gift sub to the community`
+        )
+      }),
+      client.onSubExtend((channel, _user, subInfo, msg) => {
+        this.#notice(
+          channel,
+          msg,
+          `${subInfo.displayName} extended their subscription (${subInfo.months} months)`
+        )
+      }),
+      client.onBitsBadgeUpgrade((channel, _user, upgradeInfo, msg) => {
+        this.#notice(
+          channel,
+          msg,
+          `${upgradeInfo.displayName} earned a new bits badge (${upgradeInfo.threshold} bits)`
         )
       }),
       client.onMessageRemove((channel, messageId) => {
@@ -613,6 +673,13 @@ export class TwitchSource extends BaseChatSource {
   #emitUserNotice(message: ChatMessage): void {
     message.fragments = this.#emotes.tokenize(message.fragments, 'twitch', this.#roomId)
     this.emitMessage(message)
+  }
+
+  /** Emit a USERNOTICE-derived system line (raid, sub upgrade, pay-forward, …) for this channel. */
+  #notice(channel: string, msg: TwitchUserNotice, text: string): void {
+    if (this.#matches(channel)) {
+      this.#emitUserNotice(normalizeTwitchNotice(this.id, msg, text, this.#normalizeOptions()))
+    }
   }
 
   /** Report the joined room as live (with viewers) when the Helix poll says so, else plain connected. */

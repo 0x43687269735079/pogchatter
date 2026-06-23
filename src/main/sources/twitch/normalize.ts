@@ -345,6 +345,42 @@ export function normalizeTwitchCommunitySub(
 }
 
 /**
+ * A USERNOTICE with no user-typed body (raid, sub upgrade, pay-forward, sub-extend, bits-badge)
+ * rendered as a system line: the real author is kept (for the log and moderation) while `text` — a
+ * generated description naming who and what — is the visible body.
+ */
+export function normalizeTwitchNotice(
+  sourceId: string,
+  msg: TwitchUserNotice,
+  text: string,
+  options: NormalizeOptions = {}
+): ChatMessage {
+  const message = fromUserNotice(sourceId, msg, options)
+  message.system = true
+  message.fragments = [{ type: 'text', text }]
+  return message
+}
+
+/**
+ * A moderator/broadcaster announcement (`/announce`) as a system line: a marker plus the announcer's
+ * name, then the announced message with native emotes preserved. The author is kept for the log.
+ */
+export function normalizeTwitchAnnouncement(
+  sourceId: string,
+  text: string,
+  msg: TwitchUserNotice,
+  options: NormalizeOptions = {}
+): ChatMessage {
+  const message = fromUserNotice(sourceId, msg, options)
+  message.system = true
+  message.fragments = [
+    { type: 'text', text: `📣 ${message.author.displayName}: ` },
+    ...toFragments(text, msg)
+  ]
+  return message
+}
+
+/**
  * Map a twurple ChatMessage onto the normalized model. `sourceId` identifies the column;
  * `options` carries the badge/avatar resolvers and the logged-in user (see {@link NormalizeOptions}).
  */

@@ -153,6 +153,13 @@ export interface ChatMessage {
    * still offers the per-author moderation actions (hide/ban/timeout).
    */
   held?: HeldReview
+  /**
+   * A YouTube moderation-activity notice ("{mod} timed out {user} for 60s") — delivered only to
+   * moderators/the broadcaster. Renders as a distinct moderation-accent line; the wording is
+   * YouTube's own runs, carried in `fragments`. Complements the deletion `clear`, which strikes the
+   * target message but names no acting moderator.
+   */
+  moderationNotice?: boolean
 }
 
 /** A YouTube automod "held for review" message's header and inline moderation actions. */

@@ -2,6 +2,7 @@ import type { Innertube } from 'youtubei.js'
 import type { ChatMessage, ClearTarget } from '@shared/model'
 import { isAuthError } from '@main/sources/youtube/authError'
 import { normalizeAction, unknownActionKeys, type RawAction } from '@main/sources/youtube/normalize'
+import { captureUnknownAction } from '@main/sources/youtube/unknownCapture'
 
 const MIN_TIMEOUT_MS = 1000
 const MAX_TIMEOUT_MS = 30_000
@@ -625,6 +626,8 @@ export class LiveChatReader {
       if (!this.#warnedUnknownTypes.has(key)) {
         this.#warnedUnknownTypes.add(key)
         newTypes.push(key)
+        // Once per distinct drifted key: dump the raw shape for inspection (opt-in, no-op by default).
+        captureUnknownAction(this.#sourceId, key, action)
       }
     }
     return false

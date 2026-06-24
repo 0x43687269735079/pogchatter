@@ -32,6 +32,7 @@ body,
   --warn: #ebcb8b;
   --err: #e07a7a;
   --accent: #88c0d0;
+  --mod: #d08770; /* moderation-activity notices (who timed out / hid / banned whom) */
   --cp: #9147ff; /* Twitch channel-points purple */
   --vip: #d3a0c8;
   --vipBg: rgba(211, 160, 200, 0.16);
@@ -57,6 +58,7 @@ body,
   --warn: #f2c66b;
   --err: #ff7a7a;
   --accent: #56c2d6;
+  --mod: #ff9e64; /* moderation-activity notices (brighter for the dark palette) */
   --cp: #a970ff; /* Twitch channel-points purple (brighter for the dark palette) */
   --vip: #ff79c6;
   --vipBg: rgba(255, 121, 198, 0.14);
@@ -1086,6 +1088,24 @@ body,
 .pc-sys b {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Moderation-activity notice ("{mod} timed out {user} for 60s") — a system line in its own accent so
+   another moderator's actions stand apart from ordinary sub/raid notices. */
+.pc-mod {
+  color: var(--mod);
+}
+.pc-mod::before,
+.pc-mod::after {
+  background: color-mix(in srgb, var(--mod) 45%, var(--rule));
+}
+.pc-mod b {
+  color: var(--mod);
+}
+.pc-mod-ic {
+  flex: none;
+  font-size: var(--fs-emph);
+  line-height: 1;
 }
 
 /* held-for-review card (YouTube automod) — a compact amber-edged block needing a moderator's call.

@@ -808,3 +808,54 @@ describe('YouTube replaceChatItemAction', () => {
     expect(unknownActionKeys(action)).toEqual([])
   })
 })
+
+describe('YouTube moderation-activity notices', () => {
+  function item(renderer: Record<string, unknown>): RawAction {
+    return { addChatItemAction: { item: renderer } } as RawAction
+  }
+
+  it('renders a moderation notice as a distinct YouTube-authored system line', () => {
+    const { messages } = normalizeAction(
+      'src',
+      item({
+        liveChatModerationMessageRenderer: {
+          id: 'mod1',
+          timestampUsec: '1700000000000000',
+          message: { runs: [{ text: 'Mod timed out Viewer for 60 seconds' }] }
+        }
+      })
+    )
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.system).toBe(true)
+    expect(messages[0]?.moderationNotice).toBe(true)
+    expect(messages[0]?.author.name).toBe('YouTube')
+    expect(messages[0]?.fragments).toEqual([
+      { type: 'text', text: 'Mod timed out Viewer for 60 seconds' }
+    ])
+  })
+
+  it('gives id-less notices distinct ids by content instead of collapsing them', () => {
+    const noticeId = (text: string): string | undefined =>
+      normalizeAction(
+        'src',
+        item({ liveChatModerationMessageRenderer: { message: { runs: [{ text }] } } })
+      ).messages[0]?.id
+    expect(noticeId('Mod hid a message from A')).not.toBe(noticeId('Mod hid a message from B'))
+  })
+
+  it('skips a notice whose runs carry no text (unconfirmed shape degrades cleanly)', () => {
+    const { messages } = normalizeAction(
+      'src',
+      item({ liveChatModerationMessageRenderer: { id: 'mod2', message: { runs: [] } } })
+    )
+    expect(messages).toHaveLength(0)
+  })
+
+  it('stays an unknown parse-health key until a real sample confirms the shape', () => {
+    // Deliberately unregistered: a genuine notice still routes to the unknown-key capture path so
+    // the real renderer can be sampled, even though collect() also renders the best-guess shape.
+    expect(unknownActionKeys(item({ liveChatModerationMessageRenderer: {} }))).toEqual([
+      'liveChatModerationMessageRenderer'
+    ])
+  })
+})

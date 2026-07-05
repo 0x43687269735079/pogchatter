@@ -8,6 +8,7 @@ import type {
   Highlight,
   ModerationCount,
   ReplyContext,
+  UserActivityEntry,
   UserModerationActivity
 } from '@shared/model'
 import { parseHeldActions } from '@main/sources/youtube/liveChatActions'
@@ -820,6 +821,7 @@ interface RawChannelActivity {
  */
 export function parseChannelActivity(
   sourceId: string,
+  targetChannelId: string,
   data: unknown
 ): UserModerationActivity | undefined {
   const contents = (data as RawChannelActivity | undefined)?.content
@@ -828,8 +830,7 @@ export function parseChannelActivity(
     return undefined
   }
   const counts: ModerationCount[] = []
-  const history: ChatMessage[] = []
-  const plainMessages: string[] = []
+  const history: UserActivityEntry[] = []
   let countsTitle: string | undefined
   let historyTitle: string | undefined
   let lastHeading: string | undefined
@@ -837,10 +838,11 @@ export function parseChannelActivity(
     const listItem = block.listItemViewModel
     if (listItem !== undefined) {
       const title = listItem.title?.content ?? ''
+      // A bold heading labels the section that follows; a plain row is one of the user's messages.
       if (listItem.title?.styleRuns !== undefined) {
         lastHeading = title
       } else if (title !== '') {
-        plainMessages.push(title)
+        history.push({ kind: 'plain', text: title })
       }
       continue
     }
@@ -859,15 +861,22 @@ export function parseChannelActivity(
     const items = block.liveChatItemDisplayListRenderer?.items
     if (items !== undefined) {
       historyTitle = lastHeading
+      const messages: ChatMessage[] = []
       for (const item of items) {
-        pushItem(sourceId, item, history)
+        pushItem(sourceId, item, messages)
+      }
+      for (const message of messages) {
+        // The panel is scoped to this one user, so every row is theirs — pin the id to the requested
+        // channel even when a renderer omits authorExternalChannelId (else it falls back to the handle).
+        message.author = { ...message.author, id: targetChannelId }
+        history.push({ kind: 'message', message })
       }
     }
   }
-  if (counts.length === 0 && history.length === 0 && plainMessages.length === 0) {
+  if (counts.length === 0 && history.length === 0) {
     return undefined
   }
-  const activity: UserModerationActivity = { counts, history, plainMessages }
+  const activity: UserModerationActivity = { counts, history }
   if (countsTitle !== undefined) {
     activity.countsTitle = countsTitle
   }

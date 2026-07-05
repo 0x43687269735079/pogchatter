@@ -222,13 +222,20 @@ export class YouTubeSource extends BaseChatSource {
     }
     const activity = parseChannelActivity(
       this.id,
+      userId,
       await this.#auth.getChannelActivity(broadcaster, videoId, userId)
     )
     if (activity === undefined) {
       return undefined
     }
-    for (const message of activity.history) {
-      message.fragments = this.#emotes.tokenize(message.fragments, 'youtube', this.#channelId)
+    for (const entry of activity.history) {
+      if (entry.kind === 'message') {
+        entry.message.fragments = this.#emotes.tokenize(
+          entry.message.fragments,
+          'youtube',
+          this.#channelId
+        )
+      }
     }
     return activity
   }

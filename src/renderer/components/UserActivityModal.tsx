@@ -59,13 +59,14 @@ export function UserActivityModal({
   const [profile, setProfile] = useState<UserProfile | undefined>(undefined)
   const [modActivity, setModActivity] = useState<UserModerationActivity | undefined>(undefined)
 
-  // Show the latest activity on open, and keep following it as new lines arrive while pinned.
+  // Show the latest activity on open, and keep following it as new lines arrive while pinned. Also
+  // re-pins when the fetched moderation history lands (it changes scroll height after mount).
   useLayoutEffect(() => {
     const el = bodyRef.current
     if (el !== null && atBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [messages])
+  }, [messages, modActivity])
 
   function handleScroll(): void {
     const el = bodyRef.current
@@ -119,9 +120,12 @@ export function UserActivityModal({
   if (profile?.createdAt !== undefined) {
     profileMeta.push(`joined ${monthYear(profile.createdAt)}`)
   }
-  const hasModHistory =
-    modActivity !== undefined &&
-    (modActivity.history.length > 0 || modActivity.plainMessages.length > 0)
+  // Drop panel-history messages already shown in the live session buffer, so they don't render twice;
+  // plain (text-only) rows have no id to dedup and are always kept, in YouTube's delivery order.
+  const sessionIds = new Set(messages.map((message) => message.id))
+  const historyEntries = (modActivity?.history ?? []).filter(
+    (entry) => entry.kind === 'plain' || !sessionIds.has(entry.message.id)
+  )
 
   return (
     <ModalShell className="pc-modal-wide" onClose={onClose}>
@@ -183,24 +187,25 @@ export function UserActivityModal({
       {/* One scroll for potentially a year of history: the server list and the session list share the
           body, so its content-visibility keeps a long list cheap and neither list is boxed in. */}
       <div className="mb pc-ua-body" ref={bodyRef} onScroll={handleScroll}>
-        {hasModHistory ? (
+        {historyEntries.length > 0 ? (
           <>
             {modActivity?.historyTitle !== undefined ? (
               <div className="pc-ua-modhead">{modActivity.historyTitle}</div>
             ) : null}
-            {modActivity?.history.map((message) => (
-              <MessageRow
-                key={`hist-${message.id}`}
-                message={message}
-                palette={palette}
-                monitoredKeys={monitoredKeys}
-              />
-            ))}
-            {modActivity?.plainMessages.map((text, index) => (
-              <div key={`plain-${index}`} className="pc-ua-modplain">
-                {text}
-              </div>
-            ))}
+            {historyEntries.map((entry, index) =>
+              entry.kind === 'message' ? (
+                <MessageRow
+                  key={`hist-${entry.message.id}`}
+                  message={entry.message}
+                  palette={palette}
+                  monitoredKeys={monitoredKeys}
+                />
+              ) : (
+                <div key={`plain-${index}`} className="pc-ua-modplain">
+                  {entry.text}
+                </div>
+              )
+            )}
             {messages.length > 0 ? <div className="pc-ua-modhead">Seen this session</div> : null}
           </>
         ) : null}
@@ -215,7 +220,7 @@ export function UserActivityModal({
             }}
           />
         ))}
-        {messages.length === 0 && !hasModHistory ? (
+        {messages.length === 0 && historyEntries.length === 0 ? (
           <div className="pc-empty">no messages from this user yet</div>
         ) : null}
       </div>

@@ -4,11 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const fs = vi.hoisted(() => ({
   mkdirs: [] as string[],
   writes: [] as Array<{ path: string; data: string }>,
-  writeThrows: false
+  writeThrows: false,
+  packaged: false
 }))
 
 vi.mock('electron', () => ({
-  app: { getPath: (name: string): string => `/fake/${name}` }
+  app: {
+    getPath: (name: string): string => `/fake/${name}`,
+    get isPackaged(): boolean {
+      return fs.packaged
+    }
+  }
 }))
 
 vi.mock('node:fs', () => ({
@@ -29,6 +35,7 @@ beforeEach(() => {
   fs.mkdirs.length = 0
   fs.writes.length = 0
   fs.writeThrows = false
+  fs.packaged = false
   delete process.env['POGCHATTER_YT_CAPTURE_UNKNOWN']
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
@@ -37,14 +44,25 @@ afterEach(() => {
   delete process.env['POGCHATTER_YT_CAPTURE_UNKNOWN']
 })
 
+// The module keeps a process-wide set of already-captured keys, so each test uses a distinct key
+// (except the dedup test) to stay independent of the ones that ran before it.
 describe('captureUnknownAction', () => {
   const action = { addChatItemAction: { item: { liveChatModerationMessageRenderer: { id: 'x' } } } }
 
   it('writes nothing when the opt-in env flag is unset', () => {
-    captureUnknownAction('youtube:x', 'liveChatModerationMessageRenderer', action)
+    captureUnknownAction('youtube:x', 'k-flag-off', action)
 
     expect(fs.writes).toHaveLength(0)
     expect(fs.mkdirs).toHaveLength(0)
+  })
+
+  it('writes nothing in a packaged build even when the flag is on', () => {
+    process.env['POGCHATTER_YT_CAPTURE_UNKNOWN'] = '1'
+    fs.packaged = true
+
+    captureUnknownAction('youtube:x', 'k-packaged', action)
+
+    expect(fs.writes).toHaveLength(0)
   })
 
   it('writes the full raw action as pretty JSON under a per-key file when the flag is on', () => {
@@ -63,6 +81,15 @@ describe('captureUnknownAction', () => {
     expect(write?.data).toContain('\n  ')
   })
 
+  it('captures each key at most once per process run', () => {
+    process.env['POGCHATTER_YT_CAPTURE_UNKNOWN'] = '1'
+
+    captureUnknownAction('youtube:x', 'k-once', action)
+    captureUnknownAction('youtube:y', 'k-once', action) // same key, different source/reconnect
+
+    expect(fs.writes).toHaveLength(1)
+  })
+
   it('sanitizes path-unsafe characters in the key and source id', () => {
     process.env['POGCHATTER_YT_CAPTURE_UNKNOWN'] = '1'
 
@@ -76,7 +103,7 @@ describe('captureUnknownAction', () => {
     fs.writeThrows = true
 
     expect(() => {
-      captureUnknownAction('youtube:x', 'liveChatModerationMessageRenderer', action)
+      captureUnknownAction('youtube:x', 'k-write-fail', action)
     }).not.toThrow()
   })
 })

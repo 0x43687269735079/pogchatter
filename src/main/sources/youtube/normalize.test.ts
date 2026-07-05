@@ -1010,8 +1010,8 @@ describe('parseChannelActivity', () => {
     }
   ])
 
-  it('parses counts, headings, plain messages, and deleted history newest-first', () => {
-    const activity = parseChannelActivity('src', response)
+  it('parses counts, headings, and history in delivery order (plain then moderated)', () => {
+    const activity = parseChannelActivity('src', 'UCtarget', response)
     expect(activity?.counts).toEqual([
       { label: 'Deleted messages', value: '0' },
       { label: 'Timeout', value: '1' },
@@ -1019,18 +1019,28 @@ describe('parseChannelActivity', () => {
     ])
     expect(activity?.countsTitle).toBe('Moderated activities in the last year')
     expect(activity?.historyTitle).toBe('Chat messages in the last year')
-    expect(activity?.plainMessages).toEqual(['Schedule test 2 schedule harder'])
-    expect(activity?.history).toHaveLength(2)
-    expect(activity?.history[0]?.id).toBe('h1') // newest first, as delivered
-    expect(activity?.history[1]?.id).toBe('h2')
-    expect(activity?.history[0]?.deleted).toBe(true)
-    // Moderators see the original text even on a hidden message.
-    expect(activity?.history[0]?.fragments).toEqual([{ type: 'text', text: '69' }])
+    // The plain message precedes the moderated block in the capture; order is preserved.
+    expect(activity?.history).toHaveLength(3)
+    expect(activity?.history[0]).toEqual({ kind: 'plain', text: 'Schedule test 2 schedule harder' })
+    const first = activity?.history[1]
+    const second = activity?.history[2]
+    expect(first?.kind).toBe('message')
+    expect(second?.kind).toBe('message')
+    if (first?.kind === 'message' && second?.kind === 'message') {
+      expect(first.message.id).toBe('h1') // newest first, as delivered
+      expect(second.message.id).toBe('h2')
+      expect(first.message.deleted).toBe(true)
+      // The panel is scoped to the target, so every row's author id is pinned to it (MMR-007)…
+      expect(first.message.author.id).toBe('UCtarget')
+      // …and moderators see the original text even on a hidden message.
+      expect(first.message.fragments).toEqual([{ type: 'text', text: '69' }])
+    }
   })
 
   it('keeps factoid labels verbatim (they pluralize/localize: Timeouts/Hides)', () => {
     const activity = parseChannelActivity(
       'src',
+      'UCtarget',
       panel([
         heading('Moderated activities in the last year'),
         {
@@ -1047,8 +1057,8 @@ describe('parseChannelActivity', () => {
   })
 
   it('returns undefined on shape drift or an empty panel', () => {
-    expect(parseChannelActivity('src', {})).toBeUndefined()
-    expect(parseChannelActivity('src', undefined)).toBeUndefined()
-    expect(parseChannelActivity('src', panel([]))).toBeUndefined()
+    expect(parseChannelActivity('src', 'UCtarget', {})).toBeUndefined()
+    expect(parseChannelActivity('src', 'UCtarget', undefined)).toBeUndefined()
+    expect(parseChannelActivity('src', 'UCtarget', panel([]))).toBeUndefined()
   })
 })

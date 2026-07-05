@@ -7,6 +7,7 @@ import type {
   Platform,
   SendReply,
   SourceStatus,
+  UserModerationActivity,
   UserProfile
 } from '@shared/model'
 import type { ChatSource } from '@main/sources/ChatSource'
@@ -283,6 +284,14 @@ export class SourceManager {
   /** Platform profile details for an author (user card); undefined if the source can't fetch one. */
   async getUserProfile(channelId: string, userId: string): Promise<UserProfile | undefined> {
     return await this.#sources.get(channelId)?.getUserProfile?.(userId)
+  }
+
+  /** A moderator's channel-activity for an author (counts + history); undefined if the source can't fetch it. */
+  async getUserModerationHistory(
+    channelId: string,
+    userId: string
+  ): Promise<UserModerationActivity | undefined> {
+    return await this.#sources.get(channelId)?.getUserModerationHistory?.(userId)
   }
 
   async disposeAll(): Promise<void> {

@@ -6,7 +6,10 @@ import type {
   Fragment,
   HeldReview,
   Highlight,
-  ReplyContext
+  ModerationCount,
+  ReplyContext,
+  UserActivityEntry,
+  UserModerationActivity
 } from '@shared/model'
 import { parseHeldActions } from '@main/sources/youtube/liveChatActions'
 
@@ -113,6 +116,15 @@ interface RawItem {
     text?: RawText
     subtext?: RawText
   }
+  /**
+   * "@user was timed out by @mod for 60 seconds.", "@user was hidden by @mod.", "@user was unhidden
+   * by @mod." — YouTube's moderation-activity notice, delivered to moderators on the moderator
+   * continuation for the user-scoped actions (timeout / hide-user / unhide-user). Both the target and
+   * the acting moderator are handle-only runs inside `message` (no channel id); the timeout duration
+   * is text inside those runs too, so rendering them verbatim covers every duration. See
+   * {@link moderationNotice}. (Single-message hide uses a different shape — see the replace path.)
+   */
+  liveChatModerationMessageRenderer?: { id?: string; timestampUsec?: string; message?: RawText }
 }
 export interface RawAction {
   addChatItemAction?: { item?: RawItem }
@@ -467,7 +479,8 @@ const KNOWN_ITEM_KEYS = new Set([
   'liveChatAutoModMessageRenderer',
   'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
   'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
-  'liveChatModeChangeMessageRenderer'
+  'liveChatModeChangeMessageRenderer',
+  'liveChatModerationMessageRenderer'
 ])
 // Item renderers we recognize and deliberately don't render — informational, not chat content.
 // Classified here so they don't trip the parse-health warning (seen in the field: the
@@ -539,6 +552,10 @@ function collect(
       for (const replacement of replaced) {
         replacement.id = target
         replacements.push(replacement)
+      }
+      const notice = hideNotice(sourceId, item, target)
+      if (notice !== undefined) {
+        messages.push(notice)
       }
     }
     return
@@ -654,6 +671,24 @@ function collect(
     messages.push(message)
   } else if (item.liveChatModeChangeMessageRenderer !== undefined) {
     messages.push(modeChangeMessage(sourceId, item.liveChatModeChangeMessageRenderer))
+  } else if (item.liveChatModerationMessageRenderer !== undefined) {
+    // Timeout / hide-user / unhide-user announce themselves here (the target's messages are struck
+    // by a sibling markChatItemsByAuthorAsDeletedAction). Skip if the runs are empty, defensively.
+    const notice = moderationNotice(sourceId, item.liveChatModerationMessageRenderer)
+    if (notice !== undefined) {
+      messages.push(notice)
+    }
+  }
+}
+
+/** The YouTube-authored system identity carried by mode-change and moderation-activity notices. */
+function youtubeAuthor(): Author {
+  return {
+    id: 'youtube',
+    name: 'YouTube',
+    displayName: 'YouTube',
+    badges: [],
+    roles: { broadcaster: false, moderator: false }
   }
 }
 
@@ -671,16 +706,59 @@ function modeChangeMessage(
     platform: 'youtube',
     channelId: sourceId,
     timestamp: usecToMs(renderer.timestampUsec),
-    author: {
-      id: 'youtube',
-      name: 'YouTube',
-      displayName: 'YouTube',
-      badges: [],
-      roles: { broadcaster: false, moderator: false }
-    },
+    author: youtubeAuthor(),
     fragments: [{ type: 'text', text: subtext !== '' ? `${text} — ${subtext}` : text }],
     system: true
   }
+}
+
+/**
+ * A YouTube moderation-activity notice ("@user was timed out by @mod for 60 seconds.", "@user was
+ * hidden by @mod.", …) as a distinct moderation-accent system line authored by YouTube. The acting
+ * moderator, the target, and the timeout duration all live in the runs, so every action and duration
+ * flows through this one helper by rendering the runs verbatim — no per-action or per-duration code.
+ * Also reused for the single-message hide, whose "hidden by @mod" wording lives in a `deletedStateMessage`
+ * (see the replace path). Returns `undefined` when the runs carry no text, so an empty renderer skips.
+ */
+function moderationNotice(
+  sourceId: string,
+  renderer: { id?: string; timestampUsec?: string | undefined; message?: RawText }
+): ChatMessage | undefined {
+  const fragments = toFragments(renderer.message)
+  if (fragments.length === 0) {
+    return undefined
+  }
+  return {
+    id:
+      renderer.id ??
+      syntheticId(sourceId, 'mod', renderer.timestampUsec, '', textToString(renderer.message)),
+    platform: 'youtube',
+    channelId: sourceId,
+    timestamp: usecToMs(renderer.timestampUsec),
+    author: youtubeAuthor(),
+    fragments,
+    system: true,
+    moderationNotice: true
+  }
+}
+
+/**
+ * The moderation notice for a single-message hide. YouTube emits no `liveChatModerationMessageRenderer`
+ * for it — it just replaces the message with a `deletedStateMessage` naming the mod ("… hidden by
+ * @mod.") — so synthesize the same notice from that wording, alongside the struck row, to flag it like
+ * the other actions. The id is target-stable so YouTube's cross-poll re-sends of the replace dedup.
+ * Returns undefined when the replacement isn't a hidden text message.
+ */
+function hideNotice(sourceId: string, item: RawItem, targetId: string): ChatMessage | undefined {
+  const hidden = item.liveChatTextMessageRenderer
+  if (hidden?.deletedStateMessage === undefined) {
+    return undefined
+  }
+  return moderationNotice(sourceId, {
+    id: syntheticId(sourceId, 'modhide', hidden.timestampUsec, '', targetId),
+    timestampUsec: hidden.timestampUsec,
+    message: hidden.deletedStateMessage
+  })
 }
 
 interface RawEngagementPanel {
@@ -721,4 +799,96 @@ export function parseReplyThread(sourceId: string, data: unknown): ChatMessage[]
     }
   }
   return messages
+}
+
+/** One `contents[]` entry of the channel-activity panel — a heading/plain message, the counts, or the history. */
+interface RawActivityBlock {
+  listItemViewModel?: { title?: { content?: string; styleRuns?: unknown[] } }
+  liveChatChannelActivityReputationRenderer?: {
+    factoids?: Array<{ factoidRenderer?: { value?: { simpleText?: string }; label?: RawText } }>
+  }
+  liveChatItemDisplayListRenderer?: { items?: RawItem[] }
+}
+
+/** The `get_panel` channel-activity response envelope. */
+interface RawChannelActivity {
+  content?: {
+    engagementPanelSectionListRenderer?: {
+      content?: { sectionListRenderer?: { contents?: RawActivityBlock[] } }
+    }
+  }
+}
+
+/**
+ * A moderator's `get_panel` "channel activity" for one user: the moderation-count factoids (deleted /
+ * timeout / hide, labels kept verbatim since YouTube pluralizes and localizes them), followed by the
+ * user's message history (moderated/held items normalized with their deleted state; unmoderated ones
+ * come as plain text). A `listItemViewModel` with `styleRuns` is a section heading; without them it's
+ * a plain message. Returns undefined on shape drift or an empty panel, so the card degrades quietly.
+ */
+export function parseChannelActivity(
+  sourceId: string,
+  targetChannelId: string,
+  data: unknown
+): UserModerationActivity | undefined {
+  const contents = (data as RawChannelActivity | undefined)?.content
+    ?.engagementPanelSectionListRenderer?.content?.sectionListRenderer?.contents
+  if (contents === undefined) {
+    return undefined
+  }
+  const counts: ModerationCount[] = []
+  const history: UserActivityEntry[] = []
+  let countsTitle: string | undefined
+  let historyTitle: string | undefined
+  let lastHeading: string | undefined
+  for (const block of contents) {
+    const listItem = block.listItemViewModel
+    if (listItem !== undefined) {
+      const title = listItem.title?.content ?? ''
+      // A bold heading labels the section that follows; a plain row is one of the user's messages.
+      if (listItem.title?.styleRuns !== undefined) {
+        lastHeading = title
+      } else if (title !== '') {
+        history.push({ kind: 'plain', text: title })
+      }
+      continue
+    }
+    const factoids = block.liveChatChannelActivityReputationRenderer?.factoids
+    if (factoids !== undefined) {
+      countsTitle = lastHeading
+      for (const factoid of factoids) {
+        const value = factoid.factoidRenderer?.value?.simpleText
+        const label = textToString(factoid.factoidRenderer?.label)
+        if (value !== undefined && label !== '') {
+          counts.push({ label, value })
+        }
+      }
+      continue
+    }
+    const items = block.liveChatItemDisplayListRenderer?.items
+    if (items !== undefined) {
+      historyTitle = lastHeading
+      const messages: ChatMessage[] = []
+      for (const item of items) {
+        pushItem(sourceId, item, messages)
+      }
+      for (const message of messages) {
+        // The panel is scoped to this one user, so every row is theirs — pin the id to the requested
+        // channel even when a renderer omits authorExternalChannelId (else it falls back to the handle).
+        message.author = { ...message.author, id: targetChannelId }
+        history.push({ kind: 'message', message })
+      }
+    }
+  }
+  if (counts.length === 0 && history.length === 0) {
+    return undefined
+  }
+  const activity: UserModerationActivity = { counts, history }
+  if (countsTitle !== undefined) {
+    activity.countsTitle = countsTitle
+  }
+  if (historyTitle !== undefined) {
+    activity.historyTitle = historyTitle
+  }
+  return activity
 }

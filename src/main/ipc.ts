@@ -286,6 +286,17 @@ export function registerIpc(deps: IpcDeps): void {
       return undefined
     }
   })
+  handle('chat:getUserModerationHistory', async (_event, channelId, userId) => {
+    if (typeof channelId !== 'string' || typeof userId !== 'string') {
+      return undefined
+    }
+    try {
+      return await activeManager.getUserModerationHistory(channelId, userId)
+    } catch {
+      // Best-effort: the card renders without the moderation activity.
+      return undefined
+    }
+  })
   handle('chat:addChannel', (_event, platform, target): Promise<SendResult> => {
     if (!isPlatform(platform) || typeof target !== 'string') {
       return Promise.resolve({ ok: false, error: 'Invalid channel request' })

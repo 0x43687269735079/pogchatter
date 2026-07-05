@@ -18,6 +18,7 @@ import type {
   SendReply,
   SendResult,
   TwitchLoginPrompt,
+  UserModerationActivity,
   UserProfile,
   WindowControlsApi
 } from '@shared/model'
@@ -106,6 +107,14 @@ const api: ChatApi = {
   getUserProfile(channelId: string, userId: string): Promise<UserProfile | undefined> {
     return ipcRenderer.invoke('chat:getUserProfile', channelId, userId) as Promise<
       UserProfile | undefined
+    >
+  },
+  getUserModerationHistory(
+    channelId: string,
+    userId: string
+  ): Promise<UserModerationActivity | undefined> {
+    return ipcRenderer.invoke('chat:getUserModerationHistory', channelId, userId) as Promise<
+      UserModerationActivity | undefined
     >
   },
   addChannel(platform: Platform, target: string): Promise<SendResult> {

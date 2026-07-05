@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import type { ChatMessage } from '@shared/model'
 import {
   normalizeAction,
+  parseChannelActivity,
   parseReplyThread,
   unknownActionKeys,
   type RawAction
@@ -806,5 +808,255 @@ describe('YouTube replaceChatItemAction', () => {
       }
     } as RawAction
     expect(unknownActionKeys(action)).toEqual([])
+  })
+})
+
+describe('YouTube moderation-activity notices', () => {
+  function item(renderer: Record<string, unknown>): RawAction {
+    return { addChatItemAction: { item: renderer } } as RawAction
+  }
+  // Runs render one text fragment each; join them to compare against YouTube's verbatim wording.
+  function noticeText(message: ChatMessage | undefined): string {
+    return (message?.fragments ?? []).map((f) => (f.type === 'text' ? f.text : '')).join('')
+  }
+  // The real captured runs: target, connective, mod, (duration…) — handle-only, styling stripped.
+  function modRuns(runs: Array<{ text: string }>): RawAction {
+    return item({
+      liveChatModerationMessageRenderer: {
+        id: 'mod1',
+        timestampUsec: '1783254927971769',
+        message: { runs }
+      }
+    })
+  }
+
+  it('renders the timeout notice verbatim as a distinct YouTube-authored system line', () => {
+    const { messages } = normalizeAction(
+      'src',
+      modRuns([
+        { text: '@viewer' },
+        { text: ' was timed out by ' },
+        { text: '@moderator' },
+        { text: ' for ' },
+        { text: '60' },
+        { text: ' seconds.' }
+      ])
+    )
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.system).toBe(true)
+    expect(messages[0]?.moderationNotice).toBe(true)
+    expect(messages[0]?.author.name).toBe('YouTube')
+    expect(messages[0]?.id).toBe('mod1')
+    expect(noticeText(messages[0])).toBe('@viewer was timed out by @moderator for 60 seconds.')
+  })
+
+  it('renders hide-user and unhide-user notices verbatim', () => {
+    const hide = normalizeAction(
+      'src',
+      modRuns([
+        { text: '@viewer' },
+        { text: ' was hidden by ' },
+        { text: '@moderator' },
+        { text: '.' }
+      ])
+    ).messages[0]
+    const unhide = normalizeAction(
+      'src',
+      modRuns([
+        { text: '@viewer' },
+        { text: ' was unhidden by ' },
+        { text: '@moderator' },
+        { text: '.' }
+      ])
+    ).messages[0]
+    expect(noticeText(hide)).toBe('@viewer was hidden by @moderator.')
+    expect(noticeText(unhide)).toBe('@viewer was unhidden by @moderator.')
+    expect(unhide?.moderationNotice).toBe(true)
+  })
+
+  it('carries any timeout duration verbatim (only 60s was captured, but the text drives it)', () => {
+    for (const dur of ['10 seconds', '5 minutes', '1 hour', '24 hours']) {
+      const { messages } = normalizeAction(
+        'src',
+        modRuns([
+          { text: '@u' },
+          { text: ' was timed out by ' },
+          { text: '@m' },
+          { text: ` for ${dur}.` }
+        ])
+      )
+      expect(noticeText(messages[0])).toBe(`@u was timed out by @m for ${dur}.`)
+    }
+  })
+
+  it('synthesizes a hide notice from a single-message hide, alongside the struck row', () => {
+    const action = {
+      replaceChatItemAction: {
+        targetItemId: 'msg-1',
+        replacementItem: {
+          liveChatTextMessageRenderer: {
+            id: 'msg-1',
+            timestampUsec: '1783254823087407',
+            authorName: { simpleText: '@viewer' },
+            message: { runs: [{ text: '69' }] },
+            deletedStateMessage: {
+              runs: [
+                { text: 'Message hidden by ' },
+                { text: '@moderator', bold: true },
+                { text: '.' }
+              ]
+            }
+          }
+        }
+      }
+    } as RawAction
+    const { messages, replacements } = normalizeAction('src', action)
+    // The struck row still updates in place…
+    expect(replacements).toHaveLength(1)
+    expect(replacements[0]?.id).toBe('msg-1')
+    expect(replacements[0]?.deleted).toBe(true)
+    // …and a separate accent notice announces who hid it.
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.moderationNotice).toBe(true)
+    expect(messages[0]?.id).not.toBe('msg-1') // distinct id so it doesn't clobber the row
+    expect(noticeText(messages[0])).toBe('Message hidden by @moderator.')
+  })
+
+  it('does not synthesize a notice when a replace approves (no deletedStateMessage)', () => {
+    const action = {
+      replaceChatItemAction: {
+        targetItemId: 'msg-2',
+        replacementItem: {
+          liveChatTextMessageRenderer: { id: 'msg-2', message: { runs: [{ text: 'ok' }] } }
+        }
+      }
+    } as RawAction
+    const { messages, replacements } = normalizeAction('src', action)
+    expect(replacements).toHaveLength(1)
+    expect(messages).toHaveLength(0)
+  })
+
+  it('gives id-less notices distinct ids by content instead of collapsing them', () => {
+    const noticeId = (text: string): string | undefined =>
+      normalizeAction(
+        'src',
+        item({ liveChatModerationMessageRenderer: { message: { runs: [{ text }] } } })
+      ).messages[0]?.id
+    expect(noticeId('@a was hidden by @m.')).not.toBe(noticeId('@b was hidden by @m.'))
+  })
+
+  it('skips a notice whose runs carry no text', () => {
+    const { messages } = normalizeAction(
+      'src',
+      item({ liveChatModerationMessageRenderer: { id: 'mod2', message: { runs: [] } } })
+    )
+    expect(messages).toHaveLength(0)
+  })
+
+  it('is now a recognized item, not a parse-health unknown', () => {
+    expect(unknownActionKeys(item({ liveChatModerationMessageRenderer: {} }))).toEqual([])
+  })
+})
+
+describe('parseChannelActivity', () => {
+  const heading = (content: string): Record<string, unknown> => ({
+    listItemViewModel: { title: { content, styleRuns: [{ weightLabel: 'FONT_WEIGHT_MEDIUM' }] } }
+  })
+  const factoid = (value: string, label: string): Record<string, unknown> => ({
+    factoidRenderer: { value: { simpleText: value }, label: { runs: [{ text: label }] } }
+  })
+  const historyItem = (
+    id: string,
+    usec: string,
+    text: string,
+    state: string
+  ): Record<string, unknown> => ({
+    liveChatTextMessageRenderer: {
+      id,
+      timestampUsec: usec,
+      authorName: { simpleText: '@viewer' },
+      message: { runs: [{ text }] },
+      deletedStateMessage: { runs: [{ text: state, italics: true }] }
+    }
+  })
+  function panel(contents: Array<Record<string, unknown>>): unknown {
+    return {
+      content: {
+        engagementPanelSectionListRenderer: { content: { sectionListRenderer: { contents } } }
+      }
+    }
+  }
+
+  // A get_panel "channel activity" response: identity, moderated-activity counts, then message history.
+  const response = panel([
+    { liveChatProfileIdentityViewModel: { channelName: { content: '@viewer' } } },
+    heading('Moderated activities in the last year'),
+    {
+      liveChatChannelActivityReputationRenderer: {
+        factoids: [factoid('0', 'Deleted messages'), factoid('1', 'Timeout'), factoid('1', 'Hide')]
+      }
+    },
+    heading('Chat messages in the last year'),
+    { listItemViewModel: { title: { content: 'Schedule test 2 schedule harder' } } },
+    {
+      liveChatItemDisplayListRenderer: {
+        items: [
+          historyItem('h1', '1783254823087407', '69', 'Message hidden.'),
+          historyItem('h2', '1783253810514383', '69 69', 'This message is held for review.')
+        ]
+      }
+    }
+  ])
+
+  it('parses counts, headings, and history in delivery order (plain then moderated)', () => {
+    const activity = parseChannelActivity('src', 'UCtarget', response)
+    expect(activity?.counts).toEqual([
+      { label: 'Deleted messages', value: '0' },
+      { label: 'Timeout', value: '1' },
+      { label: 'Hide', value: '1' }
+    ])
+    expect(activity?.countsTitle).toBe('Moderated activities in the last year')
+    expect(activity?.historyTitle).toBe('Chat messages in the last year')
+    // The plain message precedes the moderated block in the capture; order is preserved.
+    expect(activity?.history).toHaveLength(3)
+    expect(activity?.history[0]).toEqual({ kind: 'plain', text: 'Schedule test 2 schedule harder' })
+    const first = activity?.history[1]
+    const second = activity?.history[2]
+    expect(first?.kind).toBe('message')
+    expect(second?.kind).toBe('message')
+    if (first?.kind === 'message' && second?.kind === 'message') {
+      expect(first.message.id).toBe('h1') // newest first, as delivered
+      expect(second.message.id).toBe('h2')
+      expect(first.message.deleted).toBe(true)
+      // The panel is scoped to the target, so every row's author id is pinned to it (MMR-007)…
+      expect(first.message.author.id).toBe('UCtarget')
+      // …and moderators see the original text even on a hidden message.
+      expect(first.message.fragments).toEqual([{ type: 'text', text: '69' }])
+    }
+  })
+
+  it('keeps factoid labels verbatim (they pluralize/localize: Timeouts/Hides)', () => {
+    const activity = parseChannelActivity(
+      'src',
+      'UCtarget',
+      panel([
+        heading('Moderated activities in the last year'),
+        {
+          liveChatChannelActivityReputationRenderer: {
+            factoids: [factoid('2', 'Timeouts'), factoid('2', 'Hides')]
+          }
+        }
+      ])
+    )
+    expect(activity?.counts).toEqual([
+      { label: 'Timeouts', value: '2' },
+      { label: 'Hides', value: '2' }
+    ])
+  })
+
+  it('returns undefined on shape drift or an empty panel', () => {
+    expect(parseChannelActivity('src', 'UCtarget', {})).toBeUndefined()
+    expect(parseChannelActivity('src', 'UCtarget', undefined)).toBeUndefined()
+    expect(parseChannelActivity('src', 'UCtarget', panel([]))).toBeUndefined()
   })
 })

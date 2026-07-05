@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildTextSegments,
   classifySendResponse,
+  encodeChannelActivityParams,
   encodeSendParams
 } from '@main/sources/youtube/liveChatSend'
 
@@ -57,6 +58,62 @@ describe('encodeSendParams', () => {
     expect(bytes.toString('latin1')).toContain('VIDID123456')
     // Outer field 1 (params) is length-delimited, so the first tag byte is (1<<3)|2 = 0x0a.
     expect(bytes[0]).toBe(0x0a)
+  })
+})
+
+// Minimal protobuf reader (wire types 0 and 2 only) — decodes the encoder's output with independent
+// logic, so the structure test verifies the layout rather than echoing the encoder. A length-delimited
+// chunk is read as a nested message unless it is entirely printable (then a string).
+function readProto(buf: Buffer): Record<number, unknown> {
+  const out: Record<number, unknown> = {}
+  let i = 0
+  const varint = (): number => {
+    let value = 0
+    let shift = 0
+    let byte: number
+    do {
+      byte = buf[i++] ?? 0
+      value |= (byte & 0x7f) << shift
+      shift += 7
+    } while (byte & 0x80)
+    return value
+  }
+  while (i < buf.length) {
+    const tag = varint()
+    const field = tag >>> 3
+    if ((tag & 7) === 0) {
+      out[field] = varint()
+    } else {
+      const length = varint()
+      const chunk = buf.subarray(i, i + length)
+      i += length
+      const text = chunk.toString('utf8')
+      out[field] = /^[\x20-\x7e]+$/.test(text) ? text : readProto(chunk)
+    }
+  }
+  return out
+}
+
+describe('encodeChannelActivityParams', () => {
+  // The byte-exact match against the real captured get_panel request was verified during development;
+  // here the structure is asserted against placeholder ids (no real channel/video ids in the tree).
+  it('encodes the PAlc_channel_activity params proto with the broadcaster, video, and target ids', () => {
+    const token = encodeChannelActivityParams(
+      'UCbroadcasterAAAAAAAAAAAA',
+      'VIDEOID1234',
+      'UCtargetBBBBBBBBBBBBBBBB'
+    )
+    const bytes = Buffer.from(decodeURIComponent(token), 'base64')
+    // Field 132's two-byte tag must not truncate (the regression the varint-tag fix guards).
+    expect([bytes[0], bytes[1]]).toEqual([0xa2, 0x08])
+    // Decoded independently: 132 → 1 → 5 → { channel, video }, 132 → 2 → { target }, 132 → 5 = 1.
+    expect(readProto(bytes)).toEqual({
+      132: {
+        1: { 5: { 1: 'UCbroadcasterAAAAAAAAAAAA', 2: 'VIDEOID1234' } },
+        2: { 1: 'UCtargetBBBBBBBBBBBBBBBB' },
+        5: 1
+      }
+    })
   })
 })
 

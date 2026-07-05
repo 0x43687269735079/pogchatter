@@ -111,8 +111,14 @@ function varint(value: number): number[] {
   return out
 }
 
+/** The wire tag for a field, varint-encoded — so field numbers above 15 (a two-byte tag) don't
+ *  truncate. For field numbers ≤ 15 this is the same single byte as before. */
+function tag(fieldNumber: number, wireType: number): number[] {
+  return varint((fieldNumber << 3) | wireType)
+}
+
 function lenField(fieldNumber: number, payload: number[]): number[] {
-  return [(fieldNumber << 3) | 2, ...varint(payload.length), ...payload]
+  return [...tag(fieldNumber, 2), ...varint(payload.length), ...payload]
 }
 
 function strField(fieldNumber: number, value: string): number[] {
@@ -120,7 +126,7 @@ function strField(fieldNumber: number, value: string): number[] {
 }
 
 function varintField(fieldNumber: number, value: number): number[] {
-  return [fieldNumber << 3, ...varint(value)]
+  return [...tag(fieldNumber, 0), ...varint(value)]
 }
 
 /**
@@ -136,4 +142,26 @@ export function encodeSendParams(videoId: string, channelId: string): string {
   const message = [...lenField(1, params), ...varintField(2, 1), ...varintField(3, 4)]
   const base64 = Buffer.from(message).toString('base64')
   return Buffer.from(encodeURIComponent(base64), 'latin1').toString('base64')
+}
+
+/**
+ * The `params` token the `get_panel` "channel activity" panel (`PAlc_channel_activity`) requires: a
+ * protobuf of `{ 132: { 1: { 5: { channelId: broadcaster, videoId } }, 2: { channelId: target }, 5: 1 } }`,
+ * then base64 → URL-encode (matching the browser request, which stores the `=` padding as `%3D`).
+ * The inner `1 → 5 → { 1: channelId, 2: videoId }` mirrors {@link encodeSendParams}; the target user
+ * whose activity is requested is field 2, and the outer wrapper is field 132.
+ */
+export function encodeChannelActivityParams(
+  broadcasterChannelId: string,
+  videoId: string,
+  targetChannelId: string
+): string {
+  const ids = lenField(5, [...strField(1, broadcasterChannelId), ...strField(2, videoId)])
+  const body = [
+    ...lenField(1, ids),
+    ...lenField(2, strField(1, targetChannelId)),
+    ...varintField(5, 1)
+  ]
+  const base64 = Buffer.from(lenField(132, body)).toString('base64')
+  return encodeURIComponent(base64)
 }

@@ -153,6 +153,13 @@ export interface ChatMessage {
    * still offers the per-author moderation actions (hide/ban/timeout).
    */
   held?: HeldReview
+  /**
+   * A YouTube moderation-activity notice ("{mod} timed out {user} for 60s") — delivered only to
+   * moderators/the broadcaster. Renders as a distinct moderation-accent line; the wording is
+   * YouTube's own runs, carried in `fragments`. Complements the deletion `clear`, which strikes the
+   * target message but names no acting moderator.
+   */
+  moderationNotice?: boolean
 }
 
 /** A YouTube automod "held for review" message's header and inline moderation actions. */
@@ -280,6 +287,38 @@ export interface UserProfile {
   /** Pre-formatted audience size, e.g. "1.23M subscribers" — platforms format these differently. */
   audience?: string
   description?: string
+}
+
+/**
+ * One factoid from YouTube's moderator channel-activity panel — kept as verbatim label + value
+ * because YouTube pluralizes and localizes the label ("Timeout" for 1, "Timeouts" for 2).
+ */
+export interface ModerationCount {
+  label: string
+  value: string
+}
+
+/**
+ * One row of a user's channel-activity history: a moderated/held message (a normalized row with its
+ * deleted state), or a plain (unmoderated) message YouTube lists as text only (no id/timestamp).
+ */
+export type UserActivityEntry =
+  | { kind: 'message'; message: ChatMessage }
+  | { kind: 'plain'; text: string }
+
+/**
+ * A signed-in moderator's view of one user's activity on a YouTube channel: how many times they've
+ * been deleted / timed out / hidden, plus their recent message history. Best-effort — only YouTube,
+ * only for a moderator on a live source; every field may be absent.
+ */
+export interface UserModerationActivity {
+  /** Section heading for the counts, e.g. "Moderated activities in the last year". */
+  countsTitle?: string
+  counts: ModerationCount[]
+  /** Section heading for the history, e.g. "Chat messages in the last year". */
+  historyTitle?: string
+  /** The user's message history in YouTube's delivery order (moderated and plain rows interleaved). */
+  history: UserActivityEntry[]
 }
 
 /**
@@ -635,6 +674,11 @@ export interface ChatApi {
   getReplyThread(channelId: string, threadToken: string): Promise<ChatMessage[]>
   /** Platform profile details for the user card (best-effort; undefined when unavailable). */
   getUserProfile(channelId: string, userId: string): Promise<UserProfile | undefined>
+  /** A moderator's channel-activity for an author — moderation counts + message history (YouTube, best-effort). */
+  getUserModerationHistory(
+    channelId: string,
+    userId: string
+  ): Promise<UserModerationActivity | undefined>
   /** Export the moderation watchlist to a JSON file the user picks (to share with other moderators). */
   exportModerationRules(rules: ModerationRule[]): Promise<ModerationExport>
   /** Import a moderation watchlist from a JSON file the user picks; returns the parsed rules. */

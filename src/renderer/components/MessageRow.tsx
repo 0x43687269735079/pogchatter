@@ -396,7 +396,11 @@ export const MessageRow = memo(function MessageRow({
   if (message.system === true) {
     const moderation = message.moderationNotice === true
     return (
-      <div className={moderation ? 'pc-sys pc-mod' : 'pc-sys'} onContextMenu={handleContextMenu}>
+      // A moderation-activity notice has no per-message actions, so it takes no context menu.
+      <div
+        className={moderation ? 'pc-sys pc-mod' : 'pc-sys'}
+        onContextMenu={moderation ? undefined : handleContextMenu}
+      >
         {moderation ? (
           // U+FE0E forces the scales glyph to text (not colour-emoji) rendering.
           <span className="pc-mod-ic" aria-hidden="true">

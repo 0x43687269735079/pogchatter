@@ -200,12 +200,21 @@ const loggedOutAuth = {
   helixFetch: vi.fn().mockResolvedValue(undefined)
 } as unknown as TwitchAuthManager
 
-function makeSource(auth: TwitchAuthManager): TwitchSource {
-  return new TwitchSource('somechannel', emotes, auth, {
-    badges,
-    emotes: twitchEmotes,
-    cheermotes: new TwitchCheermoteProvider()
-  })
+function makeSource(
+  auth: TwitchAuthManager,
+  historyEnabled: () => boolean = () => false
+): TwitchSource {
+  return new TwitchSource(
+    'somechannel',
+    emotes,
+    auth,
+    {
+      badges,
+      emotes: twitchEmotes,
+      cheermotes: new TwitchCheermoteProvider()
+    },
+    historyEnabled
+  )
 }
 
 const token = encodeTwitchMenuToken({ messageId: 'm1', userId: 'u9', userLogin: 'baduser' })
@@ -287,6 +296,27 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+})
+
+describe('TwitchSource recent-messages history', () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+  const historyCalls = (): unknown[] =>
+    proxiedFetch.mock.calls.filter((call) => String(call[0]).includes('recent-messages.robotty.de'))
+
+  it('fetches the recent-messages backlog on connect when history is enabled', async () => {
+    const source = makeSource(loggedOutAuth, () => true)
+    await connectSource(source)
+    await flush()
+    expect(historyCalls()).toHaveLength(1)
+    expect(String(historyCalls()[0])).toContain('/recent-messages/somechannel?limit=100')
+  })
+
+  it('does not fetch history when the setting is off', async () => {
+    const source = makeSource(loggedOutAuth, () => false)
+    await connectSource(source)
+    await flush()
+    expect(historyCalls()).toHaveLength(0)
+  })
 })
 
 describe('TwitchSource.getMessageActions role gating', () => {

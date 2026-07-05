@@ -46,6 +46,8 @@ export interface IpcDeps {
   getTwitchAuth(): TwitchAuthManager | undefined
   getYouTubeAuth(): YouTubeAuthManager | undefined
   getEmoteEngine(): EmoteEngine | undefined
+  /** Reload every emote source (third-party + Twitch + YouTube) on user request. */
+  refreshEmotes(): Promise<void>
   getConfigStore(): ConfigStore | undefined
   getAuthStore(): AuthStore | undefined
   getChannelService(): ChannelService | undefined
@@ -268,6 +270,13 @@ export function registerIpc(deps: IpcDeps): void {
       animated: emote.animated,
       scope: emote.scope
     }))
+  })
+  handle('chat:refreshEmotes', async () => {
+    try {
+      await deps.refreshEmotes()
+    } catch {
+      // Best-effort reload; individual sources already swallow their own fetch failures.
+    }
   })
   handle('chat:getReplyThread', (_event, channelId, threadToken) => {
     if (typeof channelId !== 'string' || typeof threadToken !== 'string') {

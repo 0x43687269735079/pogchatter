@@ -457,6 +457,11 @@ export class YouTubeSource extends BaseChatSource {
     void this.#loadEmojis(this.#generation)
   }
 
+  /** Re-fetch this chat's proprietary emoji catalog; the third-party emotes are refreshed by the engine. */
+  async refreshEmotes(): Promise<void> {
+    await this.#loadEmojis(this.#generation)
+  }
+
   #startChat(continuation: string, isReplay: boolean, generation: number): void {
     const yt = this.#yt
     if (yt === undefined || this.#reader !== undefined || this.#isStale(generation)) {

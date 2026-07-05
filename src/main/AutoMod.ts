@@ -136,10 +136,13 @@ export class AutoMod {
     if (!settings.enabled || settings.rules.length === 0) {
       return Promise.resolve()
     }
-    // Never auto-action staff, our own messages, system lines, or messages we can't act on.
+    // Never auto-action staff, our own messages, system lines, replayed history, or messages we
+    // can't act on. Backlog lines predate this session — the same author's next live message still
+    // triggers a rule, but we must not ban/re-audit off history on every connect.
     if (
       message.system === true ||
       message.self === true ||
+      message.backlog === true ||
       message.author.roles.broadcaster ||
       message.author.roles.moderator ||
       message.menuToken === undefined

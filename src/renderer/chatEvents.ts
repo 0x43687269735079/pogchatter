@@ -115,19 +115,27 @@ export function processEvents(events: ChatEvent[], settings: AppSettings): Proce
   const flashed = new Set<string>()
   for (const event of events) {
     if (event.kind === 'message') {
-      added += 1
+      // Fetched history (Twitch recent-messages backlog) is tagged so highlights render and watchlist
+      // hits reach the Flagged view, but it must not sound/flash/notify or inflate the msg/s rate —
+      // otherwise a rule matching one of 100 replayed lines would alert on every connect.
+      const live = event.message.backlog !== true
+      if (live) {
+        added += 1
+      }
       // Tag the message with its highlight colour (so it renders highlighted) and collect alerts.
       const hit = matchHighlight(event.message, settings.highlights)
       if (hit !== undefined) {
         event.message.ping = { color: hit.color }
-        if (hit.flash) {
-          flashed.add(event.channelId)
-        }
-        sound ||= hit.sound
-        if (hit.notify) {
-          notify = {
-            title: `★ ${event.message.author.displayName}`,
-            body: messageText(event.message)
+        if (live) {
+          if (hit.flash) {
+            flashed.add(event.channelId)
+          }
+          sound ||= hit.sound
+          if (hit.notify) {
+            notify = {
+              title: `★ ${event.message.author.displayName}`,
+              body: messageText(event.message)
+            }
           }
         }
       }
@@ -135,12 +143,14 @@ export function processEvents(events: ChatEvent[], settings: AppSettings): Proce
       const moderation = settings.moderation
       if (isFlagged(event.message, moderation.rules)) {
         event.message.flagged = true
-        flashed.add(event.channelId)
-        sound ||= moderation.sound
-        if (moderation.notify) {
-          notify = {
-            title: `⚑ ${event.message.author.displayName}`,
-            body: messageText(event.message)
+        if (live) {
+          flashed.add(event.channelId)
+          sound ||= moderation.sound
+          if (moderation.notify) {
+            notify = {
+              title: `⚑ ${event.message.author.displayName}`,
+              body: messageText(event.message)
+            }
           }
         }
       }

@@ -3,6 +3,7 @@ import { ChatClient, type ChatClientOptions } from '@twurple/chat'
 import type { ChatAction, ChatMessage, Platform, SendReply, UserProfile } from '@shared/model'
 import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
+import { debugLog } from '@main/debugLog'
 import {
   decodeTwitchMenuToken,
   normalizeTwitchAnnouncement,
@@ -15,6 +16,7 @@ import {
   type TwitchMenuContext,
   type TwitchUserNotice
 } from '@main/sources/twitch/normalize'
+import { fetchRecentMessages, parseRecentMessages } from '@main/sources/twitch/recentMessages'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
 import { TwitchRewardProvider } from '@main/sources/twitch/TwitchRewardProvider'
@@ -152,12 +154,17 @@ export class TwitchSource extends BaseChatSource {
   #liveTimer: NodeJS.Timeout | undefined
   // Bumped on every connect/disconnect so a stale poll chain (or in-flight call) stops itself.
   #pollGeneration = 0
+  // Bumped on every connect/disconnect so an in-flight recent-messages fetch from a superseded
+  // connection can't emit history into a newer one.
+  #historyGeneration = 0
+  readonly #historyEnabled: () => boolean
 
   constructor(
     login: string,
     emotes: EmoteEngine,
     auth: TwitchAuthManager,
-    helix: TwitchHelixProviders
+    helix: TwitchHelixProviders,
+    historyEnabled: () => boolean
   ) {
     super()
     this.#login = normalizeTarget('twitch', login)
@@ -166,6 +173,7 @@ export class TwitchSource extends BaseChatSource {
     this.#badges = helix.badges
     this.#twitchEmotes = helix.emotes
     this.#cheermotes = helix.cheermotes
+    this.#historyEnabled = historyEnabled
     this.id = channelId('twitch', login)
   }
 
@@ -399,11 +407,49 @@ export class TwitchSource extends BaseChatSource {
 
     client.connect()
 
+    // Twitch serves no chat history on JOIN; fetch a recent-messages backlog (best-effort) so the
+    // column isn't empty until the first live line, mirroring Chatterino. Fired after connect() so
+    // it can never delay or fail the IRC connection.
+    this.#historyGeneration += 1
+    if (this.#historyEnabled()) {
+      void this.#loadHistory(this.#historyGeneration)
+    }
+
     // Stream-live polling is Helix-backed, so logged-out columns keep the plain 'connected' chip.
     // connect() runs again after login (the reconnect flow), which starts the poll then.
     this.#pollGeneration += 1
     if (this.#auth.isLoggedIn) {
       void this.#pollLive(this.#pollGeneration)
+    }
+  }
+
+  /**
+   * Fetch and emit the channel's recent-messages backlog (best-effort). The generation guard drops a
+   * superseded connection's in-flight fetch; a fetch failure simply yields no history. Emitted through
+   * the same tokenize + emit steps as a live message so history renders identically.
+   */
+  async #loadHistory(generation: number): Promise<void> {
+    try {
+      const lines = await fetchRecentMessages(this.#login)
+      if (generation !== this.#historyGeneration) {
+        return
+      }
+      // Resolve the room id first (logged-in only — logged-out can't, and would just fail an unauthed
+      // Helix call) so history rows tokenize with the channel's emotes, not only the global set.
+      const roomId = this.#auth.isLoggedIn ? await this.#ensureRoomId() : this.#roomId
+      if (generation !== this.#historyGeneration) {
+        return
+      }
+      for (const message of parseRecentMessages(lines, this.id, this.#normalizeOptions())) {
+        message.fragments = this.#emotes.tokenize(message.fragments, 'twitch', roomId)
+        this.emitMessage(message)
+      }
+    } catch (error) {
+      // History is best-effort and must never disturb the live session.
+      debugLog('twitch', 'recent-messages history load failed', {
+        login: this.#login,
+        error: String(error)
+      })
     }
   }
 
@@ -434,6 +480,7 @@ export class TwitchSource extends BaseChatSource {
     // Re-check the moderator role on the next connect (login changes reconnect the source).
     this.#modStatus = undefined
     this.#pollGeneration += 1
+    this.#historyGeneration += 1
     // Invalidate any in-flight reward-catalog load and drop buffered redemptions, so a removed or
     // reconnecting source emits no stale back-fill replacements.
     this.#rewardGeneration += 1
@@ -857,9 +904,18 @@ export class TwitchSource extends BaseChatSource {
 
   /** Fetch this channel's Twitch native emotes into the engine (for the input picker). */
   async #loadChannelEmotes(roomId: string): Promise<void> {
+    // undefined = the fetch failed (keep any existing catalog); [] = a valid empty result (clear a
+    // stale one). See TwitchEmoteProvider.fetchChannel.
     const emotes = await this.#twitchEmotes.fetchChannel(roomId, this.#helix())
-    if (emotes.length > 0) {
+    if (emotes !== undefined) {
       this.#emotes.setTwitchChannel(roomId, emotes)
+    }
+  }
+
+  /** Re-fetch this channel's native (Helix) emotes; the third-party ones are refreshed by the engine. */
+  async refreshEmotes(): Promise<void> {
+    if (this.#roomId !== undefined) {
+      await this.#loadChannelEmotes(this.#roomId)
     }
   }
 

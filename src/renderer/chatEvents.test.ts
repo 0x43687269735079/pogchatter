@@ -73,6 +73,20 @@ describe('processEvents', () => {
     expect(result.sound).toBe(false)
   })
 
+  it('tags a fetched backlog message but raises no alerts and no msg/s count', () => {
+    const event = messageEvent({ backlog: true })
+    const result = processEvents(
+      [event],
+      settings({ highlights: [{ pattern: 'alice', isRegex: false, target: 'user' }] })
+    )
+    // Still tagged (so it renders highlighted), but history must not alert or inflate the rate.
+    expect(event.message.ping).toEqual({ color: expect.any(String) })
+    expect(result.added).toBe(0)
+    expect(result.sound).toBe(false)
+    expect(result.flashed.size).toBe(0)
+    expect(result.notify).toBeUndefined()
+  })
+
   it('builds the ★ notify payload only for a highlight rule with notify ticked (default off)', () => {
     const rule = { pattern: 'alice', isRegex: false, target: 'user' as const }
     const silent = processEvents([messageEvent()], settings({ highlights: [rule] }))

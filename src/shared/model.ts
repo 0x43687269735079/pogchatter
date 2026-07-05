@@ -160,6 +160,11 @@ export interface ChatMessage {
    * target message but names no acting moderator.
    */
   moderationNotice?: boolean
+  /**
+   * A historical line fetched from a chat-history service (Twitch recent-messages) rather than
+   * received live: slotted into chronological position on arrival, and never alerted or auto-moderated.
+   */
+  backlog?: boolean
 }
 
 /** A YouTube automod "held for review" message's header and inline moderation actions. */
@@ -548,6 +553,11 @@ export interface AppSettings {
    * also suspend a backgrounded renderer outright.
    */
   keepAwake: boolean
+  /**
+   * On joining a Twitch channel, show recent messages from before you connected. Twitch itself
+   * serves no chat history, so this uses the third-party recent-messages service; on by default.
+   */
+  twitchHistory: boolean
 }
 
 /**
@@ -582,7 +592,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   layout: 'scroll',
   chatLog: { enabled: false, directory: '' },
   allowPlaintextCredentials: false,
-  keepAwake: true
+  keepAwake: true,
+  twitchHistory: true
 }
 
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */
@@ -670,6 +681,8 @@ export interface ChatApi {
   runHeldAction(channelId: string, token: string): Promise<SendResult>
   /** Custom emotes (7TV/BTTV/FFZ global + this channel's) for input autocomplete and the picker. */
   getEmotes(channelId: string): Promise<ChannelEmote[]>
+  /** Reload emotes from every source (7TV/BTTV/FFZ, Twitch, YouTube) — the manual "refresh emotes". */
+  refreshEmotes(): Promise<void>
   /** A Super Chat's reply thread (the donation first, then its replies) for the reply-thread view. */
   getReplyThread(channelId: string, threadToken: string): Promise<ChatMessage[]>
   /** Platform profile details for the user card (best-effort; undefined when unavailable). */

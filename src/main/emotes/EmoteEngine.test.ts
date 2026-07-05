@@ -212,6 +212,23 @@ describe('EmoteEngine provider toggles', () => {
       expect.objectContaining({ code: 'chanJAM', scope: 'channel' })
     )
   })
+
+  it('refreshEmotes re-fetches globals and every channel scope on demand', async () => {
+    const engine = new EmoteEngine(undefined, () => ({ sevenTv: true, bttv: true, ffz: true }))
+    await engine.loadGlobals()
+    engine.ensureChannel('twitch', '123')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(fetchBttvGlobal).toHaveBeenCalledTimes(1)
+    expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
+
+    await engine.refreshEmotes()
+
+    expect(fetchBttvGlobal).toHaveBeenCalledTimes(2)
+    expect(fetchBttvChannel).toHaveBeenCalledTimes(2)
+    expect(engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')).toContainEqual(
+      expect.objectContaining({ type: 'emote', code: 'chanJAM' })
+    )
+  })
 })
 
 describe('EmoteEngine bootstrap failure retry', () => {

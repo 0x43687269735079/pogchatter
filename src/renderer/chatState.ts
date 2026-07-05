@@ -54,13 +54,14 @@ export function applyEventsToMessages(
         continue // already shown — a re-send or replayed history line
       }
       ids.add(event.message.id)
-      // A held-for-review message carries its original send time. The standing moderation backlog a
-      // moderator receives on connect predates the live messages, so slot it into chat order by
-      // timestamp instead of appending it to the bottom. Live messages append (they arrive in order,
-      // so insertByTimestamp would land them at the end anyway — appending keeps that path O(1)).
+      // A held-for-review message carries its original send time, and a fetched history line (Twitch
+      // recent-messages) predates the live feed, so slot both into chat order by timestamp instead of
+      // appending to the bottom — even when the fetch lands after the first live lines. Live messages
+      // append (they arrive in order, so insertByTimestamp would land them at the end anyway —
+      // appending keeps that path O(1)).
       const list = next[event.channelId] ?? []
       next[event.channelId] =
-        event.message.held !== undefined
+        event.message.held !== undefined || event.message.backlog === true
           ? insertByTimestamp(list, event.message)
           : [...list, event.message]
       touched.add(event.channelId)

@@ -8,6 +8,39 @@ const MIN_TIMEOUT_MS = 1000
 const MAX_TIMEOUT_MS = 30_000
 // Fallback poll interval when a continuation omits timeoutMs.
 const DEFAULT_TIMEOUT_MS = 15_000
+// A single get_live_chat request returns in seconds; after a machine wakes it can instead hang on a
+// half-open socket (~15 min before the write errors) and freeze the reader. Bound each poll so a
+// wedged request becomes an ordinary failure the backoff retries — well above any healthy request
+// (even the 30s max inter-poll interval) so it never false-fires on a slow-but-alive network.
+const POLL_TIMEOUT_CEILING_MS = 45_000
+
+/** A poll that blew the {@link POLL_TIMEOUT_CEILING_MS} ceiling — a wedged transport, distinct from a
+ *  transport error, so {@link LiveChatReader}'s poll loop can rebootstrap rather than keep polling a
+ *  dead request. */
+class PollTimeoutError extends Error {}
+
+/**
+ * Resolve/reject with `promise`, but reject (with {@link PollTimeoutError}) after `ms` if it hasn't
+ * settled. youtubei.js's `execute` takes no `AbortSignal`, so this can't cancel the underlying request
+ * — it stops the reader *waiting* on it; attaching handlers to `promise` means its later (post-timeout)
+ * settle is swallowed, not an unhandled rejection. The abandoned request errors on its own eventually.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new PollTimeoutError('live-chat poll timed out')), ms)
+    timer.unref()
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    )
+  })
+}
 // Fast cadence used while a live chat is actively producing messages. YouTube's timeoutMs stays
 // ~10s because it expects the real-time signaler push to fill the gap; when the push is healthy the
 // reader is signal-driven and barely uses this, but when it isn't (no signaler, or the push falls
@@ -339,7 +372,10 @@ export class LiveChatReader {
       if (publishUsec !== undefined) {
         payload['invalidationPayloadLastPublishAtUsec'] = publishUsec
       }
-      const response = await this.#actions.execute(this.#endpoint, payload)
+      const response = await withTimeout(
+        this.#actions.execute(this.#endpoint, payload),
+        POLL_TIMEOUT_CEILING_MS
+      )
       // stop() may have run while the request was in flight — don't dispatch or reschedule.
       if (!this.#running) {
         return
@@ -353,13 +389,19 @@ export class LiveChatReader {
       if (!this.#running) {
         return
       }
-      // A 401/403 means the authed session's rotating cookie aged out — ask the owner to recover the
-      // session (rotate/rebuild/reconnect) rather than just backing off. Still register the failure:
-      // recovery is debounced and may not run this poll, so the stall/broken machinery must continue.
-      if (isAuthError(error)) {
+      if (error instanceof PollTimeoutError) {
+        // The poll ceiling fired: the transport is wedged (e.g. a half-open socket after a wake) and
+        // every further poll against this continuation would just time out too. Ask the owner to
+        // rebootstrap a fresh reader now instead of stacking abandoned requests through the backoff.
+        this.#handlers.onBroken?.()
+      } else if (isAuthError(error)) {
+        // A 401/403 means the authed session's rotating cookie aged out — ask the owner to recover the
+        // session (rotate/rebuild/reconnect) rather than just backing off. Still register the failure:
+        // recovery is debounced and may not run this poll, so the stall/broken machinery must continue.
         this.#handlers.onAuthError?.()
       }
-      // Transient network/parse failure — back off, and surface a stall after a few in a row.
+      // Transient network/parse failure — back off, and surface a stall after a few in a row. (If the
+      // owner tore the reader down in onBroken above, the `!this.#running` guard below skips the reschedule.)
       timeout = this.#registerFailure()
     }
     this.#polling = false

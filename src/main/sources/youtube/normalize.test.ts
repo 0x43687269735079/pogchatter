@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { ChatMessage } from '@shared/model'
 import {
   normalizeAction,
   parseReplyThread,
@@ -813,25 +814,127 @@ describe('YouTube moderation-activity notices', () => {
   function item(renderer: Record<string, unknown>): RawAction {
     return { addChatItemAction: { item: renderer } } as RawAction
   }
+  // Runs render one text fragment each; join them to compare against YouTube's verbatim wording.
+  function noticeText(message: ChatMessage | undefined): string {
+    return (message?.fragments ?? []).map((f) => (f.type === 'text' ? f.text : '')).join('')
+  }
+  // The real captured runs: target, connective, mod, (duration…) — handle-only, styling stripped.
+  function modRuns(runs: Array<{ text: string }>): RawAction {
+    return item({
+      liveChatModerationMessageRenderer: {
+        id: 'mod1',
+        timestampUsec: '1783254927971769',
+        message: { runs }
+      }
+    })
+  }
 
-  it('renders a moderation notice as a distinct YouTube-authored system line', () => {
+  it('renders the timeout notice verbatim as a distinct YouTube-authored system line', () => {
     const { messages } = normalizeAction(
       'src',
-      item({
-        liveChatModerationMessageRenderer: {
-          id: 'mod1',
-          timestampUsec: '1700000000000000',
-          message: { runs: [{ text: 'Mod timed out Viewer for 60 seconds' }] }
-        }
-      })
+      modRuns([
+        { text: '@TestUser4938' },
+        { text: ' was timed out by ' },
+        { text: '@chrispsec' },
+        { text: ' for ' },
+        { text: '60' },
+        { text: ' seconds.' }
+      ])
     )
     expect(messages).toHaveLength(1)
     expect(messages[0]?.system).toBe(true)
     expect(messages[0]?.moderationNotice).toBe(true)
     expect(messages[0]?.author.name).toBe('YouTube')
-    expect(messages[0]?.fragments).toEqual([
-      { type: 'text', text: 'Mod timed out Viewer for 60 seconds' }
-    ])
+    expect(messages[0]?.id).toBe('mod1')
+    expect(noticeText(messages[0])).toBe(
+      '@TestUser4938 was timed out by @chrispsec for 60 seconds.'
+    )
+  })
+
+  it('renders hide-user and unhide-user notices verbatim', () => {
+    const hide = normalizeAction(
+      'src',
+      modRuns([
+        { text: '@TestUser4938' },
+        { text: ' was hidden by ' },
+        { text: '@chrispsec' },
+        { text: '.' }
+      ])
+    ).messages[0]
+    const unhide = normalizeAction(
+      'src',
+      modRuns([
+        { text: '@TestUser4938' },
+        { text: ' was unhidden by ' },
+        { text: '@chrispsec' },
+        { text: '.' }
+      ])
+    ).messages[0]
+    expect(noticeText(hide)).toBe('@TestUser4938 was hidden by @chrispsec.')
+    expect(noticeText(unhide)).toBe('@TestUser4938 was unhidden by @chrispsec.')
+    expect(unhide?.moderationNotice).toBe(true)
+  })
+
+  it('carries any timeout duration verbatim (only 60s was captured, but the text drives it)', () => {
+    for (const dur of ['10 seconds', '5 minutes', '1 hour', '24 hours']) {
+      const { messages } = normalizeAction(
+        'src',
+        modRuns([
+          { text: '@u' },
+          { text: ' was timed out by ' },
+          { text: '@m' },
+          { text: ` for ${dur}.` }
+        ])
+      )
+      expect(noticeText(messages[0])).toBe(`@u was timed out by @m for ${dur}.`)
+    }
+  })
+
+  it('synthesizes a hide notice from a single-message hide, alongside the struck row', () => {
+    const action = {
+      replaceChatItemAction: {
+        targetItemId: 'msg-1',
+        replacementItem: {
+          liveChatTextMessageRenderer: {
+            id: 'msg-1',
+            timestampUsec: '1783254823087407',
+            authorName: { simpleText: '@TestUser4938' },
+            message: { runs: [{ text: '69' }] },
+            deletedStateMessage: {
+              runs: [
+                { text: 'Message hidden by ' },
+                { text: '@chrispsec', bold: true },
+                { text: '.' }
+              ]
+            }
+          }
+        }
+      }
+    } as RawAction
+    const { messages, replacements } = normalizeAction('src', action)
+    // The struck row still updates in place…
+    expect(replacements).toHaveLength(1)
+    expect(replacements[0]?.id).toBe('msg-1')
+    expect(replacements[0]?.deleted).toBe(true)
+    // …and a separate accent notice announces who hid it.
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.moderationNotice).toBe(true)
+    expect(messages[0]?.id).not.toBe('msg-1') // distinct id so it doesn't clobber the row
+    expect(noticeText(messages[0])).toBe('Message hidden by @chrispsec.')
+  })
+
+  it('does not synthesize a notice when a replace approves (no deletedStateMessage)', () => {
+    const action = {
+      replaceChatItemAction: {
+        targetItemId: 'msg-2',
+        replacementItem: {
+          liveChatTextMessageRenderer: { id: 'msg-2', message: { runs: [{ text: 'ok' }] } }
+        }
+      }
+    } as RawAction
+    const { messages, replacements } = normalizeAction('src', action)
+    expect(replacements).toHaveLength(1)
+    expect(messages).toHaveLength(0)
   })
 
   it('gives id-less notices distinct ids by content instead of collapsing them', () => {
@@ -840,10 +943,10 @@ describe('YouTube moderation-activity notices', () => {
         'src',
         item({ liveChatModerationMessageRenderer: { message: { runs: [{ text }] } } })
       ).messages[0]?.id
-    expect(noticeId('Mod hid a message from A')).not.toBe(noticeId('Mod hid a message from B'))
+    expect(noticeId('@a was hidden by @m.')).not.toBe(noticeId('@b was hidden by @m.'))
   })
 
-  it('skips a notice whose runs carry no text (unconfirmed shape degrades cleanly)', () => {
+  it('skips a notice whose runs carry no text', () => {
     const { messages } = normalizeAction(
       'src',
       item({ liveChatModerationMessageRenderer: { id: 'mod2', message: { runs: [] } } })
@@ -851,11 +954,7 @@ describe('YouTube moderation-activity notices', () => {
     expect(messages).toHaveLength(0)
   })
 
-  it('stays an unknown parse-health key until a real sample confirms the shape', () => {
-    // Deliberately unregistered: a genuine notice still routes to the unknown-key capture path so
-    // the real renderer can be sampled, even though collect() also renders the best-guess shape.
-    expect(unknownActionKeys(item({ liveChatModerationMessageRenderer: {} }))).toEqual([
-      'liveChatModerationMessageRenderer'
-    ])
+  it('is now a recognized item, not a parse-health unknown', () => {
+    expect(unknownActionKeys(item({ liveChatModerationMessageRenderer: {} }))).toEqual([])
   })
 })

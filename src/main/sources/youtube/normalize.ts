@@ -114,12 +114,12 @@ interface RawItem {
     subtext?: RawText
   }
   /**
-   * "{mod} timed out {user} for 60s", "{mod} hid a message from {user}", … — a moderation-activity
-   * notice delivered on the moderator continuation. The acting moderator + target are inside the
-   * `message` runs. Shape inferred from the mode-change/automod precedent and unconfirmed against a
-   * real sample; the field may carry a different name (`text`/`moderationText`) — until a capture
-   * confirms it, this key is intentionally absent from {@link KNOWN_ITEM_KEYS} so a real notice still
-   * routes to the unknown-key capture path. See {@link moderationNotice}.
+   * "@user was timed out by @mod for 60 seconds.", "@user was hidden by @mod.", "@user was unhidden
+   * by @mod." — YouTube's moderation-activity notice, delivered to moderators on the moderator
+   * continuation for the user-scoped actions (timeout / hide-user / unhide-user). Both the target and
+   * the acting moderator are handle-only runs inside `message` (no channel id); the timeout duration
+   * is text inside those runs too, so rendering them verbatim covers every duration. See
+   * {@link moderationNotice}. (Single-message hide uses a different shape — see the replace path.)
    */
   liveChatModerationMessageRenderer?: { id?: string; timestampUsec?: string; message?: RawText }
 }
@@ -476,7 +476,8 @@ const KNOWN_ITEM_KEYS = new Set([
   'liveChatAutoModMessageRenderer',
   'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
   'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
-  'liveChatModeChangeMessageRenderer'
+  'liveChatModeChangeMessageRenderer',
+  'liveChatModerationMessageRenderer'
 ])
 // Item renderers we recognize and deliberately don't render — informational, not chat content.
 // Classified here so they don't trip the parse-health warning (seen in the field: the
@@ -548,6 +549,21 @@ function collect(
       for (const replacement of replaced) {
         replacement.id = target
         replacements.push(replacement)
+      }
+      // A moderator hiding a single message replaces it with a deletedStateMessage naming the mod
+      // ("… hidden by @mod."). Unlike timeout/hide-user, YouTube emits no moderation notice for this,
+      // so synthesize one from that wording — with a target-stable id so re-sends dedup — to flag a
+      // single-message hide like the other actions, alongside the struck row.
+      const hidden = item.liveChatTextMessageRenderer
+      if (hidden?.deletedStateMessage !== undefined) {
+        const notice = moderationNotice(sourceId, {
+          id: syntheticId(sourceId, 'modhide', hidden.timestampUsec, '', target),
+          timestampUsec: hidden.timestampUsec,
+          message: hidden.deletedStateMessage
+        })
+        if (notice !== undefined) {
+          messages.push(notice)
+        }
       }
     }
     return
@@ -664,10 +680,8 @@ function collect(
   } else if (item.liveChatModeChangeMessageRenderer !== undefined) {
     messages.push(modeChangeMessage(sourceId, item.liveChatModeChangeMessageRenderer))
   } else if (item.liveChatModerationMessageRenderer !== undefined) {
-    // Best-guess against an unconfirmed shape: render only when the runs resolve to text, so a
-    // wrong field name degrades to "skipped + captured" rather than an empty line. The key stays
-    // out of KNOWN_ITEM_KEYS until a real sample confirms it (see RawItem), so a genuine notice is
-    // also routed to the unknown-key capture path even when this branch renders it.
+    // Timeout / hide-user / unhide-user announce themselves here (the target's messages are struck
+    // by a sibling markChatItemsByAuthorAsDeletedAction). Skip if the runs are empty, defensively.
     const notice = moderationNotice(sourceId, item.liveChatModerationMessageRenderer)
     if (notice !== undefined) {
       messages.push(notice)
@@ -702,15 +716,16 @@ function modeChangeMessage(
 }
 
 /**
- * A YouTube moderation-activity notice ("{mod} timed out {user} for 60s", "{mod} hid a message from
- * {user}", …) as a distinct moderation-accent system line authored by YouTube. The acting moderator
- * and target are inside the runs, so all four actions (timeout/hide/ban/unban) flow through this one
- * helper with no per-action code. Returns `undefined` when the runs carry no text — so an unconfirmed
- * field name degrades to a clean skip rather than rendering an empty line. See {@link RawItem}.
+ * A YouTube moderation-activity notice ("@user was timed out by @mod for 60 seconds.", "@user was
+ * hidden by @mod.", …) as a distinct moderation-accent system line authored by YouTube. The acting
+ * moderator, the target, and the timeout duration all live in the runs, so every action and duration
+ * flows through this one helper by rendering the runs verbatim — no per-action or per-duration code.
+ * Also reused for the single-message hide, whose "hidden by @mod" wording lives in a `deletedStateMessage`
+ * (see the replace path). Returns `undefined` when the runs carry no text, so an empty renderer skips.
  */
 function moderationNotice(
   sourceId: string,
-  renderer: { id?: string; timestampUsec?: string; message?: RawText }
+  renderer: { id?: string; timestampUsec?: string | undefined; message?: RawText }
 ): ChatMessage | undefined {
   const fragments = toFragments(renderer.message)
   if (fragments.length === 0) {

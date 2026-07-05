@@ -757,7 +757,8 @@ body,
 .pc-ua-body .pc-msg,
 .pc-ua-body .pc-hl,
 .pc-ua-body .pc-bits,
-.pc-ua-body .pc-sys {
+.pc-ua-body .pc-sys,
+.pc-ua-body .pc-ua-modplain {
   content-visibility: auto;
   contain-intrinsic-size: auto 34px;
 }
@@ -2039,18 +2040,17 @@ body,
   flex: 0 0 auto;
   white-space: nowrap;
 }
-/* Moderator channel-activity: the moderation counts + server-side history, above the session list. */
-.pc-ua-modact {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--rule);
-  font-size: var(--fs-ui);
-}
+/* Moderator channel-activity: a fixed moderation-counts strip; the history lives in the scroll body
+   below (see .pc-ua-modhead / .pc-ua-modplain), so a long "last year" list stays cheap and scrollable. */
 .pc-ua-modcounts {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 12px;
   padding: 8px 12px;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-ui);
   color: var(--dim);
 }
 .pc-ua-modic {
@@ -2067,18 +2067,18 @@ body,
   color: var(--dimmer);
   font-size: var(--fs-small);
 }
-.pc-ua-modhist {
-  max-height: 168px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 4px;
-  border-top: 1px solid var(--rule);
-}
+/* Section heading inside the scroll body (server history vs. this session). */
 .pc-ua-modhead {
   color: var(--dim);
   font-size: var(--fs-small);
   font-weight: 600;
-  padding: 4px 6px 2px;
+  padding: 6px 6px 2px;
+  border-top: 1px solid var(--rule);
+  margin-top: 4px;
+}
+.pc-ua-modhead:first-child {
+  border-top: none;
+  margin-top: 0;
 }
 .pc-ua-modplain {
   color: var(--dim);

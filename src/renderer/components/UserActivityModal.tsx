@@ -119,6 +119,9 @@ export function UserActivityModal({
   if (profile?.createdAt !== undefined) {
     profileMeta.push(`joined ${monthYear(profile.createdAt)}`)
   }
+  const hasModHistory =
+    modActivity !== undefined &&
+    (modActivity.history.length > 0 || modActivity.plainMessages.length > 0)
 
   return (
     <ModalShell className="pc-modal-wide" onClose={onClose}>
@@ -162,61 +165,59 @@ export function UserActivityModal({
           {monitored ? '👁 stop monitoring' : '👁 monitor'}
         </button>
       </div>
-      {modActivity !== undefined ? (
-        <div className="pc-ua-modact">
-          {modActivity.counts.length > 0 ? (
-            <div className="pc-ua-modcounts">
-              <span className="pc-ua-modic" aria-hidden="true">
-                {'⚖︎'}
-              </span>
-              {modActivity.counts.map((count) => (
-                <span key={count.label} className="pc-ua-modfact">
-                  <b>{count.value}</b> {count.label}
-                </span>
-              ))}
-              {modActivity.countsTitle !== undefined ? (
-                <span className="pc-ua-modscope">{modActivity.countsTitle}</span>
-              ) : null}
-            </div>
-          ) : null}
-          {modActivity.history.length > 0 || modActivity.plainMessages.length > 0 ? (
-            <div className="pc-ua-modhist">
-              {modActivity.historyTitle !== undefined ? (
-                <div className="pc-ua-modhead">{modActivity.historyTitle}</div>
-              ) : null}
-              {modActivity.history.map((message) => (
-                <MessageRow
-                  key={message.id}
-                  message={message}
-                  palette={palette}
-                  monitoredKeys={monitoredKeys}
-                />
-              ))}
-              {modActivity.plainMessages.map((text, index) => (
-                <div key={`plain-${index}`} className="pc-ua-modplain">
-                  {text}
-                </div>
-              ))}
-            </div>
+      {modActivity !== undefined && modActivity.counts.length > 0 ? (
+        <div className="pc-ua-modcounts">
+          <span className="pc-ua-modic" aria-hidden="true">
+            {'⚖︎'}
+          </span>
+          {modActivity.counts.map((count) => (
+            <span key={count.label} className="pc-ua-modfact">
+              <b>{count.value}</b> {count.label}
+            </span>
+          ))}
+          {modActivity.countsTitle !== undefined ? (
+            <span className="pc-ua-modscope">{modActivity.countsTitle}</span>
           ) : null}
         </div>
       ) : null}
+      {/* One scroll for potentially a year of history: the server list and the session list share the
+          body, so its content-visibility keeps a long list cheap and neither list is boxed in. */}
       <div className="mb pc-ua-body" ref={bodyRef} onScroll={handleScroll}>
-        {messages.length === 0 ? (
+        {hasModHistory ? (
+          <>
+            {modActivity?.historyTitle !== undefined ? (
+              <div className="pc-ua-modhead">{modActivity.historyTitle}</div>
+            ) : null}
+            {modActivity?.history.map((message) => (
+              <MessageRow
+                key={`hist-${message.id}`}
+                message={message}
+                palette={palette}
+                monitoredKeys={monitoredKeys}
+              />
+            ))}
+            {modActivity?.plainMessages.map((text, index) => (
+              <div key={`plain-${index}`} className="pc-ua-modplain">
+                {text}
+              </div>
+            ))}
+            {messages.length > 0 ? <div className="pc-ua-modhead">Seen this session</div> : null}
+          </>
+        ) : null}
+        {messages.map((message) => (
+          <MessageRow
+            key={message.id}
+            message={message}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            onContextMenu={(target, x, y) => {
+              setMenu({ message: target, x, y })
+            }}
+          />
+        ))}
+        {messages.length === 0 && !hasModHistory ? (
           <div className="pc-empty">no messages from this user yet</div>
-        ) : (
-          messages.map((message) => (
-            <MessageRow
-              key={message.id}
-              message={message}
-              palette={palette}
-              monitoredKeys={monitoredKeys}
-              onContextMenu={(target, x, y) => {
-                setMenu({ message: target, x, y })
-              }}
-            />
-          ))
-        )}
+        ) : null}
       </div>
       <div className="mf">
         <button type="button" className="pc-mbtn" onClick={onClose}>

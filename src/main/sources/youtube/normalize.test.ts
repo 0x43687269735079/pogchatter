@@ -834,9 +834,9 @@ describe('YouTube moderation-activity notices', () => {
     const { messages } = normalizeAction(
       'src',
       modRuns([
-        { text: '@TestUser4938' },
+        { text: '@viewer' },
         { text: ' was timed out by ' },
-        { text: '@chrispsec' },
+        { text: '@moderator' },
         { text: ' for ' },
         { text: '60' },
         { text: ' seconds.' }
@@ -847,32 +847,30 @@ describe('YouTube moderation-activity notices', () => {
     expect(messages[0]?.moderationNotice).toBe(true)
     expect(messages[0]?.author.name).toBe('YouTube')
     expect(messages[0]?.id).toBe('mod1')
-    expect(noticeText(messages[0])).toBe(
-      '@TestUser4938 was timed out by @chrispsec for 60 seconds.'
-    )
+    expect(noticeText(messages[0])).toBe('@viewer was timed out by @moderator for 60 seconds.')
   })
 
   it('renders hide-user and unhide-user notices verbatim', () => {
     const hide = normalizeAction(
       'src',
       modRuns([
-        { text: '@TestUser4938' },
+        { text: '@viewer' },
         { text: ' was hidden by ' },
-        { text: '@chrispsec' },
+        { text: '@moderator' },
         { text: '.' }
       ])
     ).messages[0]
     const unhide = normalizeAction(
       'src',
       modRuns([
-        { text: '@TestUser4938' },
+        { text: '@viewer' },
         { text: ' was unhidden by ' },
-        { text: '@chrispsec' },
+        { text: '@moderator' },
         { text: '.' }
       ])
     ).messages[0]
-    expect(noticeText(hide)).toBe('@TestUser4938 was hidden by @chrispsec.')
-    expect(noticeText(unhide)).toBe('@TestUser4938 was unhidden by @chrispsec.')
+    expect(noticeText(hide)).toBe('@viewer was hidden by @moderator.')
+    expect(noticeText(unhide)).toBe('@viewer was unhidden by @moderator.')
     expect(unhide?.moderationNotice).toBe(true)
   })
 
@@ -899,12 +897,12 @@ describe('YouTube moderation-activity notices', () => {
           liveChatTextMessageRenderer: {
             id: 'msg-1',
             timestampUsec: '1783254823087407',
-            authorName: { simpleText: '@TestUser4938' },
+            authorName: { simpleText: '@viewer' },
             message: { runs: [{ text: '69' }] },
             deletedStateMessage: {
               runs: [
                 { text: 'Message hidden by ' },
-                { text: '@chrispsec', bold: true },
+                { text: '@moderator', bold: true },
                 { text: '.' }
               ]
             }
@@ -921,7 +919,7 @@ describe('YouTube moderation-activity notices', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0]?.moderationNotice).toBe(true)
     expect(messages[0]?.id).not.toBe('msg-1') // distinct id so it doesn't clobber the row
-    expect(noticeText(messages[0])).toBe('Message hidden by @chrispsec.')
+    expect(noticeText(messages[0])).toBe('Message hidden by @moderator.')
   })
 
   it('does not synthesize a notice when a replace approves (no deletedStateMessage)', () => {
@@ -976,7 +974,7 @@ describe('parseChannelActivity', () => {
     liveChatTextMessageRenderer: {
       id,
       timestampUsec: usec,
-      authorName: { simpleText: '@TestUser4938' },
+      authorName: { simpleText: '@viewer' },
       message: { runs: [{ text }] },
       deletedStateMessage: { runs: [{ text: state, italics: true }] }
     }
@@ -989,9 +987,9 @@ describe('parseChannelActivity', () => {
     }
   }
 
-  // Mirrors capture-other-moderation-actions/4-mod-get-channel-history-response.
+  // A get_panel "channel activity" response: identity, moderated-activity counts, then message history.
   const response = panel([
-    { liveChatProfileIdentityViewModel: { channelName: { content: '@TestUser4938' } } },
+    { liveChatProfileIdentityViewModel: { channelName: { content: '@viewer' } } },
     heading('Moderated activities in the last year'),
     {
       liveChatChannelActivityReputationRenderer: {

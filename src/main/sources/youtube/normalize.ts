@@ -553,20 +553,9 @@ function collect(
         replacement.id = target
         replacements.push(replacement)
       }
-      // A moderator hiding a single message replaces it with a deletedStateMessage naming the mod
-      // ("… hidden by @mod."). Unlike timeout/hide-user, YouTube emits no moderation notice for this,
-      // so synthesize one from that wording — with a target-stable id so re-sends dedup — to flag a
-      // single-message hide like the other actions, alongside the struck row.
-      const hidden = item.liveChatTextMessageRenderer
-      if (hidden?.deletedStateMessage !== undefined) {
-        const notice = moderationNotice(sourceId, {
-          id: syntheticId(sourceId, 'modhide', hidden.timestampUsec, '', target),
-          timestampUsec: hidden.timestampUsec,
-          message: hidden.deletedStateMessage
-        })
-        if (notice !== undefined) {
-          messages.push(notice)
-        }
+      const notice = hideNotice(sourceId, item, target)
+      if (notice !== undefined) {
+        messages.push(notice)
       }
     }
     return
@@ -692,6 +681,17 @@ function collect(
   }
 }
 
+/** The YouTube-authored system identity carried by mode-change and moderation-activity notices. */
+function youtubeAuthor(): Author {
+  return {
+    id: 'youtube',
+    name: 'YouTube',
+    displayName: 'YouTube',
+    badges: [],
+    roles: { broadcaster: false, moderator: false }
+  }
+}
+
 /** A YouTube mode-change notice (slow mode, members-only, …) as a system line authored by YouTube. */
 function modeChangeMessage(
   sourceId: string,
@@ -706,13 +706,7 @@ function modeChangeMessage(
     platform: 'youtube',
     channelId: sourceId,
     timestamp: usecToMs(renderer.timestampUsec),
-    author: {
-      id: 'youtube',
-      name: 'YouTube',
-      displayName: 'YouTube',
-      badges: [],
-      roles: { broadcaster: false, moderator: false }
-    },
+    author: youtubeAuthor(),
     fragments: [{ type: 'text', text: subtext !== '' ? `${text} — ${subtext}` : text }],
     system: true
   }
@@ -741,17 +735,30 @@ function moderationNotice(
     platform: 'youtube',
     channelId: sourceId,
     timestamp: usecToMs(renderer.timestampUsec),
-    author: {
-      id: 'youtube',
-      name: 'YouTube',
-      displayName: 'YouTube',
-      badges: [],
-      roles: { broadcaster: false, moderator: false }
-    },
+    author: youtubeAuthor(),
     fragments,
     system: true,
     moderationNotice: true
   }
+}
+
+/**
+ * The moderation notice for a single-message hide. YouTube emits no `liveChatModerationMessageRenderer`
+ * for it — it just replaces the message with a `deletedStateMessage` naming the mod ("… hidden by
+ * @mod.") — so synthesize the same notice from that wording, alongside the struck row, to flag it like
+ * the other actions. The id is target-stable so YouTube's cross-poll re-sends of the replace dedup.
+ * Returns undefined when the replacement isn't a hidden text message.
+ */
+function hideNotice(sourceId: string, item: RawItem, targetId: string): ChatMessage | undefined {
+  const hidden = item.liveChatTextMessageRenderer
+  if (hidden?.deletedStateMessage === undefined) {
+    return undefined
+  }
+  return moderationNotice(sourceId, {
+    id: syntheticId(sourceId, 'modhide', hidden.timestampUsec, '', targetId),
+    timestampUsec: hidden.timestampUsec,
+    message: hidden.deletedStateMessage
+  })
 }
 
 interface RawEngagementPanel {

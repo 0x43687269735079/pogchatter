@@ -17,6 +17,7 @@ import {
 import {
   buildTextSegments,
   classifySendResponse,
+  encodeChannelActivityParams,
   encodeSendParams
 } from '@main/sources/youtube/liveChatSend'
 import { collectEmojis, type YouTubeEmoji } from '@main/sources/youtube/youtubeEmoji'
@@ -568,6 +569,28 @@ export class YouTubeAuthManager {
       this.#log(`message actions: [${actions.map((a) => `${a.id}:${a.label}`).join(', ')}]`)
       return actions
     }, [])
+  }
+
+  /**
+   * The raw `get_panel` "channel activity" for one user (their moderation counts + message history),
+   * as the signed-in moderator — YouTube only returns it to a mod/streamer. The `params` token is
+   * built from the broadcaster channel, the live video, and the target user's channel. Returns
+   * `undefined` when logged out or on any failure; the caller parses the raw data.
+   */
+  async getChannelActivity(
+    broadcasterChannelId: string,
+    videoId: string,
+    targetChannelId: string
+  ): Promise<unknown> {
+    return this.#readWithAuthRecovery<unknown>(async (yt) => {
+      const params = encodeChannelActivityParams(broadcasterChannelId, videoId, targetChannelId)
+      const response = await yt.actions.execute('get_panel', {
+        panelId: 'PAlc_channel_activity',
+        params,
+        parse: false
+      })
+      return response.data
+    }, undefined)
   }
 
   /**

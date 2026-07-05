@@ -2039,6 +2039,52 @@ body,
   flex: 0 0 auto;
   white-space: nowrap;
 }
+/* Moderator channel-activity: the moderation counts + server-side history, above the session list. */
+.pc-ua-modact {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-ui);
+}
+.pc-ua-modcounts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 12px;
+  color: var(--dim);
+}
+.pc-ua-modic {
+  color: var(--mod);
+  font-size: var(--fs-emph);
+  line-height: 1;
+}
+.pc-ua-modfact b {
+  color: var(--mod);
+  font-weight: 700;
+}
+.pc-ua-modscope {
+  flex-basis: 100%;
+  color: var(--dimmer);
+  font-size: var(--fs-small);
+}
+.pc-ua-modhist {
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border-top: 1px solid var(--rule);
+}
+.pc-ua-modhead {
+  color: var(--dim);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  padding: 4px 6px 2px;
+}
+.pc-ua-modplain {
+  color: var(--dim);
+  padding: 2px 6px;
+  word-break: break-word;
+}
 .pc-modal .mb {
   flex: 1 1 auto;
   min-height: 0;

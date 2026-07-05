@@ -6,6 +6,7 @@ import type {
   Platform,
   SendReply,
   SourceStatus,
+  UserModerationActivity,
   UserProfile
 } from '@shared/model'
 
@@ -69,6 +70,8 @@ export interface ChatSource {
   getReplyThread?(threadToken: string): Promise<ChatMessage[]>
   /** Platform profile details for an author seen in this chat (user card); undefined when unavailable. */
   getUserProfile?(userId: string): Promise<UserProfile | undefined>
+  /** A moderator's channel-activity for an author — moderation counts + message history (YouTube). */
+  getUserModerationHistory?(userId: string): Promise<UserModerationActivity | undefined>
   on<E extends keyof ChatSourceEventMap>(
     event: E,
     listener: (...args: ChatSourceEventMap[E]) => void

@@ -6,7 +6,9 @@ import type {
   Fragment,
   HeldReview,
   Highlight,
-  ReplyContext
+  ModerationCount,
+  ReplyContext,
+  UserModerationActivity
 } from '@shared/model'
 import { parseHeldActions } from '@main/sources/youtube/liveChatActions'
 
@@ -789,4 +791,88 @@ export function parseReplyThread(sourceId: string, data: unknown): ChatMessage[]
     }
   }
   return messages
+}
+
+/** One `contents[]` entry of the channel-activity panel — a heading/plain message, the counts, or the history. */
+interface RawActivityBlock {
+  listItemViewModel?: { title?: { content?: string; styleRuns?: unknown[] } }
+  liveChatChannelActivityReputationRenderer?: {
+    factoids?: Array<{ factoidRenderer?: { value?: { simpleText?: string }; label?: RawText } }>
+  }
+  liveChatItemDisplayListRenderer?: { items?: RawItem[] }
+}
+
+/** The `get_panel` channel-activity response envelope. */
+interface RawChannelActivity {
+  content?: {
+    engagementPanelSectionListRenderer?: {
+      content?: { sectionListRenderer?: { contents?: RawActivityBlock[] } }
+    }
+  }
+}
+
+/**
+ * A moderator's `get_panel` "channel activity" for one user: the moderation-count factoids (deleted /
+ * timeout / hide, labels kept verbatim since YouTube pluralizes and localizes them), followed by the
+ * user's message history (moderated/held items normalized with their deleted state; unmoderated ones
+ * come as plain text). A `listItemViewModel` with `styleRuns` is a section heading; without them it's
+ * a plain message. Returns undefined on shape drift or an empty panel, so the card degrades quietly.
+ */
+export function parseChannelActivity(
+  sourceId: string,
+  data: unknown
+): UserModerationActivity | undefined {
+  const contents = (data as RawChannelActivity | undefined)?.content
+    ?.engagementPanelSectionListRenderer?.content?.sectionListRenderer?.contents
+  if (contents === undefined) {
+    return undefined
+  }
+  const counts: ModerationCount[] = []
+  const history: ChatMessage[] = []
+  const plainMessages: string[] = []
+  let countsTitle: string | undefined
+  let historyTitle: string | undefined
+  let lastHeading: string | undefined
+  for (const block of contents) {
+    const listItem = block.listItemViewModel
+    if (listItem !== undefined) {
+      const title = listItem.title?.content ?? ''
+      if (listItem.title?.styleRuns !== undefined) {
+        lastHeading = title
+      } else if (title !== '') {
+        plainMessages.push(title)
+      }
+      continue
+    }
+    const factoids = block.liveChatChannelActivityReputationRenderer?.factoids
+    if (factoids !== undefined) {
+      countsTitle = lastHeading
+      for (const factoid of factoids) {
+        const value = factoid.factoidRenderer?.value?.simpleText
+        const label = textToString(factoid.factoidRenderer?.label)
+        if (value !== undefined && label !== '') {
+          counts.push({ label, value })
+        }
+      }
+      continue
+    }
+    const items = block.liveChatItemDisplayListRenderer?.items
+    if (items !== undefined) {
+      historyTitle = lastHeading
+      for (const item of items) {
+        pushItem(sourceId, item, history)
+      }
+    }
+  }
+  if (counts.length === 0 && history.length === 0 && plainMessages.length === 0) {
+    return undefined
+  }
+  const activity: UserModerationActivity = { counts, history, plainMessages }
+  if (countsTitle !== undefined) {
+    activity.countsTitle = countsTitle
+  }
+  if (historyTitle !== undefined) {
+    activity.historyTitle = historyTitle
+  }
+  return activity
 }

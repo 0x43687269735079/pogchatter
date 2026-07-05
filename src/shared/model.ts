@@ -290,6 +290,33 @@ export interface UserProfile {
 }
 
 /**
+ * One factoid from YouTube's moderator channel-activity panel — kept as verbatim label + value
+ * because YouTube pluralizes and localizes the label ("Timeout" for 1, "Timeouts" for 2).
+ */
+export interface ModerationCount {
+  label: string
+  value: string
+}
+
+/**
+ * A signed-in moderator's view of one user's activity on a YouTube channel: how many times they've
+ * been deleted / timed out / hidden, plus their recent message history (moderated items kept, with
+ * their deleted/held state preserved). Best-effort — only YouTube, only for a moderator on a live
+ * source; every field may be absent.
+ */
+export interface UserModerationActivity {
+  /** Section heading for the counts, e.g. "Moderated activities in the last year". */
+  countsTitle?: string
+  counts: ModerationCount[]
+  /** Section heading for the history, e.g. "Chat messages in the last year". */
+  historyTitle?: string
+  /** Moderated/held messages as normalized rows (deleted state preserved), newest first. */
+  history: ChatMessage[]
+  /** Plain (unmoderated) messages the panel lists as text only (no id/timestamp). */
+  plainMessages: string[]
+}
+
+/**
  * A user being monitored (from the user card's Monitor toggle): all their messages are highlighted
  * across the main columns until cleared. Persisted; team-shaped for the future sync backend.
  */
@@ -642,6 +669,11 @@ export interface ChatApi {
   getReplyThread(channelId: string, threadToken: string): Promise<ChatMessage[]>
   /** Platform profile details for the user card (best-effort; undefined when unavailable). */
   getUserProfile(channelId: string, userId: string): Promise<UserProfile | undefined>
+  /** A moderator's channel-activity for an author — moderation counts + message history (YouTube, best-effort). */
+  getUserModerationHistory(
+    channelId: string,
+    userId: string
+  ): Promise<UserModerationActivity | undefined>
   /** Export the moderation watchlist to a JSON file the user picks (to share with other moderators). */
   exportModerationRules(rules: ModerationRule[]): Promise<ModerationExport>
   /** Import a moderation watchlist from a JSON file the user picks; returns the parsed rules. */

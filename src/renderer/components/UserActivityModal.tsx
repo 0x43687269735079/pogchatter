@@ -1,5 +1,5 @@
 import { type ReactElement, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Author, ChatMessage, UserProfile } from '@shared/model'
+import type { Author, ChatMessage, UserModerationActivity, UserProfile } from '@shared/model'
 import { atName, monthYear } from '@renderer/format'
 import { Avatar } from '@renderer/components/Avatar'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
@@ -57,6 +57,7 @@ export function UserActivityModal({
   const atBottomRef = useRef(true)
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
   const [profile, setProfile] = useState<UserProfile | undefined>(undefined)
+  const [modActivity, setModActivity] = useState<UserModerationActivity | undefined>(undefined)
 
   // Show the latest activity on open, and keep following it as new lines arrive while pinned.
   useLayoutEffect(() => {
@@ -85,6 +86,25 @@ export function UserActivityModal({
       })
       .catch(() => {
         // Best-effort: the header keeps the in-chat name/avatar.
+      })
+    return () => {
+      active = false
+    }
+  }, [channelId, author.id])
+
+  // Fetch this user's moderator channel-activity (counts + server-side history) on open; absent for
+  // non-moderators, logged-out sessions, Twitch, or an offline source — the card just omits it.
+  useEffect(() => {
+    let active = true
+    void window.chat
+      .getUserModerationHistory(channelId, author.id)
+      .then((result) => {
+        if (active) {
+          setModActivity(result)
+        }
+      })
+      .catch(() => {
+        // Best-effort: the rest of the card renders without the moderation activity.
       })
     return () => {
       active = false
@@ -142,6 +162,45 @@ export function UserActivityModal({
           {monitored ? '👁 stop monitoring' : '👁 monitor'}
         </button>
       </div>
+      {modActivity !== undefined ? (
+        <div className="pc-ua-modact">
+          {modActivity.counts.length > 0 ? (
+            <div className="pc-ua-modcounts">
+              <span className="pc-ua-modic" aria-hidden="true">
+                {'⚖︎'}
+              </span>
+              {modActivity.counts.map((count) => (
+                <span key={count.label} className="pc-ua-modfact">
+                  <b>{count.value}</b> {count.label}
+                </span>
+              ))}
+              {modActivity.countsTitle !== undefined ? (
+                <span className="pc-ua-modscope">{modActivity.countsTitle}</span>
+              ) : null}
+            </div>
+          ) : null}
+          {modActivity.history.length > 0 || modActivity.plainMessages.length > 0 ? (
+            <div className="pc-ua-modhist">
+              {modActivity.historyTitle !== undefined ? (
+                <div className="pc-ua-modhead">{modActivity.historyTitle}</div>
+              ) : null}
+              {modActivity.history.map((message) => (
+                <MessageRow
+                  key={message.id}
+                  message={message}
+                  palette={palette}
+                  monitoredKeys={monitoredKeys}
+                />
+              ))}
+              {modActivity.plainMessages.map((text, index) => (
+                <div key={`plain-${index}`} className="pc-ua-modplain">
+                  {text}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div className="mb pc-ua-body" ref={bodyRef} onScroll={handleScroll}>
         {messages.length === 0 ? (
           <div className="pc-empty">no messages from this user yet</div>

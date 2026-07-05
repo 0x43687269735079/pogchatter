@@ -5,6 +5,7 @@ import type {
   Platform,
   SendReply,
   SourceStatus,
+  UserModerationActivity,
   UserProfile
 } from '@shared/model'
 import { BaseChatSource } from '@main/sources/ChatSource'
@@ -12,7 +13,7 @@ import { channelId, normalizeTarget } from '@main/sources/channelId'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { isAuthError } from '@main/sources/youtube/authError'
 import { LiveChatReader } from '@main/sources/youtube/liveChatReader'
-import { parseReplyThread } from '@main/sources/youtube/normalize'
+import { parseChannelActivity, parseReplyThread } from '@main/sources/youtube/normalize'
 import { liveUrl } from '@main/sources/youtube/urls'
 import { emojiSendMap, toResolvedEmotes } from '@main/sources/youtube/youtubeEmoji'
 import { YouTubeSignaler } from '@main/sources/youtube/YouTubeSignaler'
@@ -204,6 +205,32 @@ export class YouTubeSource extends BaseChatSource {
     } catch {
       return undefined
     }
+  }
+
+  /**
+   * A moderator's channel-activity for one chat author — their moderation counts (deleted / timed
+   * out / hidden) and message history. Needs the resolved broadcaster channel + live video to build
+   * the request, and the signed-in authed session (routed through the auth manager). Returns
+   * undefined when those aren't available or the panel can't be read; history emotes are tokenized
+   * like the live feed.
+   */
+  async getUserModerationHistory(userId: string): Promise<UserModerationActivity | undefined> {
+    const videoId = this.#videoId
+    const broadcaster = this.#channelId
+    if (videoId === undefined || broadcaster === undefined) {
+      return undefined
+    }
+    const activity = parseChannelActivity(
+      this.id,
+      await this.#auth.getChannelActivity(broadcaster, videoId, userId)
+    )
+    if (activity === undefined) {
+      return undefined
+    }
+    for (const message of activity.history) {
+      message.fragments = this.#emotes.tokenize(message.fragments, 'youtube', this.#channelId)
+    }
+    return activity
   }
 
   /** Begin a new lifecycle generation; returns its token. */

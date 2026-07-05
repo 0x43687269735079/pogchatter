@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '@shared/model'
 import {
   normalizeAction,
+  parseChannelActivity,
   parseReplyThread,
   unknownActionKeys,
   type RawAction
@@ -956,5 +957,98 @@ describe('YouTube moderation-activity notices', () => {
 
   it('is now a recognized item, not a parse-health unknown', () => {
     expect(unknownActionKeys(item({ liveChatModerationMessageRenderer: {} }))).toEqual([])
+  })
+})
+
+describe('parseChannelActivity', () => {
+  const heading = (content: string): Record<string, unknown> => ({
+    listItemViewModel: { title: { content, styleRuns: [{ weightLabel: 'FONT_WEIGHT_MEDIUM' }] } }
+  })
+  const factoid = (value: string, label: string): Record<string, unknown> => ({
+    factoidRenderer: { value: { simpleText: value }, label: { runs: [{ text: label }] } }
+  })
+  const historyItem = (
+    id: string,
+    usec: string,
+    text: string,
+    state: string
+  ): Record<string, unknown> => ({
+    liveChatTextMessageRenderer: {
+      id,
+      timestampUsec: usec,
+      authorName: { simpleText: '@TestUser4938' },
+      message: { runs: [{ text }] },
+      deletedStateMessage: { runs: [{ text: state, italics: true }] }
+    }
+  })
+  function panel(contents: Array<Record<string, unknown>>): unknown {
+    return {
+      content: {
+        engagementPanelSectionListRenderer: { content: { sectionListRenderer: { contents } } }
+      }
+    }
+  }
+
+  // Mirrors capture-other-moderation-actions/4-mod-get-channel-history-response.
+  const response = panel([
+    { liveChatProfileIdentityViewModel: { channelName: { content: '@TestUser4938' } } },
+    heading('Moderated activities in the last year'),
+    {
+      liveChatChannelActivityReputationRenderer: {
+        factoids: [factoid('0', 'Deleted messages'), factoid('1', 'Timeout'), factoid('1', 'Hide')]
+      }
+    },
+    heading('Chat messages in the last year'),
+    { listItemViewModel: { title: { content: 'Schedule test 2 schedule harder' } } },
+    {
+      liveChatItemDisplayListRenderer: {
+        items: [
+          historyItem('h1', '1783254823087407', '69', 'Message hidden.'),
+          historyItem('h2', '1783253810514383', '69 69', 'This message is held for review.')
+        ]
+      }
+    }
+  ])
+
+  it('parses counts, headings, plain messages, and deleted history newest-first', () => {
+    const activity = parseChannelActivity('src', response)
+    expect(activity?.counts).toEqual([
+      { label: 'Deleted messages', value: '0' },
+      { label: 'Timeout', value: '1' },
+      { label: 'Hide', value: '1' }
+    ])
+    expect(activity?.countsTitle).toBe('Moderated activities in the last year')
+    expect(activity?.historyTitle).toBe('Chat messages in the last year')
+    expect(activity?.plainMessages).toEqual(['Schedule test 2 schedule harder'])
+    expect(activity?.history).toHaveLength(2)
+    expect(activity?.history[0]?.id).toBe('h1') // newest first, as delivered
+    expect(activity?.history[1]?.id).toBe('h2')
+    expect(activity?.history[0]?.deleted).toBe(true)
+    // Moderators see the original text even on a hidden message.
+    expect(activity?.history[0]?.fragments).toEqual([{ type: 'text', text: '69' }])
+  })
+
+  it('keeps factoid labels verbatim (they pluralize/localize: Timeouts/Hides)', () => {
+    const activity = parseChannelActivity(
+      'src',
+      panel([
+        heading('Moderated activities in the last year'),
+        {
+          liveChatChannelActivityReputationRenderer: {
+            factoids: [factoid('2', 'Timeouts'), factoid('2', 'Hides')]
+          }
+        }
+      ])
+    )
+    expect(activity?.counts).toEqual([
+      { label: 'Timeouts', value: '2' },
+      { label: 'Hides', value: '2' }
+    ])
+  })
+
+  it('returns undefined on shape drift or an empty panel', () => {
+    expect(parseChannelActivity('src', {})).toBeUndefined()
+    expect(parseChannelActivity('src', undefined)).toBeUndefined()
+    expect(parseChannelActivity('src', panel([]))).toBeUndefined()
   })
 })

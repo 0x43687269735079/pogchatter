@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildTextSegments,
   classifySendResponse,
+  encodeChannelActivityParams,
   encodeSendParams
 } from '@main/sources/youtube/liveChatSend'
 
@@ -57,6 +58,29 @@ describe('encodeSendParams', () => {
     expect(bytes.toString('latin1')).toContain('VIDID123456')
     // Outer field 1 (params) is length-delimited, so the first tag byte is (1<<3)|2 = 0x0a.
     expect(bytes[0]).toBe(0x0a)
+  })
+})
+
+describe('encodeChannelActivityParams', () => {
+  it('reproduces the captured get_panel channel-activity token byte-for-byte', () => {
+    // Ground truth: the params from capture-other-moderation-actions/4-mod-get-channel-history-req
+    // (broadcaster UCs0AmDz3c3UWENSP6XuOajg, video r6kuUsc0QTQ, target UCcWGuT8u6jqBznNeoJfaS-g).
+    const token = encodeChannelActivityParams(
+      'UCs0AmDz3c3UWENSP6XuOajg',
+      'r6kuUsc0QTQ',
+      'UCcWGuT8u6jqBznNeoJfaS-g'
+    )
+    expect(token).toBe(
+      'oghJCikqJwoYVUNzMEFtRHozYzNVV0VOU1A2WHVPYWpnEgtyNmt1VXNjMFFUURIaChhVQ2NXR3VUOHU2anFCem5OZW9KZmFTLWcoAQ%3D%3D'
+    )
+  })
+
+  it('varint-tags field 132 (0xA2 0x08) instead of truncating it', () => {
+    const bytes = Buffer.from(
+      decodeURIComponent(encodeChannelActivityParams('UCb', 'v', 'UCt')),
+      'base64'
+    )
+    expect([bytes[0], bytes[1]]).toEqual([0xa2, 0x08])
   })
 })
 

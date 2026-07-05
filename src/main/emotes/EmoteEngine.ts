@@ -307,14 +307,8 @@ export class EmoteEngine {
    * reflect a toggle. Never rejects: a failed re-fetch leaves that scope's filtered emotes.
    */
   async applyProviderSettings(): Promise<void> {
-    // Drop the watch registry and socket outright; the re-fetches below re-bind every set
-    // that's still enabled onto a fresh client (a stopped SevenTvEvents is not restartable).
-    this.#sevenTvScopes.clear()
-    this.#sevenTvEvents?.stop()
-    this.#sevenTvEvents = undefined
-    // Cancel pending failure retries — the full re-fetch below re-schedules what still fails.
-    this.#clearAllRetries()
-    // Re-index what's already loaded so a disabled provider's emotes vanish immediately.
+    // Re-index what's already loaded so a disabled provider's emotes vanish immediately, before the
+    // async re-fetch brings re-enabled ones back.
     if (this.#globalLists !== undefined) {
       this.#global = this.#indexLists(this.#globalLists)
     }
@@ -325,12 +319,28 @@ export class EmoteEngine {
       this.#userEmotes = this.#indexLists(this.#userLists)
     }
     this.#rebuildShared()
-    // Re-fetch every known scope so re-enabled providers come back (and 7TV sets re-bind).
+    await this.refreshEmotes()
+  }
+
+  /**
+   * Re-fetch every loaded scope from its providers (globals, every channel, the account's own),
+   * resetting the 7TV EventAPI socket and cancelling pending failure retries so the fresh load
+   * re-binds the live sets and reschedules anything still failing. Backs the provider-toggle apply
+   * and the user's manual "reload emotes". Never rejects — a scope that fails keeps what it had.
+   */
+  async refreshEmotes(): Promise<void> {
+    // Drop the watch registry and socket outright; the re-fetches below re-bind every set that's
+    // still enabled onto a fresh client (a stopped SevenTvEvents is not restartable).
+    this.#sevenTvScopes.clear()
+    this.#sevenTvEvents?.stop()
+    this.#sevenTvEvents = undefined
+    // Cancel pending failure retries — the full re-fetch below re-schedules what still fails.
+    this.#clearAllRetries()
     const tasks: Array<Promise<void>> = []
     if (this.#globalLists !== undefined) {
       tasks.push(
         this.loadGlobals().catch(() => {
-          // Best-effort: keep the freshly filtered globals.
+          // Best-effort: keep the current globals.
         })
       )
     }

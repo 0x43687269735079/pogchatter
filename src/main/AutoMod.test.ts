@@ -26,7 +26,8 @@ function message(
     fragments: [{ type: 'text', text: 'hi' }],
     ...(menuToken !== undefined && { menuToken }),
     ...(overrides.system !== undefined && { system: overrides.system }),
-    ...(overrides.self !== undefined && { self: overrides.self })
+    ...(overrides.self !== undefined && { self: overrides.self }),
+    ...(overrides.backlog !== undefined && { backlog: overrides.backlog })
   }
 }
 
@@ -170,7 +171,7 @@ describe('AutoMod', () => {
     expect(noticeTexts(h.emitted).join('')).toContain('DRY RUN — would ban "baduser"')
   })
 
-  it('never actions staff, self, system lines, or messages without a menu token', async () => {
+  it('never actions staff, self, system, backlog, or messages without a menu token', async () => {
     const h = harness(rules)
     await h.mod.onMessage(
       'twitch:chan',
@@ -178,6 +179,8 @@ describe('AutoMod', () => {
     )
     await h.mod.onMessage('twitch:chan', message({ self: true }))
     await h.mod.onMessage('twitch:chan', message({ system: true }))
+    // A matching author's replayed history line must not be actioned on every connect.
+    await h.mod.onMessage('twitch:chan', message({ name: 'baduser', backlog: true }))
     await h.mod.onMessage('twitch:chan', message({ menuToken: undefined }))
     expect(h.actions).not.toHaveBeenCalled()
   })

@@ -70,6 +70,8 @@ export interface ChatSource {
   getReplyThread?(threadToken: string): Promise<ChatMessage[]>
   /** Platform profile details for an author seen in this chat (user card); undefined when unavailable. */
   getUserProfile?(userId: string): Promise<UserProfile | undefined>
+  /** Re-fetch this source's native emotes (Twitch channel emotes, YouTube emoji catalog) on demand. */
+  refreshEmotes?(): Promise<void>
   /** A moderator's channel-activity for an author — moderation counts + message history (YouTube). */
   getUserModerationHistory?(userId: string): Promise<UserModerationActivity | undefined>
   on<E extends keyof ChatSourceEventMap>(

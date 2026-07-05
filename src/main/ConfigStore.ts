@@ -292,6 +292,9 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof input['keepAwake'] === 'boolean') {
     settings.keepAwake = input['keepAwake']
   }
+  if (typeof input['twitchHistory'] === 'boolean') {
+    settings.twitchHistory = input['twitchHistory']
+  }
   return settings
 }
 

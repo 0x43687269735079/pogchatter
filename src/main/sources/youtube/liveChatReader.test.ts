@@ -120,6 +120,51 @@ describe('LiveChatReader failure handling', () => {
     }
   })
 
+  it('bounds a hung poll (wedged socket after a wake) into the failure backoff instead of freezing', async () => {
+    vi.useFakeTimers()
+    try {
+      // Every request hangs forever — the poll ceiling must turn each into a failure and retry.
+      const execute = vi.fn().mockReturnValue(new Promise(() => {}))
+      const handler = handlers()
+      const reader = new LiveChatReader({ execute } as never, 'youtube:x', 'c0', false, handler)
+
+      reader.start()
+      await vi.advanceTimersByTimeAsync(600_000)
+
+      // It did not hang on the first request: the ceiling fired, failures accrued, a stall surfaced.
+      expect(execute.mock.calls.length).toBeGreaterThan(1)
+      expect(handler.onStall).toHaveBeenCalled()
+      reader.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rebootstraps a wedged reader: a ceiling timeout fires onBroken instead of stacking polls', async () => {
+    vi.useFakeTimers()
+    try {
+      const execute = vi.fn().mockReturnValue(new Promise(() => {})) // every request hangs forever
+      let reader: LiveChatReader | undefined
+      // Mirror the real wiring: the owner tears the reader down on onBroken (re-bootstraps a fresh one).
+      const onBroken = vi.fn(() => reader?.stop())
+      reader = new LiveChatReader(
+        { execute } as never,
+        'youtube:x',
+        'c0',
+        false,
+        handlers({ onBroken })
+      )
+
+      reader.start()
+      await vi.advanceTimersByTimeAsync(50_000) // the 45s poll ceiling elapses on the first request
+
+      expect(onBroken).toHaveBeenCalledTimes(1)
+      expect(execute).toHaveBeenCalledTimes(1) // torn down — no second, overlapping poll
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('ends only after two consecutive unreadable responses, retrying the same continuation first', async () => {
     vi.useFakeTimers()
     try {

@@ -41,7 +41,8 @@ const DEFAULTS = {
   layout: 'scroll',
   chatLog: { enabled: false, directory: '' },
   allowPlaintextCredentials: false,
-  keepAwake: true
+  keepAwake: true,
+  twitchHistory: true
 }
 
 describe('ConfigStore settings', () => {

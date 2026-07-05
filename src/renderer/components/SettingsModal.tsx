@@ -1,4 +1,5 @@
-import { type ReactElement, useEffect, useState } from 'react'
+import { type ReactElement, useEffect, useRef, useState } from 'react'
+import { emoteRetryBus } from '@renderer/emoteRetry'
 import { ModalShell } from '@renderer/components/ModalShell'
 import {
   type AppSettings,
@@ -27,6 +28,37 @@ const EMOTE_PROVIDERS: ReadonlyArray<{ key: keyof EmoteProviderSettings; name: s
   { key: 'bttv', name: 'BTTV' },
   { key: 'ffz', name: 'FFZ' }
 ]
+
+/**
+ * Reload every emote source on demand — for emotes that failed to load at startup and would otherwise
+ * stay broken until the background retry. Re-fetches the catalogs (main side), then nudges every
+ * broken emote image in the current chat to re-attempt its load.
+ */
+function EmoteReloadButton(): ReactElement {
+  const [busy, setBusy] = useState(false)
+  const mounted = useRef(true)
+  useEffect(() => () => void (mounted.current = false), [])
+  const reload = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      await window.chat.refreshEmotes()
+    } catch (error) {
+      // The main handler already swallows refresh failures; this guards a raw IPC-layer failure so
+      // the click can't surface an unhandled rejection.
+      console.warn('Failed to reload emotes', error)
+    } finally {
+      emoteRetryBus.signalRefresh()
+      if (mounted.current) {
+        setBusy(false)
+      }
+    }
+  }
+  return (
+    <button type="button" className="pc-mbtn" disabled={busy} onClick={() => void reload()}>
+      {busy ? 'reloading emotes…' : 'reload emotes now'}
+    </button>
+  )
+}
 import { HighlightSettings } from '@renderer/components/HighlightSettings'
 import { ModerationSettings } from '@renderer/components/ModerationSettings'
 import { PrebanSettings } from '@renderer/components/PrebanSettings'
@@ -200,6 +232,25 @@ export function SettingsModal({
 
         <label className="pc-setting">
           <span className="pc-setting-meta">
+            <span className="pc-setting-name">Twitch chat history</span>
+            <span className="pc-setting-desc">
+              On joining a Twitch channel, show recent messages from before you connected. Twitch
+              itself serves no chat history, so this uses a third-party service,
+              recent-messages.robotty.de, which collects chat in requested channels.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="pc-switch"
+            checked={settings.twitchHistory}
+            onChange={(event) => {
+              onChange({ twitchHistory: event.target.checked })
+            }}
+          />
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
             <span className="pc-setting-name">developer options</span>
             <span className="pc-setting-desc">Show experimental features and debug modes.</span>
           </span>
@@ -239,6 +290,11 @@ export function SettingsModal({
               />
             </label>
           ))}
+          <p className="pc-setting-note">
+            If some emotes didn’t load, reload them from every source (7TV/BTTV/FFZ, Twitch,
+            YouTube).
+          </p>
+          <EmoteReloadButton />
         </div>
 
         <div className="pc-setting-group">

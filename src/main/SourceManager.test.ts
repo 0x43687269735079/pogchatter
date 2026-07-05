@@ -354,3 +354,89 @@ describe('SourceManager late connect rejection', () => {
     expect(errored).toBe(false)
   })
 })
+
+describe('SourceManager reconnectAll', () => {
+  class SpySource extends BaseChatSource {
+    connects = 0
+    disconnects = 0
+    failConnect = false
+    constructor(
+      readonly id: string,
+      readonly platform: Platform = 'twitch'
+    ) {
+      super()
+    }
+    async connect(): Promise<void> {
+      this.connects += 1
+      if (this.failConnect) {
+        throw new Error('reconnect boom')
+      }
+    }
+    async disconnect(): Promise<void> {
+      this.disconnects += 1
+    }
+    async send(): Promise<void> {}
+  }
+
+  it('disconnects and reconnects every source across platforms', async () => {
+    const manager = new SourceManager(() => {})
+    const tw = new SpySource('twitch:a', 'twitch')
+    const yt = new SpySource('youtube:b', 'youtube')
+    await manager.add(tw, '#a')
+    await manager.add(yt, 'b')
+    // add() performs the initial connect; count only what reconnectAll does.
+    tw.connects = 0
+    yt.connects = 0
+
+    await manager.reconnectAll()
+
+    expect([tw.disconnects, tw.connects]).toEqual([1, 1])
+    expect([yt.disconnects, yt.connects]).toEqual([1, 1])
+  })
+
+  it('surfaces one source’s failed reconnect on its column but still reconnects the rest', async () => {
+    const events: ChatEvent[] = []
+    const manager = new SourceManager((event) => events.push(event))
+    const bad = new SpySource('twitch:bad')
+    const good = new SpySource('twitch:good')
+    await manager.add(bad, '#bad')
+    await manager.add(good, '#good')
+    good.connects = 0 // add() already connected; count only reconnectAll's connect
+    bad.failConnect = true
+
+    await manager.reconnectAll()
+
+    expect(good.connects).toBe(1) // the failure didn't abandon the rest
+    const errors = events.filter(
+      (event) => event.kind === 'status' && event.status.state === 'error'
+    )
+    expect(errors.map((event) => event.kind === 'status' && event.channelId)).toContain(
+      'twitch:bad'
+    )
+  })
+
+  it('does not reconnect a source removed while its disconnect was in flight', async () => {
+    const manager = new SourceManager(() => {})
+    const disconnectReleases: Array<() => void> = []
+    class BlockingSource extends SpySource {
+      override disconnect(): Promise<void> {
+        this.disconnects += 1
+        return new Promise((resolve) => disconnectReleases.push(resolve))
+      }
+    }
+    const source = new BlockingSource('twitch:z')
+    await manager.add(source, '#z')
+    source.connects = 0 // add() already connected; count only what reconnect does
+
+    const reconnect = manager.reconnectAll() // enters disconnect() and blocks there (release #0)
+    await Promise.resolve()
+    const removal = manager.remove(source.id) // remove() also calls disconnect() and blocks (release #1)
+    await Promise.resolve()
+    disconnectReleases[1]?.() // let remove()'s disconnect resolve → it deletes the source from the map
+    await removal
+    disconnectReleases[0]?.() // now let the reconnect's disconnect resolve → the guard should skip connect
+    await reconnect
+
+    expect(source.connects).toBe(0) // the removed source must not be reconnected (a leaked connection)
+  })
+})

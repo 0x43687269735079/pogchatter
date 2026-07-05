@@ -64,6 +64,22 @@ describe('applyEventsToMessages', () => {
     expect(out['youtube:c']?.map((m) => m.id)).toEqual(['m1', 'held-2', 'm3'])
   })
 
+  it('slots a fetched backlog message into chat order by timestamp, even after live lines', () => {
+    const tsMessage = (id: string, timestamp: number): ChatEvent => ({
+      kind: 'message',
+      channelId: 'youtube:c',
+      message: { ...message(id), timestamp }
+    })
+    const backlogEvent: ChatEvent = {
+      kind: 'message',
+      channelId: 'youtube:c',
+      message: { ...message('hist-2'), timestamp: 200, backlog: true }
+    }
+    const seeded = applyEventsToMessages({}, [tsMessage('m1', 100), tsMessage('m3', 300)])
+    const out = applyEventsToMessages(seeded, [backlogEvent])
+    expect(out['youtube:c']?.map((m) => m.id)).toEqual(['m1', 'hist-2', 'm3'])
+  })
+
   it('dedups duplicates within a single batch', () => {
     const out = applyEventsToMessages({}, [messageEvent('a'), messageEvent('a'), messageEvent('b')])
     expect(out['youtube:c']?.map((m) => m.id)).toEqual(['a', 'b'])

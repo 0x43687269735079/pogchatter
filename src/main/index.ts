@@ -1,6 +1,14 @@
 import { appendFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { app, BrowserWindow, crashReporter, powerSaveBlocker, safeStorage } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  crashReporter,
+  net,
+  powerMonitor,
+  powerSaveBlocker,
+  safeStorage
+} from 'electron'
 import { Innertube, Log } from 'youtubei.js'
 import {
   type AuthState,
@@ -17,6 +25,7 @@ import { ChatLogger } from '@main/ChatLogger'
 import { EventBacklog } from '@main/EventBacklog'
 import { ConfigStore } from '@main/ConfigStore'
 import { closeDebugLog, debugLog, debugLogEnabled, initDebugLog } from '@main/debugLog'
+import { KeepAlive } from '@main/KeepAlive'
 import { migrateLegacyUserData } from '@main/migrateUserData'
 import { SourceManager } from '@main/SourceManager'
 import { AuthStore } from '@main/auth/AuthStore'
@@ -223,6 +232,7 @@ const YOUTUBE_CHANNELS = (process.env['YOUTUBE_CHANNELS'] ?? '')
   .filter((target) => target.length > 0)
 
 let manager: SourceManager | undefined
+let keepAlive: KeepAlive | undefined
 let batcher: EventBatcher | undefined
 let chatLogger: ChatLogger | undefined
 let configStore: ConfigStore | undefined
@@ -506,6 +516,28 @@ void app
       }
     )
     manager = sourceManager
+    // Detect OS sleep/resume (event + wall-clock watchdog) and reconnect both connectors immediately,
+    // rather than waiting on dead-socket timeouts after a wake.
+    keepAlive = new KeepAlive({
+      reconnectAll: () => sourceManager.reconnectAll(),
+      isOnline: () => net.isOnline(),
+      now: () => Date.now(),
+      wait: (ms) =>
+        new Promise((resolve) => {
+          const timer = setTimeout(resolve, ms)
+          timer.unref()
+        }),
+      onPower: (event, handler) => {
+        // Literal events, not the union — powerMonitor.on's overloads are per-event.
+        if (event === 'suspend') {
+          powerMonitor.on('suspend', handler)
+        } else {
+          powerMonitor.on('resume', handler)
+        }
+      },
+      log: (message, data) => debugLog('power', message, data)
+    })
+    keepAlive.start()
     autoMod = new AutoMod({
       settings: () => configStore?.settings().preban ?? DEFAULT_SETTINGS.preban,
       getMessageActions: (channelId, menuToken) =>
@@ -519,6 +551,18 @@ void app
       getTwitchAuth: () => authManager,
       getYouTubeAuth: () => youtubeAuth,
       getEmoteEngine: () => emoteEngine,
+      // A user-triggered reload of every emote source: third-party (7TV/BTTV/FFZ) via the engine, the
+      // Twitch account catalog, and each source's native emotes. Fixes emotes that failed to load at
+      // start without waiting for the background retry.
+      refreshEmotes: async () => {
+        // Best-effort: each sub-task swallows its own failures, so one source failing must not
+        // shadow the others (allSettled, not all).
+        await Promise.allSettled([
+          emoteEngine?.refreshEmotes() ?? Promise.resolve(),
+          loadTwitchEmotes(),
+          sourceManager.refreshEmotes()
+        ])
+      },
       getConfigStore: () => configStore,
       getAuthStore: () => authStore,
       getChannelService: () => channelService,
@@ -706,11 +750,17 @@ void app
         // inside connect(), so creating a YouTube channel never blocks add()/restore.
         return new YouTubeSource(target, getYouTubeReader, pageFetch, emotes, ytAuth)
       }
-      return new TwitchSource(target, emotes, twitchAuth, {
-        badges: twitchBadges,
-        emotes: twitchEmotes,
-        cheermotes: twitchCheermotes
-      })
+      return new TwitchSource(
+        target,
+        emotes,
+        twitchAuth,
+        {
+          badges: twitchBadges,
+          emotes: twitchEmotes,
+          cheermotes: twitchCheermotes
+        },
+        () => config.settings().twitchHistory
+      )
     }
 
     channelService = {
@@ -845,6 +895,7 @@ app.on('before-quit', (event) => {
   quitting = true
   event.preventDefault()
   debugLog('app', 'quitting')
+  keepAlive?.stop()
   batcher?.dispose()
   // close() resolves when the log's WriteStream has flushed; include it in the shutdown race
   // so tail writes reach disk before the forced app.exit below can terminate the process.

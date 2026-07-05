@@ -99,6 +99,9 @@ const api: ChatApi = {
   getEmotes(channelId: string): Promise<ChannelEmote[]> {
     return ipcRenderer.invoke('chat:getEmotes', channelId) as Promise<ChannelEmote[]>
   },
+  refreshEmotes(): Promise<void> {
+    return ipcRenderer.invoke('chat:refreshEmotes') as Promise<void>
+  },
   getReplyThread(channelId: string, threadToken: string): Promise<ChatMessage[]> {
     return ipcRenderer.invoke('chat:getReplyThread', channelId, threadToken) as Promise<
       ChatMessage[]

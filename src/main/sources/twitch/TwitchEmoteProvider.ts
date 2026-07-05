@@ -39,11 +39,16 @@ export function emoteFromHelix(raw: HelixEmote, template: string): ResolvedEmote
  * so callers pass them in; any failure (including a missing scope → 401) yields `[]`.
  */
 export class TwitchEmoteProvider {
-  fetchGlobal(helix: HelixFetch): Promise<ResolvedEmote[]> {
-    return this.#fetchPage(`${HELIX}/chat/emotes/global`, helix)
+  async fetchGlobal(helix: HelixFetch): Promise<ResolvedEmote[]> {
+    return (await this.#fetchPage(`${HELIX}/chat/emotes/global`, helix)) ?? []
   }
 
-  fetchChannel(roomId: string, helix: HelixFetch): Promise<ResolvedEmote[]> {
+  /**
+   * This channel's native emotes, or `undefined` when the fetch itself failed (transport/API error)
+   * — distinct from `[]` for a channel with no emotes, so a refresh can clear a stale catalog on a
+   * valid-empty result without a failed fetch wiping good emotes.
+   */
+  fetchChannel(roomId: string, helix: HelixFetch): Promise<ResolvedEmote[] | undefined> {
     const url = `${HELIX}/chat/emotes?broadcaster_id=${encodeURIComponent(roomId)}`
     return this.#fetchPage(url, helix)
   }
@@ -71,10 +76,10 @@ export class TwitchEmoteProvider {
     return out
   }
 
-  async #fetchPage(url: string, helix: HelixFetch): Promise<ResolvedEmote[]> {
+  async #fetchPage(url: string, helix: HelixFetch): Promise<ResolvedEmote[] | undefined> {
     const body = await this.#fetchRaw(url, helix)
     if (body === undefined) {
-      return []
+      return undefined
     }
     const template = body.template ?? DEFAULT_TEMPLATE
     return (body.data ?? []).map((raw) => emoteFromHelix(raw, template))

@@ -219,14 +219,32 @@ export class SourceManager {
 
   /** Disconnect and reconnect every source of a platform (e.g. after Twitch login/logout). */
   async reconnectByPlatform(platform: Platform): Promise<void> {
-    const targets = [...this.#sources.values()].filter((source) => source.platform === platform)
-    for (const source of targets) {
+    await this.#reconnectSources(
+      [...this.#sources.values()].filter((source) => source.platform === platform)
+    )
+  }
+
+  /**
+   * Reconnect every registered source — the wake/watchdog recovery path (see {@link KeepAlive}). After
+   * a sleep, both connectors' sockets are half-open and silently dead, so reconnecting discards them.
+   */
+  async reconnectAll(): Promise<void> {
+    await this.#reconnectSources([...this.#sources.values()])
+  }
+
+  async #reconnectSources(sources: ChatSource[]): Promise<void> {
+    for (const source of sources) {
       try {
         await source.disconnect()
+        // The source may have been removed (remove() awaits its own disconnect) while this one was
+        // disconnecting — don't reconnect a channel the user closed and leak its connection.
+        if (this.#sources.get(source.id) !== source) {
+          continue
+        }
         await source.connect()
       } catch (error) {
-        // One channel's failed handshake must not abandon the rest of the platform's
-        // reconnects; surface the failure on that column (unless it was removed meanwhile).
+        // One channel's failed handshake must not abandon the rest of the reconnects; surface the
+        // failure on that column (unless it was removed meanwhile).
         if (this.#sources.get(source.id) !== source) {
           continue
         }
@@ -292,6 +310,13 @@ export class SourceManager {
     userId: string
   ): Promise<UserModerationActivity | undefined> {
     return await this.#sources.get(channelId)?.getUserModerationHistory?.(userId)
+  }
+
+  /** Re-fetch every source's native emotes (Twitch channel emotes, YouTube emoji catalogs). */
+  async refreshEmotes(): Promise<void> {
+    await Promise.all(
+      [...this.#sources.values()].map((source) => source.refreshEmotes?.() ?? Promise.resolve())
+    )
   }
 
   async disposeAll(): Promise<void> {

@@ -6,7 +6,7 @@
  */
 // Type-only both ways (donations.ts imports `Platform` from here), so the cycle is erased at
 // compile time and never exists at runtime.
-import type { Donation, RateTable } from '@shared/donations'
+import type { Donation, DonationsSnapshot, RateTable } from '@shared/donations'
 
 export type Platform = 'twitch' | 'youtube'
 
@@ -690,6 +690,11 @@ export interface ChatApi {
    * crash-reload) can refill its buffers instead of opening empty.
    */
   getBacklog(): Promise<ChatEvent[]>
+  /** The donations panel's opening state: stored donations, rates, and the session start. */
+  getDonations(): Promise<DonationsSnapshot>
+  /** Mark the named donations read (or unread); the change echoes back as a `donationsRead` event. */
+  markDonationsRead(ids: string[], read: boolean): Promise<void>
+  markAllDonationsRead(): Promise<void>
   listChannels(): Promise<ChannelInfo[]>
   /** Send a message. `reply` carries the Twitch native-reply + thread target; YouTube tags the user inline and ignores it. */
   send(channelId: string, text: string, reply?: SendReply): Promise<SendResult>

@@ -78,3 +78,15 @@ export const DONATION_RETENTION = 1000
 
 /** The donations tab's fixed column id, alongside the flagged view's. */
 export const DONATIONS_COLUMN_ID = 'donations'
+
+/** Everything the donations panel needs to open, fetched once on mount. */
+export interface DonationsSnapshot {
+  donations: Donation[]
+  rates: RateTable | undefined
+  /** Which provider supplied the rates, for the attribution line. */
+  rateSource: string | undefined
+  /** The resolved currency to convert into (the setting, or the OS locale when unset). */
+  baseCurrency: string
+  /** App-start time — totals cover this session only, and a renderer reload must not reset it. */
+  sessionStartedAt: number
+}

@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import type { DonationsSnapshot } from '@shared/donations'
 import {
   type AddStreamsResult,
   type AppSettings,
@@ -54,6 +55,11 @@ export interface IpcDeps {
   getMainWindow(): BrowserWindow | undefined
   /** A snapshot of both platforms' login state for the renderer. */
   authState(): AuthState
+  /** Everything the donations panel needs to open: the stored list, rates, and the session start. */
+  donationsSnapshot(): DonationsSnapshot
+  /** Set read state on the named donations; broadcasts what actually changed. */
+  markDonationsRead(ids: string[], read: boolean): void
+  markAllDonationsRead(): void
   /** Push an auth snapshot to the renderer through the event batcher. */
   broadcastAuth(): void
   /** The retained chat history, replayed into a fresh renderer (startup race, crash-reload). */
@@ -95,6 +101,18 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle('chat:listChannels', () => activeManager.list())
   handle('chat:getBacklog', () => deps.backlogSnapshot())
+  handle('chat:getDonations', () => deps.donationsSnapshot())
+  handle('chat:markDonationsRead', (_event, ids, read) => {
+    if (Array.isArray(ids) && typeof read === 'boolean') {
+      deps.markDonationsRead(
+        ids.filter((id): id is string => typeof id === 'string'),
+        read
+      )
+    }
+  })
+  handle('chat:markAllDonationsRead', () => {
+    deps.markAllDonationsRead()
+  })
   handle('chat:send', async (_event, channelId, text, reply, clientTime): Promise<SendResult> => {
     if (typeof channelId !== 'string' || typeof text !== 'string' || !isValidSendReply(reply)) {
       return { ok: false, error: 'Invalid send request' }

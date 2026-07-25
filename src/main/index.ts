@@ -22,6 +22,9 @@ import {
 import { AutoMod } from '@main/AutoMod'
 import { EventBatcher } from '@main/Batcher'
 import { ChatLogger } from '@main/ChatLogger'
+import { DonationStore } from '@main/DonationStore'
+import { RateService } from '@main/RateService'
+import { localeCurrency } from '@shared/currencyFormat'
 import { EventBacklog } from '@main/EventBacklog'
 import { ConfigStore } from '@main/ConfigStore'
 import { closeDebugLog, debugLog, debugLogEnabled, initDebugLog } from '@main/debugLog'
@@ -235,6 +238,10 @@ let manager: SourceManager | undefined
 let keepAlive: KeepAlive | undefined
 let batcher: EventBatcher | undefined
 let chatLogger: ChatLogger | undefined
+let donationStore: DonationStore | undefined
+let rateService: RateService | undefined
+/** App-start time: the donations panel's totals cover this session only (spec FR-20). */
+const sessionStartedAt = Date.now()
 let configStore: ConfigStore | undefined
 let authStore: AuthStore | undefined
 let authManager: TwitchAuthManager | undefined
@@ -252,6 +259,46 @@ function defaultLogDir(): string {
 function effectiveLogDir(): string {
   const dir = configStore?.settings().chatLog.directory.trim()
   return dir !== undefined && dir !== '' ? dir : defaultLogDir()
+}
+
+/**
+ * Collect a paid event into the donations panel and tell the renderer about it.
+ *
+ * Sits on the same funnel every event already crosses, so the panel sees a donation whichever tab is
+ * in view — and, because the store is durable, whether or not a renderer is even attached.
+ */
+function collectDonation(event: ChatEvent): void {
+  if (event.kind !== 'message' || donationStore === undefined) {
+    return
+  }
+  const donation = donationStore.record(event.message, event.channelId)
+  if (donation !== undefined) {
+    batcher?.push({ kind: 'donation', donation })
+  }
+}
+
+/** The currency to convert into: the user's choice, or the OS locale when they've made none. */
+function effectiveBaseCurrency(): string {
+  const chosen = configStore?.settings().baseCurrency ?? ''
+  return chosen === '' ? localeCurrency(app.getLocale()) : chosen
+}
+
+/**
+ * Bring exchange rates up to date, in the background. Deliberately not awaited anywhere: rates are a
+ * nicety on top of amounts the panel can already show, so nothing waits on the network for them.
+ */
+function refreshRates(): void {
+  const service = rateService
+  if (service === undefined) {
+    return
+  }
+  const before = service.table()
+  void service.refresh(effectiveBaseCurrency()).then(() => {
+    const after = service.table()
+    if (after !== undefined && after !== before) {
+      batcher?.push({ kind: 'rates', table: after })
+    }
+  })
 }
 
 /** (Re)open or close the chat logger from settings. */
@@ -504,6 +551,7 @@ void app
       recordChatEvent(event)
       backlog.record(event)
       batcher?.push(event)
+      collectDonation(event)
     }
     const sourceManager = new SourceManager(
       (event) => {
@@ -579,6 +627,25 @@ void app
       authState,
       broadcastAuth,
       backlogSnapshot: () => backlog.snapshot(),
+      donationsSnapshot: () => ({
+        donations: donationStore?.list() ?? [],
+        rates: rateService?.table(),
+        rateSource: rateService?.source(),
+        baseCurrency: effectiveBaseCurrency(),
+        sessionStartedAt
+      }),
+      markDonationsRead: (ids, read) => {
+        const changed = donationStore?.markRead(ids, read) ?? []
+        if (changed.length > 0) {
+          batcher?.push({ kind: 'donationsRead', ids: changed, read })
+        }
+      },
+      markAllDonationsRead: () => {
+        const changed = donationStore?.markAllRead() ?? []
+        if (changed.length > 0) {
+          batcher?.push({ kind: 'donationsRead', ids: changed, read: true })
+        }
+      },
       startTwitchLogin,
       twitchLoginResult: () => twitchLoginCompletion,
       applyChatLog,
@@ -616,6 +683,14 @@ void app
     configStore = config
     applyChatLog(config.settings().chatLog)
     applyKeepAwake(config.settings().keepAwake)
+    // Donations outlive the renderer's buffers, so their store opens with the app rather than with a
+    // window. Rates refresh in the background on a daily timer; nothing waits on either.
+    const userDataDir = app.getPath('userData')
+    donationStore = new DonationStore({ dir: userDataDir })
+    rateService = new RateService({ dir: userDataDir })
+    refreshRates()
+    const rateTimer = setInterval(refreshRates, 24 * 60 * 60 * 1000)
+    rateTimer.unref()
 
     const emotes = new EmoteEngine(undefined, () => config.settings().emoteProviders)
     emoteEngine = emotes
@@ -906,6 +981,9 @@ app.on('before-quit', (event) => {
   debugLog('app', 'quitting')
   keepAlive?.stop()
   batcher?.dispose()
+  // Writes are debounced, so a donation (or a read tick) from the last second would otherwise be
+  // lost to the forced exit below. Synchronous, so it completes before the race starts.
+  donationStore?.flush()
   // close() resolves when the log's WriteStream has flushed; include it in the shutdown race
   // so tail writes reach disk before the forced app.exit below can terminate the process.
   const logFlushed = chatLogger?.close() ?? Promise.resolve()

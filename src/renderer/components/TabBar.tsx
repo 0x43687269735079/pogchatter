@@ -5,6 +5,8 @@ import { channelTabStatus, monitorTabStatus, type TabStatus } from '@renderer/st
 import type { UnreadLevel } from '@renderer/unread'
 
 interface TabBarProps {
+  /** Unacknowledged donations, shown as a count on the donations tab (0 hides it). */
+  donationsUnread?: number | undefined
   columns: Column[]
   /** All channels, to resolve a monitor tab's online status from its members. */
   channels: ChannelInfo[]
@@ -22,13 +24,15 @@ interface TabBarProps {
 interface TabInfo {
   id: string
   label: string
-  accent: 'tw' | 'yt' | 'mon' | 'flagged'
+  accent: 'tw' | 'yt' | 'mon' | 'flagged' | 'don'
+  /** A count rendered beside the label (the donations tab's unread badge). */
+  badge?: number
   status: TabStatus
   closable: boolean
 }
 
 /** The label, platform accent, status dot, and closability a column shows as a tab. */
-function describe(column: Column, channels: ChannelInfo[]): TabInfo {
+function describe(column: Column, channels: ChannelInfo[], donationsUnread: number): TabInfo {
   if (column.kind === 'channel') {
     return {
       id: column.id,
@@ -47,6 +51,17 @@ function describe(column: Column, channels: ChannelInfo[]): TabInfo {
       closable: true
     }
   }
+  if (column.kind === 'donations') {
+    // Pinned like the flagged view; the badge is what draws the eye when money arrives.
+    return {
+      id: column.id,
+      label: 'donations',
+      accent: 'don',
+      status: 'none',
+      closable: false,
+      badge: donationsUnread
+    }
+  }
   // The built-in flagged-for-review view: pinned (not closable), no live status.
   return { id: column.id, label: 'flagged', accent: 'flagged', status: 'none', closable: false }
 }
@@ -61,6 +76,7 @@ export function TabBar({
   channels,
   activeId,
   unread,
+  donationsUnread = 0,
   onSelect,
   onRemove,
   onReorder,
@@ -70,7 +86,7 @@ export function TabBar({
   return (
     <div className="pc-tabbar" role="tablist" aria-label="Chats">
       {columns.map((column, index) => {
-        const info = describe(column, channels)
+        const info = describe(column, channels, donationsUnread)
         const active = info.id === activeId
         // The active tab is on screen, so it never shows an unread indicator.
         const level: UnreadLevel = active ? 'none' : (unread?.get(info.id) ?? 'none')
@@ -105,6 +121,11 @@ export function TabBar({
           >
             {info.status !== 'none' ? <span className={`pc-tab-dot ${info.status}`} /> : null}
             <span className="pc-tab-label">{info.label}</span>
+            {info.badge !== undefined && info.badge > 0 ? (
+              <span className="pc-tab-badge" title={`${info.badge} unread`}>
+                {info.badge > 99 ? '99+' : info.badge}
+              </span>
+            ) : null}
             {level !== 'none' ? (
               <span
                 className={`pc-tab-unread ${level}`}

@@ -26,6 +26,13 @@ import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
 import { DonationThreadModal } from '@renderer/components/DonationThreadModal'
+import { DonationsPanel } from '@renderer/components/DonationsPanel'
+import {
+  applyDonationEvents,
+  type DonationsState,
+  EMPTY_DONATIONS,
+  unreadCount
+} from '@renderer/donationsState'
 import { ThreadModal } from '@renderer/components/ThreadModal'
 import { buildThreadView } from '@renderer/threads'
 import { SearchModal } from '@renderer/components/SearchModal'
@@ -47,6 +54,7 @@ import {
   resolveHeldMessage
 } from '@renderer/chatState'
 import {
+  DONATIONS_COLUMN_ID,
   FLAGGED_COLUMN_ID,
   moveColumnBy,
   moveColumnTo,
@@ -102,6 +110,8 @@ export function App(): ReactElement {
   const [threadView, setThreadView] = useState<
     { channelId: string; rootId: string; replyToId?: string } | undefined
   >(undefined)
+  // Donations are owned by main and projected here; the tab's badge derives from this list.
+  const [donations, setDonations] = useState<DonationsState>(EMPTY_DONATIONS)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
@@ -216,6 +226,7 @@ export function App(): ReactElement {
         applyEventsToMessages(prev, fresh, settingsRef.current.bufferSize, paused)
       )
       setChannels((prev) => applyEventsToChannels(prev, fresh))
+      setDonations((prev) => applyDonationEvents(prev, fresh))
       if (batch.flashed.size > 0) {
         const now = Date.now()
         setPingedAt((prev) => {
@@ -244,6 +255,17 @@ export function App(): ReactElement {
     // Refill the buffers from main's replay ring (startup backlog, crash-reload history) without
     // firing alert side effects — these lines were alerted on first delivery, or predate this
     // renderer. Tagging still runs so highlights and the flagged review view survive a reload.
+    // The donations panel opens from main's durable store, not from the chat buffers.
+    void window.chat
+      .getDonations()
+      .then((snapshot) => {
+        if (active) {
+          setDonations((prev) => ({ ...prev, ...snapshot }))
+        }
+      })
+      .catch(() => {
+        // Panel opens empty; live donations still arrive as events.
+      })
     void window.chat
       .getBacklog()
       .then((events) => {
@@ -371,6 +393,9 @@ export function App(): ReactElement {
     .map((id): Column | undefined => {
       if (id === FLAGGED_COLUMN_ID) {
         return flaggedVisible ? { kind: 'flagged', id } : undefined
+      }
+      if (id === DONATIONS_COLUMN_ID) {
+        return { kind: 'donations', id }
       }
       const channel = channels.find((c) => c.id === id)
       if (channel !== undefined) {
@@ -798,6 +823,34 @@ export function App(): ReactElement {
         />
       )
     }
+    if (column.kind === 'donations') {
+      return (
+        <DonationsPanel
+          key={column.id}
+          id={column.id}
+          state={donations}
+          channels={channels}
+          showConverted={settings.showConvertedAmounts}
+          active={active}
+          width={width}
+          canMoveLeft={canMoveLeft}
+          canMoveRight={canMoveRight}
+          inTab={inTab}
+          onActivate={setActiveId}
+          onJump={jumpToChannel}
+          onMarkRead={(ids, read) => {
+            void window.chat.markDonationsRead(ids, read)
+          }}
+          onMarkAllRead={() => {
+            void window.chat.markAllDonationsRead()
+          }}
+          onMove={moveColumn}
+          onResize={(viewId, value) => {
+            setWidths((prev) => ({ ...prev, [viewId]: value }))
+          }}
+        />
+      )
+    }
     return (
       <CombinedColumn
         key={column.id}
@@ -891,6 +944,7 @@ export function App(): ReactElement {
               channels={channels}
               activeId={activeId}
               unread={unread}
+              donationsUnread={unreadCount(donations)}
               onSelect={selectTab}
               onRemove={removeColumn}
               onReorder={moveColumnToIndex}

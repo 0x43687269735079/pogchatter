@@ -2458,3 +2458,98 @@ body,
   font-size: var(--fs-ui);
   color: var(--err);
 }
+
+/* ── Donations panel ─────────────────────────────────────────────────────── */
+.pc-col.don .pc-stream {
+  padding: 0 var(--gut);
+}
+/* A short notice above the feed: stale rates, or amounts left out of the total. */
+.pc-don-note {
+  flex: 0 0 auto;
+  padding: 5px var(--gut);
+  font-size: var(--fs-small);
+  color: var(--warn);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-don-foot {
+  flex: 0 0 auto;
+  padding: 4px var(--gut);
+  font-size: 10px;
+  color: var(--dimmer);
+  border-top: 1px solid var(--rule);
+}
+.pc-don-day {
+  padding: 8px 0 3px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--dimmer);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-don-row {
+  /* Long feeds stay cheap to paint, matching how the chat stream defers offscreen rows. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 76px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+}
+/* Read rows recede, but the state is also spelled out on the button — never colour alone. */
+.pc-don-row.read {
+  opacity: 0.55;
+}
+.pc-don-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pc-don-amount {
+  font-weight: 700;
+  color: var(--accent);
+}
+.pc-don-flag {
+  font-size: 13px;
+}
+.pc-don-code,
+.pc-don-time {
+  font-size: 10px;
+  color: var(--dimmer);
+}
+.pc-don-author {
+  color: var(--fg);
+}
+.pc-don-conv {
+  font-size: var(--fs-small);
+  color: var(--dim);
+}
+.pc-don-text {
+  padding-top: 2px;
+  overflow-wrap: anywhere;
+}
+.pc-don-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  font-size: 10px;
+  color: var(--dimmer);
+}
+.pc-don-chan {
+  margin-right: auto;
+}
+.pc-don-removed {
+  color: var(--err);
+}
+/* Unread donations count on its tab — a number, not just a dot, since the amount matters. */
+.pc-tab-badge {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
+}
+.pc-tab.don .pc-tab-label {
+  color: var(--accent);
+}

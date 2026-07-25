@@ -251,6 +251,51 @@ export function SettingsModal({
 
         <label className="pc-setting">
           <span className="pc-setting-meta">
+            <span className="pc-setting-name">donation currency</span>
+            <span className="pc-setting-desc">
+              Currency the donations panel converts amounts into. Leave blank to follow your system.
+              Rates come from frankfurter.dev (open.er-api.com if that is unreachable), fetched once
+              a day; amounts still show exactly as the platform sent them when rates are
+              unavailable.
+            </span>
+          </span>
+          <input
+            type="text"
+            className="pc-input-sm"
+            value={settings.baseCurrency}
+            placeholder="auto"
+            maxLength={3}
+            spellCheck={false}
+            aria-label="Donation base currency (ISO code)"
+            onChange={(event) => {
+              // Sanitised again in main; this keeps the field itself from accepting nonsense.
+              const code = event.target.value.toUpperCase().replace(/[^A-Z]/gu, '')
+              if (code === '' || code.length === 3) {
+                onChange({ baseCurrency: code })
+              }
+            }}
+          />
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
+            <span className="pc-setting-name">show converted amounts</span>
+            <span className="pc-setting-desc">
+              Show an approximate amount in your own currency beside each donation&rsquo;s original.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="pc-switch"
+            checked={settings.showConvertedAmounts}
+            onChange={(event) => {
+              onChange({ showConvertedAmounts: event.target.checked })
+            }}
+          />
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
             <span className="pc-setting-name">developer options</span>
             <span className="pc-setting-desc">Show experimental features and debug modes.</span>
           </span>

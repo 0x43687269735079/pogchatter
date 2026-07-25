@@ -167,11 +167,13 @@ export function DonationsPanel({
 const KIND_LABELS: Record<Platform, Partial<Record<DonationKind, string>>> = {
   youtube: {
     superchat: 'super chats',
+    tip: 'tips',
     supersticker: 'stickers',
     membership: 'members',
     membership_gift: 'gifted members'
   },
   twitch: {
+    tip: 'tips',
     bits: 'bits',
     subscription: 'subs',
     membership_gift: 'gifted subs'

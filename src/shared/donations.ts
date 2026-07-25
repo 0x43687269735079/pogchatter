@@ -14,6 +14,8 @@ export type DonationKind =
   | 'membership_gift'
   | 'bits'
   | 'subscription'
+  /** A tip taken outside the platform (StreamElements and friends), announced by a bot in chat. */
+  | 'tip'
 
 /**
  * What the platform actually gave us, discriminated by unit.

@@ -154,3 +154,40 @@ describe('RateService coverage and request budget', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('RateService coverage recovery', () => {
+  it('fetches again when a donation needs a currency the table lacks', async () => {
+    // The narrow fallback covers 30 currencies; a Costa Rican tip under it would otherwise stay
+    // unconvertible until the next daily tick.
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(fail())
+      .mockResolvedValueOnce(ok({ JPY: 190 }))
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
+    await service.refresh('GBP')
+    expect(service.source()).toBe('Frankfurter') // on the narrow provider
+
+    fetchFn.mockResolvedValue(ok({ JPY: 190, CRC: 609 }))
+    service.recoverMissing('GBP', 'CRC')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(service.table()?.rates['CRC']).toBe(609)
+  })
+
+  it('does not re-ask when the widest provider already answered and simply has no such rate', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(ok({ JPY: 190 }))
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
+    await service.refresh('GBP')
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+
+    service.recoverMissing('GBP', 'XYZ') // fresh, from the widest source — asking again is pointless
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('does nothing when the rate is already there', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(ok({ JPY: 190 }))
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
+    await service.refresh('GBP')
+    service.recoverMissing('GBP', 'JPY')
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+  })
+})

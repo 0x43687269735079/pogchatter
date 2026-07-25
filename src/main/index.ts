@@ -285,8 +285,15 @@ function collectDonation(event: ChatEvent): void {
     return
   }
   const donation = donationStore.record(event.message, event.channelId)
-  if (donation !== undefined) {
-    batcher?.push({ kind: 'donation', donation })
+  if (donation === undefined) {
+    return
+  }
+  batcher?.push({ kind: 'donation', donation })
+  // A currency we hold no rate for: ask again rather than leaving the donation permanently
+  // unconvertible. Conversion itself happens at render time, so a later table converts this
+  // donation retroactively without anything having to revisit it.
+  if (donation.value.unit === 'money') {
+    rateService?.recoverMissing(effectiveBaseCurrency(), donation.value.currency)
   }
 }
 

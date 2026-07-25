@@ -5,6 +5,11 @@ import { proxiedFetch } from '@main/net/proxy'
 
 /** Rates are daily figures at both providers, so asking more often only adds traffic. */
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
+/**
+ * Floor between coverage-recovery fetches. Separate from the daily refresh: this one is triggered by
+ * a donation in an uncovered currency, so it must not let an unlucky stream become a request stream.
+ */
+const RECOVERY_INTERVAL_MS = 60 * 60 * 1000
 /** A rate fetch is never worth making anyone wait; it is background work with a hard ceiling. */
 const FETCH_TIMEOUT_MS = 10_000
 
@@ -66,6 +71,8 @@ export class RateService {
   #inFlight: Promise<void> | undefined
   /** Which base the in-flight fetch is for, so a different one is not silently satisfied by it. */
   #inFlightBase: string | undefined
+  /** When a coverage-recovery fetch was last attempted; undefined means never (see recoverMissing). */
+  #lastRecovery: number | undefined
 
   constructor(deps: RateServiceDeps) {
     this.#path = join(deps.dir, 'rates.json')
@@ -112,6 +119,39 @@ export class RateService {
       this.#inFlightBase = undefined
     })
     return this.#inFlight
+  }
+
+  /**
+   * A donation arrived in a currency the cached table doesn't cover — try again, if there is reason
+   * to think trying would help.
+   *
+   * A table from the widest provider that is still fresh has already answered this question: the
+   * currency genuinely isn't offered, and asking again would only spend requests. It is worth a
+   * retry when we are running on the narrow fallback, have nothing at all, or are serving something
+   * stale. Bounded to {@link RECOVERY_INTERVAL_MS} so a stream full of an uncovered currency cannot
+   * turn into a stream of requests. Fire-and-forget; never rejects.
+   */
+  recoverMissing(base: string, currency: string): void {
+    const code = currency.toUpperCase()
+    const table = this.#table
+    if (table !== undefined && table.rates[code] !== undefined) {
+      return
+    }
+    const onWidestAndFresh =
+      table !== undefined && !table.stale && this.#source === PROVIDERS[0]?.name
+    if (onWidestAndFresh) {
+      return
+    }
+    // Explicitly "never" rather than a zero sentinel: `now() - 0` is only large when the clock is,
+    // which would make the first recovery depend on the epoch rather than on having not run yet.
+    const now = this.#now()
+    const last = this.#lastRecovery
+    if (last !== undefined && now - last < RECOVERY_INTERVAL_MS) {
+      return
+    }
+    this.#lastRecovery = now
+    // Past the freshness check deliberately: the cache is not the problem, its coverage is.
+    void this.#fetchFrom(base.toUpperCase())
   }
 
   async #fetchFrom(base: string): Promise<void> {

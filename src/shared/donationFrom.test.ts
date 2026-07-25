@@ -115,3 +115,33 @@ describe('donationFrom exclusions', () => {
     expect(donationFrom(emoteOnly, 'yt:v')?.text).toBe('KappaPogChamp')
   })
 })
+
+describe('donationFrom tips announced in chat', () => {
+  function botTip(text: string, login = 'streamelements'): ChatMessage {
+    const built = message()
+    built.author = { id: 'b', name: login, displayName: login, badges: [], roles: {} as never }
+    built.fragments = [{ type: 'text', text }]
+    return built
+  }
+
+  it('collects a StreamElements tip, crediting the donor rather than the bot', () => {
+    const donation = donationFrom(
+      botTip("kota3684 just tipped £100.00! thanks~ here's what they say: hippo birdie"),
+      'tw:chan'
+    )
+    expect(donation?.kind).toBe('tip')
+    expect(donation?.author.displayName).toBe('kota3684')
+    expect(donation?.value).toEqual({
+      unit: 'money',
+      amount: 100,
+      currency: 'GBP',
+      original: '£100.00'
+    })
+    expect(donation?.text).toBe('hippo birdie')
+  })
+
+  it('will not take a tip announcement from an ordinary viewer', () => {
+    // Without the bot check, anyone could type this and plant money in the streamer's records.
+    expect(donationFrom(botTip('x just tipped £500.00!', 'some_viewer'), 'tw:chan')).toBeUndefined()
+  })
+})

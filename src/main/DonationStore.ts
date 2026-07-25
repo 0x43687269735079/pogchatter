@@ -197,6 +197,7 @@ export class DonationStore {
 
 const KINDS: ReadonlySet<string> = new Set([
   'superchat',
+  'tip',
   'supersticker',
   'membership',
   'membership_gift',
@@ -261,7 +262,8 @@ const UNITS_FOR_KIND: Record<DonationKind, ReadonlySet<string>> = {
   bits: new Set(['bits']),
   membership: new Set(['count']),
   membership_gift: new Set(['count']),
-  subscription: new Set(['count'])
+  subscription: new Set(['count']),
+  tip: new Set(['money', 'money-unparsed'])
 }
 
 /**

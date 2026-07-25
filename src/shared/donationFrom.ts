@@ -1,6 +1,7 @@
 import type { ChatMessage, Highlight } from '@shared/model'
 import type { Donation, DonationKind, DonationValue } from '@shared/donations'
 import { parseAmount } from '@shared/currencyParse'
+import { parseTipAnnouncement } from '@shared/tipMessage'
 
 /**
  * The single definition of "is this a donation" (spec FR-2). Every other part of the feature trusts
@@ -22,14 +23,20 @@ const KINDS: Partial<Record<Highlight['kind'], DonationKind>> = {
 
 /** A donation for a qualifying message, else `undefined`. New donations start unread. */
 export function donationFrom(message: ChatMessage, channelId: string): Donation | undefined {
-  const highlight = message.highlight
-  if (highlight === undefined) {
-    return undefined
-  }
   // Chat history fetched from the third-party recent-messages service predates the session and was
   // never the user's to acknowledge; the rest of the app already treats it as second-class (it never
   // alerts, never auto-moderates, and its ids are untrusted), so it is not collected as income either.
   if (message.backlog === true) {
+    return undefined
+  }
+  // A bot's tip announcement is an ordinary chat message carrying no highlight, so it has to be
+  // recognised before the highlight is required — not after.
+  const tip = tipDonation(message, channelId)
+  if (tip !== undefined) {
+    return tip
+  }
+  const highlight = message.highlight
+  if (highlight === undefined) {
     return undefined
   }
   // A milestone from a long-standing member, or a gifted membership reaching its recipient: real
@@ -95,4 +102,39 @@ function textOf(message: ChatMessage): string {
     })
     .join('')
     .trim()
+}
+
+/**
+ * A tip a donation bot announced in chat (StreamElements and friends), collected as a donation in
+ * its own right — see {@link parseTipAnnouncement} for why chat is the only source available to
+ * someone who isn't the streamer.
+ *
+ * The donor is credited as the author, not the bot: the bot is a messenger, and attributing the
+ * money to it would make the panel useless for thanking anyone. Their platform id is unknowable from
+ * a chat announcement, so only the name they were given is carried.
+ */
+function tipDonation(message: ChatMessage, channelId: string): Donation | undefined {
+  const tip = parseTipAnnouncement(message)
+  if (tip === undefined) {
+    return undefined
+  }
+  const parsed = parseAmount(tip.amount)
+  const donation: Donation = {
+    id: message.id,
+    channelId,
+    platform: message.platform,
+    kind: 'tip',
+    author: { id: '', displayName: tip.donor },
+    timestamp: message.timestamp,
+    value:
+      parsed === undefined
+        ? { unit: 'money-unparsed', original: tip.amount }
+        : { unit: 'money', amount: parsed.amount, currency: parsed.currency, original: tip.amount },
+    text: tip.text,
+    read: false
+  }
+  if (message.deleted === true) {
+    donation.removed = true
+  }
+  return donation
 }

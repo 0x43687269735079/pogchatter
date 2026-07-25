@@ -27,9 +27,49 @@ describe('splitChatMessage', () => {
     expect(splitChatMessage(exact)).toEqual([exact])
   })
 
-  it('keeps every chunk within the limit', () => {
-    for (const chunk of splitChatMessage('word '.repeat(400))) {
+  it('keeps every chunk within the limit, including for input built to break it', () => {
+    // The invariant is only worth asserting against input that could actually violate it: an
+    // unbroken run with no spaces to break on, emoji at both parities against the cut, a giant
+    // grapheme cluster ("Zalgo" text is one base character plus hundreds of combining marks), and
+    // ordinary prose. Friendly evenly-spaced words alone cannot fail however the loop is written.
+    const cases = [
+      'word '.repeat(400),
+      'a'.repeat(1500),
+      '🎉'.repeat(400),
+      `x${'🎉'.repeat(400)}`,
+      `a${'́'.repeat(700)}`,
+      `${'a'.repeat(496)}👨‍👩‍👧‍👦 tail`,
+      `${'a'.repeat(10)} ${'b'.repeat(980)}`
+    ]
+    for (const text of cases) {
+      for (const chunk of splitChatMessage(text)) {
+        expect(chunk.length, `input: ${text.slice(0, 16)}…`).toBeLessThanOrEqual(
+          TWITCH_MESSAGE_LIMIT
+        )
+      }
+    }
+  })
+
+  it('breaks a single oversized grapheme cluster rather than letting it through whole', () => {
+    // One cluster longer than the whole allowance cannot be kept intact. It must still be broken on
+    // code-point boundaries, or twurple's raw-index splitter gets it and tears surrogate pairs.
+    const zalgo = `a${'́'.repeat(700)}`
+    const chunks = splitChatMessage(zalgo)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(TWITCH_MESSAGE_LIMIT)
+      expect(chunk).not.toMatch(/[\uD800-\uDFFF]/u)
+    }
+    expect(chunks.join('')).toBe(zalgo)
+  })
+
+  it('does not tear surrogate pairs when it has to break a cluster of emoji modifiers', () => {
+    // A long run of skin-tone/ZWJ joined emoji forming one cluster: the fallback split must land
+    // between code points, never inside a surrogate pair.
+    const cluster = `👍${'\u{1F3FB}'.repeat(300)}`
+    for (const chunk of splitChatMessage(cluster)) {
+      expect(chunk.length).toBeLessThanOrEqual(TWITCH_MESSAGE_LIMIT)
+      expect(chunk).not.toMatch(/[\uD800-\uDFFF]/u)
     }
   })
 

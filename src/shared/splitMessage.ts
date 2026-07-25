@@ -43,6 +43,17 @@ export function splitChatMessage(text: string, limit: number = TWITCH_MESSAGE_LI
   }
 
   for (const { segment } of graphemes.segment(text)) {
+    if (segment.length > limit) {
+      // One cluster longer than the entire allowance — "Zalgo" text is a single base character with
+      // hundreds of combining marks. It cannot be kept whole, and passing it through would hand an
+      // over-limit chunk to twurple's raw-index splitter, reintroducing the tearing this module
+      // exists to prevent. Break it on code-point boundaries so surrogate pairs at least survive.
+      flush(chunk.length)
+      for (const piece of splitCodePoints(segment, limit)) {
+        chunks.push(piece)
+      }
+      continue
+    }
     if (chunk.length + segment.length > limit) {
       // Prefer the last word boundary; fall back to the cluster boundary for one unbroken run.
       flush(wordBreak > 0 ? wordBreak : chunk.length)
@@ -57,4 +68,21 @@ export function splitChatMessage(text: string, limit: number = TWITCH_MESSAGE_LI
     chunks.push(tail)
   }
   return chunks
+}
+
+/** `text` in `limit`-sized pieces that never split a surrogate pair (a last resort — see above). */
+function splitCodePoints(text: string, limit: number): string[] {
+  const pieces: string[] = []
+  let piece = ''
+  for (const codePoint of text) {
+    if (piece.length + codePoint.length > limit) {
+      pieces.push(piece)
+      piece = ''
+    }
+    piece += codePoint
+  }
+  if (piece !== '') {
+    pieces.push(piece)
+  }
+  return pieces
 }

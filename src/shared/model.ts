@@ -584,8 +584,14 @@ export const BUFFER_SIZE_OPTIONS = [100, 500, 1000, 2000, 5000] as const
  *
  * The two limits behave differently past the line: Twitch's 500 is soft, and a longer message is
  * split into several (see `splitChatMessage`); YouTube's 200 is hard, and it rejects a longer one.
+ *
+ * The unit is verified for Twitch — twurple's splitter and ours both measure `text.length`. For
+ * YouTube it is an assumption: the published limit says "200 characters" without defining the unit,
+ * so an emoji-heavy draft may be reported closer to the limit than it really is. The error runs in
+ * the safe direction (it never offers room the message doesn't have) and wants checking against a
+ * live chat before anyone relies on the exact figure.
  */
-export const MESSAGE_LIMIT: Record<Platform, number> = { twitch: 500, youtube: 200 }
+export const MESSAGE_LIMIT: Readonly<Record<Platform, number>> = { twitch: 500, youtube: 200 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   devMode: false,

@@ -1,4 +1,4 @@
-import { type ReactElement, useRef, useState } from 'react'
+import { type ReactElement, useEffect, useRef, useState } from 'react'
 import type { ChatMessage, SendReply } from '@shared/model'
 import { atName } from '@renderer/format'
 import { threadReplyTarget } from '@renderer/threads'
@@ -46,13 +46,17 @@ interface ContextMenuState {
 /** A compact composer that posts `reply` into the thread it belongs to. */
 function ThreadReplyBox({
   channelId,
-  reply
+  reply,
+  draft,
+  setDraft
 }: {
   channelId: string
   reply: SendReply
+  /** Held by {@link ThreadModal}, which pins the reply target while a draft is in progress. */
+  draft: string
+  setDraft: (value: string) => void
 }): ReactElement {
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const emoji = useEmojiInput(channelId, inputRef, setDraft)
@@ -167,6 +171,9 @@ export function ThreadModal({
   onClose
 }: ThreadModalProps): ReactElement {
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
+  const [draft, setDraft] = useState('')
+  // The implicit (newest-reply) target, frozen while a draft is in progress — see the effect below.
+  const [pinnedId, setPinnedId] = useState<string | undefined>(undefined)
   const replyCount = rootBuffered ? Math.max(0, messages.length - 1) : messages.length
 
   // What the composer answers: the picked message, else the newest reply. Either way the payload
@@ -175,8 +182,24 @@ export function ThreadModal({
     messages,
     rootId,
     rootAuthor,
-    replyToId
+    replyToId ?? pinnedId
   )
+
+  // With no explicit pick the target tracks the newest reply, which would otherwise move under a
+  // half-written draft when someone else answers first. Pin it at the first keystroke and release it
+  // when the draft clears, so the target is whoever was newest when the user started writing.
+  const targetId = replyToMessage?.id
+  useEffect(() => {
+    if (draft === '') {
+      setPinnedId(undefined)
+    } else if (pinnedId === undefined && targetId !== undefined) {
+      setPinnedId(targetId)
+    }
+  }, [draft, pinnedId, targetId])
+
+  // An explicit pick that has aged out of the buffer still replies correctly (the id is enough), but
+  // there's no message left to name in the chip.
+  const replyToUnbuffered = replyToMessage === undefined && replyTarget.parentId !== rootId
 
   return (
     <ModalShell className="pc-modal-wide" onClose={onClose}>
@@ -204,9 +227,15 @@ export function ThreadModal({
         )}
       </div>
       <div className="mf pc-thread-foot">
-        {canSend && replyToMessage !== undefined ? (
+        {canSend && (replyToMessage !== undefined || replyToUnbuffered) ? (
           <div className="pc-replybar">
-            replying to <b>@{replyToMessage.author.displayName}</b>
+            {replyToMessage !== undefined ? (
+              <>
+                replying to <b>@{replyToMessage.author.displayName}</b>
+              </>
+            ) : (
+              <>replying to an earlier message</>
+            )}
             {replyToId !== undefined ? (
               <button
                 type="button"
@@ -221,7 +250,14 @@ export function ThreadModal({
             ) : null}
           </div>
         ) : null}
-        {canSend ? <ThreadReplyBox channelId={channelId} reply={replyTarget} /> : null}
+        {canSend ? (
+          <ThreadReplyBox
+            channelId={channelId}
+            reply={replyTarget}
+            draft={draft}
+            setDraft={setDraft}
+          />
+        ) : null}
         <button type="button" className="pc-mbtn" onClick={onClose}>
           close
         </button>

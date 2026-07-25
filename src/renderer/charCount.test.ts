@@ -7,6 +7,19 @@ describe('charCount', () => {
     expect(charCount('', 'twitch')).toBeUndefined()
   })
 
+  it('measures what submit will actually send, not the trailing whitespace it strips', () => {
+    // Both composers send draft.trim(), so counting the raw draft would call a message that fits
+    // "over the limit".
+    const draft = `${'a'.repeat(MESSAGE_LIMIT.twitch)}          `
+    expect(charCount(draft, 'twitch')?.label).toBe('0 left')
+    expect(charCount(draft, 'twitch')?.tone).toBe('near')
+  })
+
+  it('stays silent for a whitespace-only draft however long it is', () => {
+    // Otherwise this reported "1 over — sends as 0 messages": the splitter trims every part away.
+    expect(charCount(' '.repeat(MESSAGE_LIMIT.twitch + 1), 'twitch')).toBeUndefined()
+  })
+
   it('counts down against the platform’s own limit', () => {
     expect(charCount('a'.repeat(100), 'twitch')?.label).toBe('400 left')
     expect(charCount('a'.repeat(100), 'youtube')?.label).toBe('100 left')

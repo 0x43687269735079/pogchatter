@@ -24,17 +24,21 @@ export interface CharCountState {
  * break lands early on a space), while YouTube rejects anything longer.
  */
 export function charCount(draft: string, platform: Platform): CharCountState | undefined {
-  if (draft === '') {
+  // Measure what will actually be sent: both composers submit `draft.trim()`, so counting the raw
+  // draft would charge for trailing spaces the message never carries — and would report a
+  // whitespace-only draft as over the limit and splitting into no messages at all.
+  const text = draft.trim()
+  if (text === '') {
     return undefined
   }
   const limit = MESSAGE_LIMIT[platform]
-  const remaining = limit - draft.length
+  const remaining = limit - text.length
   if (remaining < 0) {
     const over = -remaining
     return {
       label:
         platform === 'twitch'
-          ? `${over} over — sends as ${splitChatMessage(draft, limit).length} messages`
+          ? `${over} over — sends as ${splitChatMessage(text, limit).length} messages`
           : `${over} over the ${limit} limit`,
       tone: 'over'
     }

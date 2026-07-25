@@ -2168,6 +2168,10 @@ body,
 .pc-thread-input {
   position: relative;
 }
+/* The wrapper is one flex child, so .pc-thread-foot's gap no longer separates these two. */
+.pc-thread-input .pc-col-err {
+  margin-bottom: 8px;
+}
 /* The reply composer: a boxed textarea with a full-height send button beside it. */
 .pc-thread-reply {
   display: flex;

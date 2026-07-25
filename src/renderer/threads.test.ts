@@ -18,6 +18,8 @@ function msg(
     text?: string
     self?: boolean
     system?: boolean
+    deleted?: boolean
+    backlog?: boolean
   } = {}
 ): ChatMessage {
   const message: ChatMessage = {
@@ -39,6 +41,12 @@ function msg(
   }
   if (opts.system === true) {
     message.system = true
+  }
+  if (opts.deleted === true) {
+    message.deleted = true
+  }
+  if (opts.backlog === true) {
+    message.backlog = true
   }
   if (opts.threadId !== undefined) {
     message.reply = {
@@ -170,9 +178,30 @@ describe('threadReplyTarget', () => {
     expect(reply.parentId).toBe('r2')
   })
 
-  it('falls back to the newest reply when the picked message has left the buffer', () => {
-    const { reply } = threadReplyTarget(thread, 'root', 'Streamer', 'trimmed-away')
-    expect(reply.parentId).toBe('r2')
+  it('still answers a picked message that has left the buffer, rather than redirecting', () => {
+    // Twitch needs only the id to thread the reply, so a deliberate choice survives buffer churn.
+    // Nothing is left to quote, so no author or text is invented for it.
+    const { reply, message } = threadReplyTarget(thread, 'root', 'Streamer', 'trimmed-away')
+    expect(reply.parentId).toBe('trimmed-away')
+    expect(reply.threadId).toBe('root')
+    expect(message).toBeUndefined()
+    expect('parentAuthor' in reply).toBe(false)
+    expect(reply.parentText).toBeUndefined()
+  })
+
+  it('will not answer a message a moderator removed', () => {
+    // Deleted rows stay buffered so they can render struck through; replying into one is not
+    // something to do on the user's behalf, whether it was picked or merely newest.
+    const withDeleted = [...thread, msg('r3', { threadId: 'root', author: 'Carol', deleted: true })]
+    expect(threadReplyTarget(withDeleted, 'root', 'Streamer', undefined).reply.parentId).toBe('r2')
+    expect(threadReplyTarget(withDeleted, 'root', 'Streamer', 'r3').reply.parentId).toBe('r2')
+  })
+
+  it('will not answer a row supplied by the third-party history service', () => {
+    // Backlog ids are untrusted (the same reason their moderation token is stripped), and a reply's
+    // parent is published — so they are never chosen on the user's behalf.
+    const withBacklog = [...thread, msg('h1', { threadId: 'root', author: 'Dave', backlog: true })]
+    expect(threadReplyTarget(withBacklog, 'root', 'Streamer', undefined).reply.parentId).toBe('r2')
   })
 
   it('falls back to the root id when nothing repliable is buffered', () => {

@@ -467,6 +467,45 @@ describe('TwitchSource.send', () => {
     await source.disconnect()
   })
 
+  it('refuses a whitespace-only message instead of reporting success without sending', async () => {
+    const source = makeSource(makeAuth())
+    const client = await connectSource(source)
+    client.isConnected = true
+    // The splitter trims every part away, leaving nothing to send — that must surface as an error,
+    // not as a silent success the caller mistakes for a delivered message.
+    await expect(source.send(' '.repeat(600))).rejects.toThrow('nothing to send')
+    expect(client.say).not.toHaveBeenCalled()
+    await source.disconnect()
+  })
+
+  it('names how much got through when a later part of a split message fails', async () => {
+    const source = makeSource(makeAuth())
+    const client = await connectSource(source)
+    client.isConnected = true
+    client.say.mockReset()
+    client.say.mockResolvedValueOnce(undefined).mockRejectedValue(new Error('rate limited'))
+    // The composer refills with the whole draft, so a bare failure would invite a resend that
+    // duplicates the part already in the channel.
+    await expect(source.send(`${'a'.repeat(10)} ${'b'.repeat(980)}`)).rejects.toThrow(
+      /Sent 1 of 3 parts/u
+    )
+    await source.disconnect()
+  })
+
+  it('stops sending the remaining parts once the connection drops mid-message', async () => {
+    const source = makeSource(makeAuth())
+    const client = await connectSource(source)
+    client.isConnected = true
+    client.say.mockReset()
+    client.say.mockImplementation(() => {
+      client.isConnected = false // the socket goes away after the first part
+      return Promise.resolve(undefined)
+    })
+    await expect(source.send('a'.repeat(1200))).rejects.toThrow(/connection dropped/u)
+    expect(client.say).toHaveBeenCalledTimes(1)
+    await source.disconnect()
+  })
+
   it('does not split a message that already fits', async () => {
     const source = makeSource(makeAuth())
     const client = await connectSource(source)

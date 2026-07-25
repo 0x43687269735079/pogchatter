@@ -15,11 +15,10 @@ export function CharCount({ draft, platform }: CharCountProps): ReactElement | n
   if (count === undefined) {
     return null
   }
+  // Deliberately not a live region: the label changes on every keystroke, so announcing it would
+  // read a running count over the user's own typing. It stays available to read on demand.
   return (
-    <span
-      className={count.tone === 'plain' ? 'pc-chars' : `pc-chars ${count.tone}`}
-      aria-live="polite"
-    >
+    <span className={count.tone === 'plain' ? 'pc-chars' : `pc-chars ${count.tone}`}>
       {count.label}
     </span>
   )

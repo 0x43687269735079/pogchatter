@@ -2,7 +2,9 @@ import { type ReactElement, useRef, useState } from 'react'
 import type { ChatMessage, SendReply } from '@shared/model'
 import { atName } from '@renderer/format'
 import { threadReplyTarget } from '@renderer/threads'
+import { useEmojiInput } from '@renderer/useEmojiInput'
 import { CharCount } from '@renderer/components/CharCount'
+import { EmojiAutocomplete } from '@renderer/components/EmojiAutocomplete'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { ModalShell } from '@renderer/components/ModalShell'
@@ -53,6 +55,7 @@ function ThreadReplyBox({
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
+  const emoji = useEmojiInput(channelId, inputRef, setDraft)
 
   async function submit(): Promise<void> {
     const text = draft.trim()
@@ -76,7 +79,17 @@ function ThreadReplyBox({
   }
 
   return (
-    <>
+    <div className="pc-thread-input">
+      {emoji.open ? (
+        <EmojiAutocomplete
+          suggestions={emoji.suggestions}
+          activeIndex={emoji.activeIndex}
+          onChoose={(index) => {
+            emoji.choose(index)
+          }}
+          onHover={emoji.setActiveIndex}
+        />
+      ) : null}
       {error !== undefined ? <div className="pc-col-err">{error}</div> : null}
       <form
         className="pc-thread-reply"
@@ -93,8 +106,18 @@ function ThreadReplyBox({
           aria-label="Reply to this thread"
           onChange={(event) => {
             setDraft(event.target.value)
+            emoji.refresh()
+          }}
+          onSelect={() => {
+            emoji.refresh()
           }}
           onKeyDown={(event) => {
+            if (emoji.onKeyDown(event)) {
+              // The autocomplete consumed the key. Keep it from reaching the modal shell, which
+              // treats Escape as "close the thread" and Tab as "move focus out of the composer".
+              event.stopPropagation()
+              return
+            }
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault()
               void submit()
@@ -105,13 +128,19 @@ function ThreadReplyBox({
               setError(undefined)
             }
           }}
+          onFocus={() => {
+            emoji.refreshEmotes()
+          }}
+          onBlur={() => {
+            emoji.close()
+          }}
         />
         <CharCount draft={draft} platform="twitch" />
         <button type="submit" className="send" disabled={busy || draft.trim() === ''}>
           send
         </button>
       </form>
-    </>
+    </div>
   )
 }
 

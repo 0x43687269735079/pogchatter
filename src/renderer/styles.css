@@ -2163,6 +2163,11 @@ body,
 .pc-thread-foot .pc-replybar {
   padding: 0 0 4px;
 }
+/* Anchors the emoji autocomplete, which floats directly above the composer (.pc-ac is
+   bottom: 100% against its nearest positioned ancestor). */
+.pc-thread-input {
+  position: relative;
+}
 /* The reply composer: a boxed textarea with a full-height send button beside it. */
 .pc-thread-reply {
   display: flex;

@@ -26,6 +26,17 @@ export function donationFrom(message: ChatMessage, channelId: string): Donation 
   if (highlight === undefined) {
     return undefined
   }
+  // Chat history fetched from the third-party recent-messages service predates the session and was
+  // never the user's to acknowledge; the rest of the app already treats it as second-class (it never
+  // alerts, never auto-moderates, and its ids are untrusted), so it is not collected as income either.
+  if (message.backlog === true) {
+    return undefined
+  }
+  // A milestone from a long-standing member, or a gifted membership reaching its recipient: real
+  // events, but the money was either spent months ago or already counted on the gifter's purchase.
+  if (highlight.notAPurchase === true) {
+    return undefined
+  }
   const kind = KINDS[highlight.kind]
   if (kind === undefined) {
     return undefined
@@ -61,13 +72,27 @@ function valueOf(kind: DonationKind, highlight: Highlight): DonationValue {
       ? { unit: 'money-unparsed', original }
       : { unit: 'money', amount: parsed.amount, currency: parsed.currency, original }
   }
-  return { unit: 'count' }
+  // A community gift says how many were given ("is gifting 20 subs"); counting the event rather than
+  // the subs would report a twenty-sub gift and a one-sub gift identically.
+  const count = highlight.count
+  const quantity =
+    typeof count === 'number' && Number.isFinite(count) && count > 0 ? Math.round(count) : 1
+  return { unit: 'count', count: quantity }
 }
 
-/** The message body, or `''` for the events (memberships, most gifts) that carry none. */
+/**
+ * The message body, or `''` for the events (memberships, most gifts) that carry none. Emotes become
+ * their codes rather than vanishing, so a Super Chat sent entirely in emotes still reads as having
+ * said something instead of looking like a bare amount.
+ */
 function textOf(message: ChatMessage): string {
   return message.fragments
-    .map((fragment) => (fragment.type === 'text' ? fragment.text : ''))
+    .map((fragment) => {
+      if (fragment.type === 'text') {
+        return fragment.text
+      }
+      return fragment.type === 'emote' ? fragment.code : fragment.text
+    })
     .join('')
     .trim()
 }

@@ -11,6 +11,8 @@
  * shows the platform's own string verbatim. A wrong currency would silently misstate money.
  */
 
+import { minorDigitsFor } from '@shared/currencyFormat'
+
 /**
  * Symbol → ISO 4217, longest-first so `CA$` wins over `$` and `CN¥` over `¥`.
  *
@@ -71,11 +73,12 @@ function fromIsoCode(text: string): { amount: number; currency: string } | undef
   }
   const [first = '', second = ''] = [match[1] ?? '', match[2] ?? '']
   const isCodeFirst = /^[A-Za-z]{3}$/u.test(first)
-  const amount = parseNumber(isCodeFirst ? second : first)
+  const currency = (isCodeFirst ? first : second).toUpperCase()
+  const amount = parseNumber(isCodeFirst ? second : first, currency)
   if (amount === undefined) {
     return undefined
   }
-  return { amount, currency: (isCodeFirst ? first : second).toUpperCase() }
+  return { amount, currency }
 }
 
 /** `"$5.00"` / `"5,00 zł"` — the symbol may lead or trail. */
@@ -89,7 +92,9 @@ function fromSymbol(text: string): { amount: number; currency: string } | undefi
     if (digits === undefined) {
       continue
     }
-    const amount = parseNumber(digits)
+    // The currency is known before the number is read, which is what lets a three-decimal amount
+    // be told apart from a thousands group.
+    const amount = parseNumber(digits, currency)
     if (amount !== undefined) {
       return { amount, currency }
     }
@@ -102,9 +107,14 @@ function fromSymbol(text: string): { amount: number; currency: string } | undefi
  *
  * Which separator is decimal is decided structurally, never by locale guessing: with both present the
  * later one is the decimal point; with one kind repeated it is grouping; with a single separator,
- * exactly three trailing digits means grouping (`1,500` is fifteen hundred, not one and a half).
+ * exactly three trailing digits normally means grouping (`¥1,500` is fifteen hundred, not one and a
+ * half).
+ *
+ * That last rule inverts for the currencies with three minor digits, which is why `currency` is
+ * needed here: `BHD 1.234` is one dinar and 234 fils, and reading it as a thousands group would
+ * overstate the donation a thousandfold.
  */
-function parseNumber(raw: string): number | undefined {
+function parseNumber(raw: string, currency: string): number | undefined {
   const text = raw.replace(/ /gu, '')
   if (!/^[\d.,]+$/u.test(text) || !/\d/u.test(text)) {
     return undefined
@@ -118,7 +128,11 @@ function parseNumber(raw: string): number | undefined {
     const only = lastDot >= 0 ? '.' : ','
     const at = lastDot >= 0 ? lastDot : lastComma
     const repeated = text.indexOf(only) !== text.lastIndexOf(only)
-    decimalAt = repeated || text.length - at - 1 === 3 ? -1 : at
+    const trailing = text.length - at - 1
+    // Three trailing digits are a thousands group — unless this currency actually has three minor
+    // digits, in which case they are the fraction.
+    const isGroup = trailing === 3 && minorDigitsFor(currency) !== 3
+    decimalAt = repeated || isGroup ? -1 : at
   }
   const wholeRaw = decimalAt >= 0 ? text.slice(0, decimalAt) : text
   // Any separator left in the whole part is grouping, so the groups must actually be groups —

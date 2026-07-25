@@ -62,7 +62,7 @@ export function DonationsPanel({
   return (
     <section
       className={`pc-col don${active ? ' active' : ''}${inTab ? ' pc-pane' : ''}`}
-      style={inTab ? undefined : { width }}
+      style={inTab ? undefined : { width: `${width}px`, flex: `0 0 ${width}px` }}
       onMouseDown={() => {
         onActivate(id)
       }}
@@ -251,12 +251,17 @@ function Feed({
   const rows: ReactElement[] = []
   let lastDay = ''
   for (const donation of donations) {
-    const day = new Date(donation.timestamp).toDateString()
+    const stamp = new Date(donation.timestamp)
+    const day = stamp.toDateString()
     if (day !== lastDay) {
       lastDay = day
       rows.push(
         <div key={`day-${day}`} className="pc-don-day">
-          {day}
+          {stamp.toLocaleDateString(undefined, {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short'
+          })}
         </div>
       )
     }
@@ -315,12 +320,14 @@ function Row({
   return (
     <article
       className={donation.read ? 'pc-don-row read' : 'pc-don-row'}
-      role="button"
-      tabIndex={0}
-      aria-pressed={donation.read}
       title={donation.read ? 'click to mark unread' : 'click to mark read'}
       onClick={toggleRead}
       onKeyDown={(event) => {
+        // Only keys that started on the row itself: the jump control inside is a real button, and
+        // Enter on it would otherwise both jump and flip read state.
+        if (event.target !== event.currentTarget) {
+          return
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           toggleRead()
@@ -332,7 +339,7 @@ function Row({
         {flag !== undefined ? (
           // Named on hover and to a screen reader, so the flag is a shortcut for people who
           // recognise it rather than the only way to know where the money came from.
-          <span className="pc-don-flag" title={origin} aria-label={origin}>
+          <span className="pc-don-flag" role="img" title={origin} aria-label={origin}>
             {flag}
           </span>
         ) : null}
@@ -368,8 +375,23 @@ function Row({
         {donation.removed === true ? (
           <span className="pc-don-removed">removed from chat</span>
         ) : null}
-        {/* Spelled out, so read state is never carried by dimming alone. */}
-        <span className="pc-don-state">{donation.read ? 'read' : 'unread'}</span>
+        {/*
+          The row's click handler is the quick path, but a real button is what makes the toggle
+          reachable by keyboard and exposed to assistive technology — the row cannot be one itself
+          without nesting the jump button inside it. Doubles as the written-out read state, so that
+          is never carried by dimming alone.
+        */}
+        <button
+          type="button"
+          className="pc-don-state"
+          aria-pressed={donation.read}
+          onClick={(event) => {
+            event.stopPropagation()
+            toggleRead()
+          }}
+        >
+          {donation.read ? 'read' : 'unread'}
+        </button>
       </div>
     </article>
   )

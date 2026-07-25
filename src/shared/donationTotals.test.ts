@@ -40,7 +40,7 @@ describe('donationTotals', () => {
         donation('youtube', 'superchat', money(5, 'GBP')),
         donation('youtube', 'superchat', money(3, 'GBP')),
         donation('youtube', 'supersticker', money(2, 'GBP')),
-        donation('youtube', 'membership', { unit: 'count' })
+        donation('youtube', 'membership', { unit: 'count', count: 1 })
       ],
       rates,
       'GBP',
@@ -58,7 +58,7 @@ describe('donationTotals', () => {
       [
         donation('youtube', 'superchat', money(5, 'GBP')),
         donation('twitch', 'bits', { unit: 'bits', bits: 500 }),
-        donation('twitch', 'subscription', { unit: 'count' })
+        donation('twitch', 'subscription', { unit: 'count', count: 1 })
       ],
       rates,
       'GBP',
@@ -73,8 +73,8 @@ describe('donationTotals', () => {
     // membership_gift is cross-platform; only `platform` tells the two apart.
     const totals = donationTotals(
       [
-        donation('twitch', 'membership_gift', { unit: 'count' }),
-        donation('youtube', 'membership_gift', { unit: 'count' })
+        donation('twitch', 'membership_gift', { unit: 'count', count: 1 }),
+        donation('youtube', 'membership_gift', { unit: 'count', count: 1 })
       ],
       rates,
       'GBP',
@@ -143,5 +143,29 @@ describe('donationTotals', () => {
     const totals = donationTotals([], rates, 'GBP', 0)
     expect(totals).toEqual({ youtube: {}, twitch: {} })
     expect(excludedCount(totals.youtube)).toBe(0)
+  })
+})
+
+describe('donationTotals quantities', () => {
+  it('counts the subs a community gift covered, not the single event', () => {
+    const totals = donationTotals(
+      [donation('twitch', 'membership_gift', { unit: 'count', count: 20 })],
+      rates,
+      'GBP',
+      0
+    )
+    expect(totals.twitch.membership_gift?.count).toBe(20)
+  })
+
+  it('totals a base-currency donation even before any rates arrive', () => {
+    // Otherwise a first run or an offline session reports everything as unrecognised and reads zero.
+    const totals = donationTotals(
+      [donation('youtube', 'superchat', money(5, 'GBP'))],
+      undefined,
+      'GBP',
+      0
+    )
+    expect(totals.youtube.superchat?.converted).toBe(5)
+    expect(totals.youtube.superchat?.excluded).toBe(0)
   })
 })

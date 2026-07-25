@@ -2626,3 +2626,16 @@ body,
   border: 1px solid var(--rule);
   padding: 3px 6px;
 }
+/* The written-out read state doubles as the keyboard-reachable toggle. */
+.pc-don-state {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant: small-caps;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.pc-don-state:hover {
+  color: var(--accent);
+}

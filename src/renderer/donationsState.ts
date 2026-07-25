@@ -1,5 +1,5 @@
 import type { ChatEvent } from '@shared/model'
-import type { Donation, RateTable } from '@shared/donations'
+import { type Donation, DONATION_RETENTION, type RateTable } from '@shared/donations'
 
 /** The donations panel's view state: a projection of the store the main process owns. */
 export interface DonationsState {
@@ -36,8 +36,12 @@ export function applyDonationEvents(state: DonationsState, events: ChatEvent[]):
       next = addDonation(next, event.donation)
     } else if (event.kind === 'donationsRead') {
       next = applyRead(next, event.ids, event.read)
+    } else if (event.kind === 'donationsRemoved') {
+      next = applyRemoved(next, event.ids)
     } else if (event.kind === 'rates') {
-      next = { ...next, rates: event.table }
+      // The table names the base it was fetched for, which is also how a base-currency change
+      // reaches the panel — otherwise it would keep formatting against the currency it opened with.
+      next = { ...next, rates: event.table, baseCurrency: event.table.base }
     }
   }
   return next
@@ -52,7 +56,47 @@ function addDonation(state: DonationsState, donation: Donation): DonationsState 
   const index = state.donations.findIndex((existing) => existing.timestamp <= donation.timestamp)
   const donations = [...state.donations]
   donations.splice(index === -1 ? donations.length : index, 0, donation)
+  // Held to the same bound as the store, so a long session doesn't accumulate history that a
+  // restart would then drop — the panel would otherwise promise more than it can keep.
+  if (donations.length > DONATION_RETENTION) {
+    donations.length = DONATION_RETENTION
+  }
   return { ...state, donations }
+}
+
+/** Flag donations whose chat message a moderator removed; the donation itself still happened. */
+function applyRemoved(state: DonationsState, ids: string[]): DonationsState {
+  const wanted = new Set(ids)
+  let changed = false
+  const donations = state.donations.map((donation) => {
+    if (!wanted.has(donation.id) || donation.removed === true) {
+      return donation
+    }
+    changed = true
+    return { ...donation, removed: true }
+  })
+  return changed ? { ...state, donations } : state
+}
+
+/**
+ * Fold the opening snapshot in without losing donations that arrived while it was in flight.
+ *
+ * The renderer subscribes to live events before the snapshot resolves, so replacing the list
+ * wholesale would discard anything that landed in that window — the same startup race `BacklogGate`
+ * exists to solve for chat. Whatever the renderer already holds wins, since it is at least as new.
+ */
+export function applyDonationsSnapshot(
+  state: DonationsState,
+  snapshot: Omit<DonationsState, 'donations'> & { donations: Donation[] }
+): DonationsState {
+  const byId = new Map(snapshot.donations.map((donation) => [donation.id, donation]))
+  for (const donation of state.donations) {
+    byId.set(donation.id, donation)
+  }
+  const donations = [...byId.values()]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, DONATION_RETENTION)
+  return { ...state, ...snapshot, donations }
 }
 
 function applyRead(state: DonationsState, ids: string[], read: boolean): DonationsState {

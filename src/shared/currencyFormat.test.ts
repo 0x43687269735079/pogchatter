@@ -143,8 +143,30 @@ describe('formatMoney', () => {
     expect(formatMoney(5, 'GBP')).toContain('5.00')
   })
 
+  it('keeps the third decimal for currencies that have one', () => {
+    // Bahrain, Jordan, Kuwait and Oman are Super Chat locations; forcing two digits discarded a
+    // digit of real money.
+    expect(formatMoney(1.234, 'BHD')).toContain('1.234')
+    expect(formatMoney(2.5, 'KWD')).toContain('2.500')
+  })
+
   it('falls back to number plus code rather than throwing on an unknown code', () => {
     expect(formatMoney(5, 'ZZZZ')).toContain('ZZZZ')
+  })
+})
+
+describe('convert with no rate table', () => {
+  it('still converts a donation already in the base currency', () => {
+    // Otherwise a first run or an offline session reports every donation as an unrecognised
+    // currency and the session total reads zero.
+    const value = { unit: 'money', amount: 5, currency: 'USD', original: '$5.00' } as const
+    expect(convert(value, undefined, 'USD')).toBe(5)
+    expect(convert(value, undefined, 'usd')).toBe(5)
+  })
+
+  it('still declines a foreign currency it has no rate for', () => {
+    const value = { unit: 'money', amount: 5, currency: 'JPY', original: '¥5' } as const
+    expect(convert(value, undefined, 'USD')).toBeUndefined()
   })
 })
 

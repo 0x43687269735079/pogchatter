@@ -282,7 +282,7 @@ export function SettingsModal({
             <span className="pc-setting-name">donation currency</span>
             <span className="pc-setting-desc">
               Currency the donations panel converts amounts into. Leave blank to follow your system.
-              Rates come from frankfurter.dev (open.er-api.com if that is unreachable), fetched once
+              Rates come from open.er-api.com (frankfurter.dev if that is unreachable), fetched once
               a day; amounts still show exactly as the platform sent them when rates are
               unavailable.
             </span>

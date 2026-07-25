@@ -86,6 +86,13 @@ export interface Highlight {
    * The member's own typed message (milestone chat) rides in the message's `fragments`.
    */
   headerText?: string
+  /**
+   * This line announces membership activity that is not itself a purchase: a milestone from someone
+   * who joined months ago, or a gifted membership being delivered to its recipient (the gifter's
+   * purchase was already announced separately). Rendering treats it like any other membership line;
+   * it exists so revenue accounting doesn't count the same money twice.
+   */
+  notAPurchase?: boolean
 }
 
 export interface ReplyContext {
@@ -678,6 +685,8 @@ export type ChatEvent =
   | { kind: 'donation'; donation: Donation }
   /** Read state changed, echoed from main so every window folds the same update. */
   | { kind: 'donationsRead'; ids: string[]; read: boolean }
+  /** A collected donation's message was removed from chat by a moderator. */
+  | { kind: 'donationsRemoved'; ids: string[] }
   /** Exchange rates arrived or were refreshed. */
   | { kind: 'rates'; table: RateTable }
 

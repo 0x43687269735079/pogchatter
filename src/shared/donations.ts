@@ -29,7 +29,8 @@ export type DonationValue =
   | { unit: 'money'; amount: number; currency: string; original: string }
   | { unit: 'money-unparsed'; original: string }
   | { unit: 'bits'; bits: number }
-  | { unit: 'count' }
+  /** Memberships, subs and gifts. `count` is how many were given — a community gift can be twenty. */
+  | { unit: 'count'; count: number }
 
 /** One collected paid event. `id` is the platform's message id — both the dedup and read-state key. */
 export interface Donation {

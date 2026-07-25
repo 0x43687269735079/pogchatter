@@ -33,7 +33,7 @@ const superchat = (id: string, amount = '$5.00', timestamp = 1_000): ChatMessage
   paid(id, { kind: 'superchat', displayAmount: amount }, timestamp)
 
 function store(): DonationStore {
-  return new DonationStore({ dir, now: () => 1, writeFile: writeFileSync })
+  return new DonationStore({ dir, writeFile: writeFileSync })
 }
 
 describe('DonationStore', () => {
@@ -76,13 +76,10 @@ describe('DonationStore', () => {
     donations.record(superchat('a'), 'yt:vid')
     donations.record(superchat('b'), 'yt:vid')
     donations.record(superchat('c'), 'yt:vid')
-    expect(donations.unreadCount()).toBe(3)
     expect(donations.markRead(['a'], true)).toEqual(['a'])
-    expect(donations.unreadCount()).toBe(2)
     // Already read: nothing changed, so nothing to broadcast.
     expect(donations.markRead(['a'], true)).toEqual([])
     expect(donations.markAllRead().sort()).toEqual(['b', 'c'])
-    expect(donations.unreadCount()).toBe(0)
   })
 
   it('keeps donations and their read state across a restart', () => {
@@ -95,7 +92,6 @@ describe('DonationStore', () => {
     const reopened = store()
     expect(reopened.list().map((d) => d.id)).toEqual(['b', 'a'])
     expect(reopened.list().find((d) => d.id === 'a')?.read).toBe(true)
-    expect(reopened.unreadCount()).toBe(1)
   })
 
   it('preserves the parsed amount across a restart rather than re-deriving it', () => {
@@ -127,7 +123,7 @@ describe('DonationStore', () => {
             kind: 'superchat',
             timestamp: 1,
             author: { id: 'u', displayName: 'U' },
-            value: { unit: 'count' },
+            value: { unit: 'money', amount: 5, currency: 'GBP', original: '£5.00' },
             text: '',
             read: false
           },
@@ -138,7 +134,7 @@ describe('DonationStore', () => {
             kind: 'raid',
             timestamp: 1,
             author: {},
-            value: { unit: 'count' }
+            value: { unit: 'count', count: 1 }
           },
           {
             id: 'bad-value',
@@ -158,5 +154,88 @@ describe('DonationStore', () => {
         .list()
         .map((d) => d.id)
     ).toEqual(['ok'])
+  })
+})
+
+describe('DonationStore ordering and durability', () => {
+  it('orders by when the donation happened, not when it arrived', () => {
+    // Backlog and late arrivals carry older timestamps; ordering by arrival meant the panel opened
+    // mis-sorted and retention could evict a newer donation than the one it kept.
+    const donations = store()
+    donations.record(superchat('late-but-newer', '$1.00', 3_000), 'yt:vid')
+    donations.record(superchat('arrived-second-but-older', '$1.00', 1_000), 'yt:vid')
+    expect(donations.list().map((d) => d.id)).toEqual([
+      'late-but-newer',
+      'arrived-second-but-older'
+    ])
+  })
+
+  it('writes an arrival immediately rather than waiting out the debounce', () => {
+    // A crash inside the debounce window would lose the paid event, in the store that exists to
+    // outlive the session.
+    const written: string[] = []
+    const donations = new DonationStore({
+      dir,
+      writeFile: (path, contents) => {
+        written.push(contents)
+        writeFileSync(path, contents)
+      }
+    })
+    donations.record(superchat('a'), 'yt:vid')
+    expect(written).toHaveLength(1)
+  })
+
+  it('retries on shutdown after a write that failed', () => {
+    let fail = true
+    const donations = new DonationStore({
+      dir,
+      writeFile: (path, contents) => {
+        if (fail) {
+          throw new Error('disk full')
+        }
+        writeFileSync(path, contents)
+      }
+    })
+    donations.record(superchat('a'), 'yt:vid') // this write throws
+    fail = false
+    donations.flush() // must still write, though no timer is pending
+    expect(
+      store()
+        .list()
+        .map((d) => d.id)
+    ).toEqual(['a'])
+  })
+
+  it('rejects a persisted record whose value contradicts its kind', () => {
+    writeFileSync(
+      file,
+      JSON.stringify({
+        donations: [
+          {
+            id: 'incoherent',
+            channelId: 'c',
+            platform: 'youtube',
+            kind: 'superchat',
+            timestamp: 1,
+            author: { id: 'u', displayName: 'U' },
+            value: { unit: 'bits', bits: 500 },
+            text: '',
+            read: false
+          },
+          {
+            id: 'negative',
+            channelId: 'c',
+            platform: 'twitch',
+            kind: 'bits',
+            timestamp: 1,
+            author: { id: 'u', displayName: 'U' },
+            value: { unit: 'bits', bits: -500 },
+            text: '',
+            read: false
+          }
+        ]
+      })
+    )
+    expect(store().list()).toEqual([])
   })
 })

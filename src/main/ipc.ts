@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
-import type { DonationsSnapshot } from '@shared/donations'
+import { type DonationsSnapshot, DONATION_RETENTION } from '@shared/donations'
 import {
   type AddStreamsResult,
   type AppSettings,
@@ -60,6 +60,8 @@ export interface IpcDeps {
   /** Set read state on the named donations; broadcasts what actually changed. */
   markDonationsRead(ids: string[], read: boolean): void
   markAllDonationsRead(): void
+  /** Re-fetch exchange rates for the current base currency (no-op while the cache is fresh). */
+  refreshRates(): void
   /** Push an auth snapshot to the renderer through the event batcher. */
   broadcastAuth(): void
   /** The retained chat history, replayed into a fresh renderer (startup race, crash-reload). */
@@ -105,7 +107,9 @@ export function registerIpc(deps: IpcDeps): void {
   handle('chat:markDonationsRead', (_event, ids, read) => {
     if (Array.isArray(ids) && typeof read === 'boolean') {
       deps.markDonationsRead(
-        ids.filter((id): id is string => typeof id === 'string'),
+        ids
+          .filter((id): id is string => typeof id === 'string' && id.length <= 256)
+          .slice(0, DONATION_RETENTION),
         read
       )
     }
@@ -362,6 +366,11 @@ export function registerIpc(deps: IpcDeps): void {
     if ('emoteProviders' in patch) {
       // Drop/re-fetch third-party emotes and stop/restart the 7TV socket to match the toggles.
       void deps.getEmoteEngine()?.applyProviderSettings()
+    }
+    if ('baseCurrency' in patch) {
+      // Rates are fetched for one base and conversion refuses a table built for another, so without
+      // this every donation would read as an unrecognised currency until the next daily refresh.
+      deps.refreshRates()
     }
     if ('allowPlaintextCredentials' in patch) {
       // Apply the new policy now (write or scrub the plaintext store) and tell the UI.

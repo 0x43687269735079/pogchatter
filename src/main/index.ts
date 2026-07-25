@@ -268,7 +268,20 @@ function effectiveLogDir(): string {
  * in view — and, because the store is durable, whether or not a renderer is even attached.
  */
 function collectDonation(event: ChatEvent): void {
-  if (event.kind !== 'message' || donationStore === undefined) {
+  if (donationStore === undefined) {
+    return
+  }
+  // A moderator deleting the message afterwards arrives as a `clear`, not as a changed message, so
+  // the donation's `removed` flag has to be maintained here rather than copied once at ingestion.
+  if (event.kind === 'clear') {
+    const { messageId } = event.target
+    const changed = messageId === undefined ? [] : donationStore.markRemoved(messageId)
+    if (changed.length > 0) {
+      batcher?.push({ kind: 'donationsRemoved', ids: changed })
+    }
+    return
+  }
+  if (event.kind !== 'message') {
     return
   }
   const donation = donationStore.record(event.message, event.channelId)
@@ -402,7 +415,11 @@ function debugLogChatEvent(event: ChatEvent): void {
     debugLog('donation', event.donation.channelId, { kind: event.donation.kind })
     return
   }
-  if (event.kind === 'donationsRead' || event.kind === 'rates') {
+  if (
+    event.kind === 'donationsRead' ||
+    event.kind === 'donationsRemoved' ||
+    event.kind === 'rates'
+  ) {
     // Local bookkeeping; nothing diagnostic to record.
     return
   }
@@ -640,6 +657,7 @@ void app
           batcher?.push({ kind: 'donationsRead', ids: changed, read })
         }
       },
+      refreshRates,
       markAllDonationsRead: () => {
         const changed = donationStore?.markAllRead() ?? []
         if (changed.length > 0) {

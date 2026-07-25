@@ -62,6 +62,21 @@ describe('parseAmount', () => {
     expect(parseAmount('$1.2.3')).toBeUndefined() // not a number we understand
   })
 
+  it('reads three-decimal currencies as fractions, not thousands', () => {
+    // The rule that makes "¥1,500" fifteen hundred is exactly wrong for the Gulf dinars: BHD 1.234
+    // is one dinar and 234 fils. Reading it as a group overstated donations a thousandfold.
+    expect(parseAmount('BHD 1.234')).toEqual({ amount: 1.234, currency: 'BHD' })
+    expect(parseAmount('KWD 2.500')).toEqual({ amount: 2.5, currency: 'KWD' })
+    expect(parseAmount('JOD 10.750')).toEqual({ amount: 10.75, currency: 'JOD' })
+    expect(parseAmount('OMR 1.234')).toEqual({ amount: 1.234, currency: 'OMR' })
+  })
+
+  it('still groups three trailing digits for ordinary and zero-decimal currencies', () => {
+    expect(parseAmount('¥1,500')?.amount).toBe(1500)
+    expect(parseAmount('$1,234')?.amount).toBe(1234)
+    expect(parseAmount('€1.500')?.amount).toBe(1500)
+  })
+
   it('keeps zero-decimal amounts whole', () => {
     expect(parseAmount('¥1500')).toEqual({ amount: 1500, currency: 'JPY' })
     expect(parseAmount('₩10,000')).toEqual({ amount: 10000, currency: 'KRW' })

@@ -621,9 +621,16 @@ function collect(
     const message = baseMessage(sourceId, renderer)
     message.system = true
     const highlight: Highlight = { kind: 'membership' }
-    const header = textToString(renderer.headerPrimaryText) || textToString(renderer.headerSubtext)
+    const milestone = textToString(renderer.headerPrimaryText)
+    const header = milestone || textToString(renderer.headerSubtext)
     if (header !== '') {
       highlight.headerText = header
+    }
+    if (milestone !== '') {
+      // headerPrimaryText only appears on a milestone ("Member for 6 months"), which an existing
+      // member posts repeatedly — no money changes hands, so revenue accounting must not count it
+      // as a new membership every time.
+      highlight.notAPurchase = true
     }
     message.highlight = highlight
     messages.push(message)
@@ -665,8 +672,12 @@ function collect(
     const headerText = textToString(
       item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer.message
     )
+    // The gifter's purchase was already announced by its own renderer, so this delivery to the
+    // recipient must not be counted as a second membership.
     message.highlight =
-      headerText !== '' ? { kind: 'membership', headerText } : { kind: 'membership' }
+      headerText !== ''
+        ? { kind: 'membership', headerText, notAPurchase: true }
+        : { kind: 'membership', notAPurchase: true }
     message.fragments = []
     messages.push(message)
   } else if (item.liveChatModeChangeMessageRenderer !== undefined) {

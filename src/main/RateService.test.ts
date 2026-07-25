@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -86,13 +86,39 @@ describe('RateService', () => {
     expect(fetchFn).toHaveBeenCalledTimes(2)
   })
 
-  it('reuses the disk cache on restart, treating it as stale until confirmed', async () => {
+  it('reuses a fresh disk cache on restart without calling it stale', async () => {
+    // Staleness is about age. Asserting it on every load meant a cache written minutes ago was
+    // reported as unrefreshable, since refresh short-circuits while fresh and never cleared it.
     const fetchFn = vi.fn().mockResolvedValue(ok({ JPY: 190 }))
     await new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 }).refresh('GBP')
 
-    const reopened = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
+    const reopened = new RateService({ dir, fetchFn: fetchFn as never, now: () => 2_000 })
     expect(reopened.table()?.rates).toEqual({ JPY: 190 })
-    expect(reopened.table()?.stale).toBe(true)
+    expect(reopened.table()?.stale).toBe(false)
+  })
+
+  it('marks a genuinely old disk cache stale', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(ok({ JPY: 190 }))
+    await new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 }).refresh('GBP')
+
+    const later = 1_000 + 48 * 60 * 60 * 1000
+    expect(
+      new RateService({ dir, fetchFn: fetchFn as never, now: () => later }).table()?.stale
+    ).toBe(true)
+  })
+
+  it('refuses a future timestamp in the cache, which would suppress refreshes forever', async () => {
+    // JSON.parse turns 1e999 into Infinity, which passes a bare typeof check and makes the
+    // freshness test permanently true.
+    writeFileSync(
+      join(dir, 'rates.json'),
+      '{"table":{"base":"GBP","rates":{"JPY":190},"fetchedAt":1e999}}'
+    )
+    const fetchFn = vi.fn().mockResolvedValue(ok({ JPY: 191 }))
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 5_000 })
+    await service.refresh('GBP')
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(service.table()?.rates).toEqual({ JPY: 191 })
   })
 
   it('never rejects, whatever the network does', async () => {

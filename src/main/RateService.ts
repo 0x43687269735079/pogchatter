@@ -64,6 +64,8 @@ export class RateService {
   /** Provider that supplied the current table, for the attribution line. */
   #source: string | undefined
   #inFlight: Promise<void> | undefined
+  /** Which base the in-flight fetch is for, so a different one is not silently satisfied by it. */
+  #inFlightBase: string | undefined
 
   constructor(deps: RateServiceDeps) {
     this.#path = join(deps.dir, 'rates.json')
@@ -88,19 +90,26 @@ export class RateService {
    */
   async refresh(base: string): Promise<void> {
     const wanted = base.toUpperCase()
-    if (this.#inFlight !== undefined) {
+    // Keyed by base: a fetch already running for a *different* currency answers a different question,
+    // and returning it would leave the newly-chosen base unfetched until the next daily tick.
+    if (this.#inFlight !== undefined && this.#inFlightBase === wanted) {
       return this.#inFlight
     }
     const current = this.#table
     if (
       current !== undefined &&
       current.base === wanted &&
+      // `0` means the cache carried no usable timestamp, so its age is unknown and cannot vouch for
+      // it — relying on `now() - 0` being large would make this depend on the clock's magnitude.
+      current.fetchedAt > 0 &&
       this.#now() - current.fetchedAt < MAX_AGE_MS
     ) {
       return
     }
+    this.#inFlightBase = wanted
     this.#inFlight = this.#fetchFrom(wanted).finally(() => {
       this.#inFlight = undefined
+      this.#inFlightBase = undefined
     })
     return this.#inFlight
   }
@@ -161,11 +170,23 @@ export class RateService {
       if (table === undefined || rates === undefined || typeof table.base !== 'string') {
         return
       }
+      // A timestamp from a user-writable file is not evidence: `JSON.parse` turns `1e999` into
+      // `Infinity`, which `typeof number` accepts, and the freshness test would then be permanently
+      // satisfied — suppressing every future refresh for the life of the install. Anything not a
+      // finite past time is treated as never-fetched, which forces a refresh rather than trusting it.
+      const claimed = table.fetchedAt
+      const fetchedAt =
+        typeof claimed === 'number' && Number.isFinite(claimed) && claimed <= this.#now()
+          ? claimed
+          : 0
       this.#table = {
         base: table.base.toUpperCase(),
         rates,
-        fetchedAt: typeof table.fetchedAt === 'number' ? table.fetchedAt : 0,
-        stale: true // Until a refresh confirms it, a cache read from disk is yesterday's news.
+        fetchedAt,
+        // Stale is a statement about age, not about provenance: asserting it unconditionally meant a
+        // cache written minutes ago was reported as unrefreshable, because `refresh` short-circuits
+        // while it is fresh and so never cleared the flag.
+        stale: this.#now() - fetchedAt >= MAX_AGE_MS
       }
       const source = (parsed as { source?: unknown }).source
       if (typeof source === 'string') {

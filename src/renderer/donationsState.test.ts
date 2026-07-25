@@ -3,6 +3,7 @@ import type { ChatEvent } from '@shared/model'
 import type { Donation } from '@shared/donations'
 import {
   applyDonationEvents,
+  applyDonationsSnapshot,
   type DonationsState,
   EMPTY_DONATIONS,
   unreadCount
@@ -93,5 +94,52 @@ describe('unreadCount', () => {
     ])
     expect(unreadCount(state)).toBe(2)
     expect(unreadCount(EMPTY_DONATIONS)).toBe(0)
+  })
+})
+
+describe('applyDonationsSnapshot', () => {
+  it('keeps donations that arrived while the snapshot was in flight', () => {
+    // The renderer subscribes to events before the snapshot resolves; replacing the list wholesale
+    // discarded anything that landed in that window.
+    const live = applyDonationEvents(EMPTY_DONATIONS, [added(donation('live', 5_000))])
+    const merged = applyDonationsSnapshot(live, {
+      donations: [donation('stored', 1_000)],
+      rates: undefined,
+      rateSource: undefined,
+      baseCurrency: 'GBP',
+      sessionStartedAt: 1
+    })
+    expect(merged.donations.map((d) => d.id)).toEqual(['live', 'stored'])
+    expect(merged.baseCurrency).toBe('GBP')
+  })
+
+  it('prefers what the renderer already holds over the stored copy', () => {
+    const readLocally = applyDonationEvents(EMPTY_DONATIONS, [added(donation('a', 1_000, true))])
+    const merged = applyDonationsSnapshot(readLocally, {
+      donations: [donation('a', 1_000, false)],
+      rates: undefined,
+      rateSource: undefined,
+      baseCurrency: 'GBP',
+      sessionStartedAt: 1
+    })
+    expect(merged.donations).toHaveLength(1)
+    expect(merged.donations[0]?.read).toBe(true)
+  })
+})
+
+describe('donations state follows the base currency and removals', () => {
+  it('adopts the base a rates event was fetched for', () => {
+    // How a base-currency change reaches the panel; without it the panel keeps formatting against
+    // whatever it opened with.
+    const state = applyDonationEvents(EMPTY_DONATIONS, [
+      { kind: 'rates', table: { base: 'EUR', rates: { JPY: 160 }, fetchedAt: 1, stale: false } }
+    ])
+    expect(state.baseCurrency).toBe('EUR')
+  })
+
+  it('flags a donation whose message a moderator removed', () => {
+    let state = applyDonationEvents(EMPTY_DONATIONS, [added(donation('a', 1_000))])
+    state = applyDonationEvents(state, [{ kind: 'donationsRemoved', ids: ['a'] }])
+    expect(state.donations[0]?.removed).toBe(true)
   })
 })

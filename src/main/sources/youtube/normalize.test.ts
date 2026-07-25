@@ -461,7 +461,13 @@ describe('YouTube membership messages', () => {
       })
     )
     const message = messages[0]
-    expect(message?.highlight).toEqual({ kind: 'membership', headerText: 'Member for 6 months' })
+    // notAPurchase marks a milestone from an existing member: the line recurs monthly and no money
+    // changes hands, so revenue accounting must not count it as a new membership each time.
+    expect(message?.highlight).toEqual({
+      kind: 'membership',
+      headerText: 'Member for 6 months',
+      notAPurchase: true
+    })
     expect(message?.fragments).toEqual([{ type: 'text', text: 'love the streams!' }])
     expect(message?.system).toBe(true)
   })
@@ -644,9 +650,12 @@ describe('YouTube membership gifts and mode changes', () => {
       })
     )
     expect(messages[0]?.author.name).toBe('Recipient')
+    // The gifter's purchase was announced separately, so the delivery to the recipient must not be
+    // counted as a second membership.
     expect(messages[0]?.highlight).toEqual({
       kind: 'membership',
-      headerText: 'was gifted a membership by Gifter'
+      headerText: 'was gifted a membership by Gifter',
+      notAPurchase: true
     })
   })
 

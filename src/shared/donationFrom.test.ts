@@ -57,7 +57,8 @@ describe('donationFrom', () => {
 
   it('counts memberships and gifts, which carry no amount', () => {
     expect(donationFrom(message({ highlight: { kind: 'membership' } }), 'yt:v')?.value).toEqual({
-      unit: 'count'
+      unit: 'count',
+      count: 1
     })
     // A Twitch gift sub normalises to the same kind as a YouTube gifted membership.
     const gift = donationFrom(
@@ -79,5 +80,38 @@ describe('donationFrom', () => {
       'yt:v'
     )
     expect(donation?.removed).toBe(true)
+  })
+})
+
+describe('donationFrom exclusions', () => {
+  it('ignores chat history, which predates the session and was never ours to acknowledge', () => {
+    const historic = message({ highlight: { kind: 'bits', amount: 500 }, platform: 'twitch' })
+    historic.backlog = true
+    expect(donationFrom(historic, 'tw:chan')).toBeUndefined()
+  })
+
+  it('ignores membership lines that are not themselves a purchase', () => {
+    // A milestone from a long-standing member, and a gift reaching its recipient: both would
+    // otherwise be counted on top of the money that was actually spent.
+    const milestone = message({ highlight: { kind: 'membership', notAPurchase: true } })
+    expect(donationFrom(milestone, 'yt:v')).toBeUndefined()
+  })
+
+  it('carries how many subs a community gift covered', () => {
+    // "is gifting 20 subs" is one event but twenty subs; counting events understated it twentyfold.
+    const gift = message({
+      platform: 'twitch',
+      highlight: { kind: 'membership_gift', count: 20 }
+    })
+    expect(donationFrom(gift, 'tw:chan')?.value).toEqual({ unit: 'count', count: 20 })
+  })
+
+  it('represents an emote-only message rather than storing nothing', () => {
+    const emoteOnly = message({ highlight: { kind: 'superchat', displayAmount: '$5.00' } })
+    emoteOnly.fragments = [
+      { type: 'emote', code: 'Kappa', url: 'u', provider: '7tv' },
+      { type: 'emote', code: 'PogChamp', url: 'u', provider: '7tv' }
+    ]
+    expect(donationFrom(emoteOnly, 'yt:v')?.text).toBe('KappaPogChamp')
   })
 })

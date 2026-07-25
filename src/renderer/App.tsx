@@ -29,6 +29,7 @@ import { DonationThreadModal } from '@renderer/components/DonationThreadModal'
 import { DonationsPanel } from '@renderer/components/DonationsPanel'
 import {
   applyDonationEvents,
+  applyDonationsSnapshot,
   type DonationsState,
   EMPTY_DONATIONS,
   unreadCount
@@ -260,7 +261,7 @@ export function App(): ReactElement {
       .getDonations()
       .then((snapshot) => {
         if (active) {
-          setDonations((prev) => ({ ...prev, ...snapshot }))
+          setDonations((prev) => applyDonationsSnapshot(prev, snapshot))
         }
       })
       .catch(() => {

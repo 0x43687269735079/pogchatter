@@ -36,14 +36,18 @@ export function donationTotals(
     }
     const platform = totals[donation.platform]
     const entry = (platform[donation.kind] ??= emptyTotal())
-    entry.count += 1
     if (donation.value.unit === 'bits') {
+      entry.count += 1
       entry.bits += donation.value.bits
       continue
     }
     if (donation.value.unit === 'count') {
+      // A community gift is one event but many subs; counting events would report "gifting 20 subs"
+      // and a single gift identically.
+      entry.count += donation.value.count
       continue
     }
+    entry.count += 1
     const converted = convert(donation.value, rates, base)
     if (converted === undefined) {
       entry.excluded += 1

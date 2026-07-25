@@ -1,30 +1,69 @@
 import type { DonationValue, RateTable } from '@shared/donations'
 
 /**
- * Currencies with no minor unit. Formatting must not invent one: ¥1,500 is not ¥1,500.00, and showing
- * decimals on them reads as a tenfold error to anyone who uses them.
+ * Fallback minor-unit digits for runtimes without full ICU. Currencies not listed take two.
  *
- * HUF and TWD are deliberately absent — both are often *displayed* without decimals, but ISO 4217
- * gives them two, and rounding someone's donation away is worse than an unfamiliar-looking figure.
+ * Both extremes matter and for opposite reasons: writing ¥1,500.00 invents precision the yen has no
+ * concept of, while writing BHD 1.23 *discards* a digit of someone's money. HUF and TWD are
+ * deliberately absent — often displayed without decimals, but ISO 4217 gives them two.
  */
-const ZERO_DECIMAL = new Set([
-  'JPY',
-  'KRW',
-  'VND',
-  'CLP',
-  'ISK',
-  'UGX',
-  'XAF',
-  'XOF',
-  'XPF',
-  'RWF',
-  'BIF',
-  'DJF',
-  'GNF',
-  'KMF',
-  'PYG',
-  'VUV'
-])
+const FALLBACK_DIGITS: Record<string, number> = {
+  JPY: 0,
+  KRW: 0,
+  VND: 0,
+  CLP: 0,
+  ISK: 0,
+  UGX: 0,
+  XAF: 0,
+  XOF: 0,
+  XPF: 0,
+  RWF: 0,
+  BIF: 0,
+  DJF: 0,
+  GNF: 0,
+  KMF: 0,
+  PYG: 0,
+  VUV: 0,
+  BHD: 3,
+  IQD: 3,
+  JOD: 3,
+  KWD: 3,
+  LYD: 3,
+  OMR: 3,
+  TND: 3
+}
+
+/** Cached per currency: `Intl` lookups are not free and this is called per row and per parse. */
+const digitCache = new Map<string, number>()
+
+/**
+ * How many minor-unit digits a currency has — 0 for the yen, 2 for most, 3 for the Gulf dinars.
+ *
+ * Asked of `Intl` rather than hard-coded, because the answer governs both *formatting* and
+ * *parsing*: it is what stops "BHD 1.234" being read as one thousand two hundred and thirty-four
+ * dinars. A hand-kept table would eventually disagree with the platform about someone's money.
+ */
+export function minorDigitsFor(currency: string): number {
+  const code = currency.toUpperCase()
+  const cached = digitCache.get(code)
+  if (cached !== undefined) {
+    return cached
+  }
+  let digits = FALLBACK_DIGITS[code] ?? 2
+  try {
+    const resolved = new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: code
+    }).resolvedOptions().maximumFractionDigits
+    if (typeof resolved === 'number' && Number.isInteger(resolved) && resolved >= 0) {
+      digits = resolved
+    }
+  } catch {
+    // Unknown code or no ICU — the fallback above stands.
+  }
+  digitCache.set(code, digits)
+  return digits
+}
 
 /**
  * Every ISO 3166-1 alpha-2 code, plus `EU` for the euro.
@@ -217,7 +256,7 @@ export function flagFor(currency: string): string | undefined {
 /** `amount` written the way `currency` is written, without inventing minor units. */
 export function formatMoney(amount: number, currency: string): string {
   const code = currency.toUpperCase()
-  const digits = ZERO_DECIMAL.has(code) ? 0 : 2
+  const digits = minorDigitsFor(code)
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
@@ -242,13 +281,19 @@ export function convert(
   rates: RateTable | undefined,
   base: string
 ): number | undefined {
-  if (value.unit !== 'money' || rates === undefined) {
+  if (value.unit !== 'money') {
     return undefined
   }
   const code = value.currency.toUpperCase()
   const target = base.toUpperCase()
+  // Settled before rates are consulted: a donation already in the base currency needs no conversion,
+  // so requiring a rate table first would report it as unconvertible and drop it from the totals
+  // whenever rates are missing — zeroing the session figure on a first run or offline.
   if (code === target) {
     return value.amount
+  }
+  if (rates === undefined) {
+    return undefined
   }
   if (rates.base.toUpperCase() !== target) {
     // The table was fetched for a different base; cross-rating it here would invent precision.

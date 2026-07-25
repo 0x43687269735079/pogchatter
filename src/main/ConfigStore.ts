@@ -295,6 +295,18 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof input['twitchHistory'] === 'boolean') {
     settings.twitchHistory = input['twitchHistory']
   }
+  // Empty means "follow the system locale"; anything else must look like an ISO 4217 code, so a
+  // garbage value falls back to the default rather than reaching the rate request.
+  const baseCurrency = input['baseCurrency']
+  if (
+    typeof baseCurrency === 'string' &&
+    (baseCurrency === '' || /^[A-Za-z]{3}$/u.test(baseCurrency))
+  ) {
+    settings.baseCurrency = baseCurrency.toUpperCase()
+  }
+  if (typeof input['showConvertedAmounts'] === 'boolean') {
+    settings.showConvertedAmounts = input['showConvertedAmounts']
+  }
   return settings
 }
 

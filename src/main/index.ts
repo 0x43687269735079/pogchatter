@@ -350,6 +350,15 @@ function debugLogChatEvent(event: ChatEvent): void {
     debugLog('authorUpdate', event.channelId, { login: event.login })
     return
   }
+  if (event.kind === 'donation') {
+    // Kind and channel only — never the amount or who sent it.
+    debugLog('donation', event.donation.channelId, { kind: event.donation.kind })
+    return
+  }
+  if (event.kind === 'donationsRead' || event.kind === 'rates') {
+    // Local bookkeeping; nothing diagnostic to record.
+    return
+  }
   // Login state, not credentials: booleans, ids, and the storage mode only.
   debugLog('auth', 'state', {
     twitchLoggedIn: event.auth.twitch.loggedIn,

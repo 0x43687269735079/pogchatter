@@ -40,6 +40,8 @@ const DEFAULTS = {
   columnOrder: [],
   layout: 'scroll',
   chatLog: { enabled: false, directory: '' },
+  baseCurrency: '',
+  showConvertedAmounts: true,
   allowPlaintextCredentials: false,
   keepAwake: true,
   twitchHistory: true
@@ -198,5 +200,21 @@ describe('ConfigStore channels', () => {
     expect(new ConfigStore().channels()).toEqual([
       { platform: 'youtube', target: '@LofiGirl', id: 'youtube:@lofigirl', label: 'first' }
     ])
+  })
+})
+
+describe('ConfigStore donation settings', () => {
+  it('accepts an ISO code, normalises its case, and keeps empty as "follow the system"', () => {
+    const store = new ConfigStore()
+    expect(store.setSettings({ baseCurrency: 'gbp' }).baseCurrency).toBe('GBP')
+    expect(store.setSettings({ baseCurrency: '' }).baseCurrency).toBe('')
+  })
+
+  it('rejects a currency that is not a three-letter code', () => {
+    const store = new ConfigStore()
+    store.setSettings({ baseCurrency: 'GBP' })
+    // A garbage value must never reach the rate request — the previous good value stands.
+    expect(store.setSettings({ baseCurrency: 'pounds' } as never).baseCurrency).toBe('GBP')
+    expect(store.setSettings({ baseCurrency: 42 } as never).baseCurrency).toBe('GBP')
   })
 })

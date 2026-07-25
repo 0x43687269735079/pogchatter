@@ -13,8 +13,10 @@
  * (it returns the text unchanged when it already fits) and no emoji is ever cut apart.
  */
 
+import { MESSAGE_LIMIT } from '@shared/model'
+
 /** Twitch's per-message limit, measured the way twurple measures it (UTF-16 code units). */
-export const TWITCH_MESSAGE_LIMIT = 500
+export const TWITCH_MESSAGE_LIMIT = MESSAGE_LIMIT.twitch
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 

@@ -8,6 +8,7 @@ import {
   useState
 } from 'react'
 import type { ChannelInfo, ChatMessage, HeldActionHandler, SendReply } from '@shared/model'
+import { CharCount } from '@renderer/components/CharCount'
 import { EmojiAutocomplete } from '@renderer/components/EmojiAutocomplete'
 import { EmojiPicker } from '@renderer/components/EmojiPicker'
 import { atName, plainText } from '@renderer/format'
@@ -584,6 +585,7 @@ export function ChannelColumn({
           >
             ☺
           </button>
+          <CharCount draft={draft} platform={channel.platform} />
           <button type="submit" className="send" disabled={!canSend || draft.trim() === ''}>
             send
           </button>

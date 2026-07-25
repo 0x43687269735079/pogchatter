@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitChatMessage, TWITCH_MESSAGE_LIMIT } from '@main/sources/twitch/splitMessage'
+import { splitChatMessage, TWITCH_MESSAGE_LIMIT } from '@shared/splitMessage'
 
 /** Count of unpaired surrogates — anything above 0 means a character was torn in half. */
 function unpairedSurrogates(text: string): number {

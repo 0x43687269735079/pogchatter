@@ -577,6 +577,16 @@ export const BACKLOG_MESSAGES_PER_CHANNEL = 300
 /** The buffer sizes offered in Settings (each a clear step in the memory/history trade-off). */
 export const BUFFER_SIZE_OPTIONS = [100, 500, 1000, 2000, 5000] as const
 
+/**
+ * How long a chat message may be on each platform, counted the way the send path measures it
+ * (UTF-16 code units, so an emoji costs the 2 its surrogate pair occupies) — the composer's counter
+ * has to agree with what actually governs sending, not with what merely looks like one character.
+ *
+ * The two limits behave differently past the line: Twitch's 500 is soft, and a longer message is
+ * split into several (see `splitChatMessage`); YouTube's 200 is hard, and it rejects a longer one.
+ */
+export const MESSAGE_LIMIT: Record<Platform, number> = { twitch: 500, youtube: 200 }
+
 export const DEFAULT_SETTINGS: AppSettings = {
   devMode: false,
   bufferSize: DEFAULT_BUFFER_SIZE,

@@ -17,7 +17,7 @@ import {
   type TwitchUserNotice
 } from '@main/sources/twitch/normalize'
 import { fetchRecentMessages, parseRecentMessages } from '@main/sources/twitch/recentMessages'
-import { splitChatMessage } from '@main/sources/twitch/splitMessage'
+import { splitChatMessage } from '@shared/splitMessage'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
 import { TwitchRewardProvider } from '@main/sources/twitch/TwitchRewardProvider'

@@ -2,6 +2,7 @@ import { type ReactElement, useRef, useState } from 'react'
 import type { ChatMessage, SendReply } from '@shared/model'
 import { atName } from '@renderer/format'
 import { threadReplyTarget } from '@renderer/threads'
+import { CharCount } from '@renderer/components/CharCount'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { ModalShell } from '@renderer/components/ModalShell'
@@ -105,6 +106,7 @@ function ThreadReplyBox({
             }
           }}
         />
+        <CharCount draft={draft} platform="twitch" />
         <button type="submit" className="send" disabled={busy || draft.trim() === ''}>
           send
         </button>

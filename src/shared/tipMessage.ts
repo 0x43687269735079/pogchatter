@@ -13,16 +13,20 @@ import { parseAmount } from '@shared/currencyParse'
  *
  * **Why it is bounded.** The announcement is a template the streamer can rewrite, so this recognises
  * the common shape and gives up quietly otherwise — a tip that isn't matched simply isn't collected,
- * which is better than inventing one. More importantly, the message must come from a *known bot
- * account*: without that, any viewer could type "someone just tipped £500!" and plant a fake donation
- * in the streamer's records.
+ * which is better than inventing one. More importantly, the message must come from the *official
+ * StreamElements account*: without that, any viewer could type "someone just tipped £500!" and plant
+ * a fake donation in the streamer's records.
  */
 
 /**
- * Accounts whose tip announcements are trusted. Deliberately a fixed set — the whole safeguard is
- * that an ordinary viewer cannot pass themselves off as the donation bot.
+ * The single account whose tip announcements are trusted: the official StreamElements bot.
+ *
+ * Exactly one, deliberately. This check is the whole safeguard — without it any viewer could type
+ * "someone just tipped £500!" and plant money in the streamer's records — so the trusted set is kept
+ * to the account actually asked for rather than every bot that might plausibly announce a tip. Any
+ * addition widens who can write to the donation record and should be a decision, not a guess.
  */
-const TIP_BOTS = new Set(['streamelements', 'streamlabs', 'stay_hydrated_bot_'])
+const TIP_BOT_LOGIN = 'streamelements'
 
 /**
  * `kota3684 just tipped £100.00!` — donor, then the amount up to the exclamation mark.
@@ -54,7 +58,7 @@ export interface ParsedTip {
  * unrecognised one is kept as-is rather than guessed at.
  */
 export function parseTipAnnouncement(message: ChatMessage): ParsedTip | undefined {
-  if (!TIP_BOTS.has(message.author.name.toLowerCase())) {
+  if (message.author.name.toLowerCase() !== TIP_BOT_LOGIN) {
     return undefined
   }
   const text = message.fragments

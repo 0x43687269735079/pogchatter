@@ -40,19 +40,26 @@ describe('parseTipAnnouncement', () => {
     expect(parseTipAnnouncement(botMessage(straight))?.text).toBe('danke')
   })
 
-  it('refuses an announcement from anyone but a known donation bot', () => {
+  it('refuses an announcement from anyone but the official StreamElements account', () => {
     // The safeguard that matters: otherwise any viewer could plant a fake donation by typing one.
     expect(parseTipAnnouncement(botMessage(REAL, 'random_viewer'))).toBeUndefined()
     expect(parseTipAnnouncement(botMessage(REAL, 'kota3684'))).toBeUndefined()
+    // Other donation bots are not trusted either — the trusted set is exactly one account, so
+    // widening it is a decision rather than something that happens by resemblance.
+    expect(parseTipAnnouncement(botMessage(REAL, 'streamlabs'))).toBeUndefined()
+    // Nor is a lookalike login that merely contains the trusted one.
+    expect(parseTipAnnouncement(botMessage(REAL, 'streamelements_'))).toBeUndefined()
+    expect(parseTipAnnouncement(botMessage(REAL, 'notstreamelements'))).toBeUndefined()
+  })
+
+  it('accepts the official account whatever case the platform reports it in', () => {
+    expect(parseTipAnnouncement(botMessage(REAL, 'StreamElements'))?.donor).toBe('kota3684')
+    expect(parseTipAnnouncement(botMessage(REAL, 'STREAMELEMENTS'))?.donor).toBe('kota3684')
   })
 
   it('ignores bot chatter that merely resembles a tip', () => {
     expect(parseTipAnnouncement(botMessage('that just tipped the scales!'))).toBeUndefined()
     expect(parseTipAnnouncement(botMessage('welcome to the stream!'))).toBeUndefined()
     expect(parseTipAnnouncement(botMessage('alice just tipped !'))).toBeUndefined()
-  })
-
-  it('accepts StreamLabs as well', () => {
-    expect(parseTipAnnouncement(botMessage(REAL, 'streamlabs'))?.donor).toBe('kota3684')
   })
 })

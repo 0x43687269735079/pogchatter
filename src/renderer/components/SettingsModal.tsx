@@ -23,6 +23,34 @@ const BUFFER_NOTE: Record<number, string> = {
   5000: 'maximum'
 }
 
+/**
+ * Currencies offered as the donations panel's base. The three a streamer is most likely to want come
+ * first; the rest cover the large Super Chat markets. Anything outside this list still *displays*
+ * correctly — the base is only what amounts are converted into.
+ */
+const BASE_CURRENCIES: ReadonlyArray<{ code: string; name: string }> = [
+  { code: 'USD', name: 'US dollar' },
+  { code: 'EUR', name: 'euro' },
+  { code: 'GBP', name: 'pound sterling' },
+  { code: 'AUD', name: 'Australian dollar' },
+  { code: 'BRL', name: 'Brazilian real' },
+  { code: 'CAD', name: 'Canadian dollar' },
+  { code: 'CHF', name: 'Swiss franc' },
+  { code: 'INR', name: 'Indian rupee' },
+  { code: 'JPY', name: 'Japanese yen' },
+  { code: 'KRW', name: 'South Korean won' },
+  { code: 'MXN', name: 'Mexican peso' },
+  { code: 'NOK', name: 'Norwegian krone' },
+  { code: 'NZD', name: 'New Zealand dollar' },
+  { code: 'PHP', name: 'Philippine peso' },
+  { code: 'PLN', name: 'Polish złoty' },
+  { code: 'SEK', name: 'Swedish krona' },
+  { code: 'SGD', name: 'Singapore dollar' },
+  { code: 'TRY', name: 'Turkish lira' },
+  { code: 'TWD', name: 'New Taiwan dollar' },
+  { code: 'ZAR', name: 'South African rand' }
+]
+
 const EMOTE_PROVIDERS: ReadonlyArray<{ key: keyof EmoteProviderSettings; name: string }> = [
   { key: 'sevenTv', name: '7TV' },
   { key: 'bttv', name: 'BTTV' },
@@ -259,22 +287,21 @@ export function SettingsModal({
               unavailable.
             </span>
           </span>
-          <input
-            type="text"
-            className="pc-input-sm"
+          <select
+            className="pc-select"
             value={settings.baseCurrency}
-            placeholder="auto"
-            maxLength={3}
-            spellCheck={false}
-            aria-label="Donation base currency (ISO code)"
+            aria-label="Donation base currency"
             onChange={(event) => {
-              // Sanitised again in main; this keeps the field itself from accepting nonsense.
-              const code = event.target.value.toUpperCase().replace(/[^A-Z]/gu, '')
-              if (code === '' || code.length === 3) {
-                onChange({ baseCurrency: code })
-              }
+              onChange({ baseCurrency: event.target.value })
             }}
-          />
+          >
+            <option value="">follow system</option>
+            {BASE_CURRENCIES.map((option) => (
+              <option key={option.code} value={option.code}>
+                {option.code} — {option.name}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="pc-setting">

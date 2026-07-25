@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RateTable } from '@shared/donations'
-import { convert, flagFor, formatMoney } from '@shared/currencyFormat'
+import { convert, countryName, flagFor, formatMoney } from '@shared/currencyFormat'
 
 const rates: RateTable = {
   base: 'GBP',
@@ -21,7 +21,115 @@ describe('flagFor', () => {
     // Naming one member state as *the* issuer would misrepresent the others.
     expect(flagFor('XAF')).toBeUndefined()
     expect(flagFor('XCD')).toBeUndefined()
-    expect(flagFor('ZZZ')).toBeUndefined()
+    expect(flagFor('XPF')).toBeUndefined()
+  })
+
+  it('gives nothing for a code that is not a real place', () => {
+    expect(flagFor('ZZZ')).toBeUndefined() // ZZ is not a country
+    expect(flagFor('QQ')).toBeUndefined() // not even a currency code
+    expect(flagFor('')).toBeUndefined()
+  })
+
+  it('covers every currency YouTube takes Super Chats in', () => {
+    // Google lists ~100 locations for Super Chat, so a hand-kept table would silently lose the flag
+    // for whichever it missed. Deriving the country from the code covers all of them at once — this
+    // pins that claim against the actual list rather than a sample of it.
+    const supported = [
+      'DZD',
+      'USD',
+      'ARS',
+      'AWG',
+      'AUD',
+      'EUR',
+      'BHD',
+      'BYN',
+      'BMD',
+      'BOB',
+      'BAM',
+      'BRL',
+      'BGN',
+      'CAD',
+      'KYD',
+      'CLP',
+      'COP',
+      'CRC',
+      'CZK',
+      'DKK',
+      'DOP',
+      'EGP',
+      'GTQ',
+      'HNL',
+      'HKD',
+      'HUF',
+      'ISK',
+      'INR',
+      'IDR',
+      'ILS',
+      'JPY',
+      'JOD',
+      'KES',
+      'KWD',
+      'LBP',
+      'CHF',
+      'MYR',
+      'MXN',
+      'MAD',
+      'NZD',
+      'NIO',
+      'NGN',
+      'MKD',
+      'NOK',
+      'OMR',
+      'PAB',
+      'PGK',
+      'PYG',
+      'PEN',
+      'PHP',
+      'PLN',
+      'QAR',
+      'RON',
+      'SAR',
+      'RSD',
+      'SGD',
+      'ZAR',
+      'KRW',
+      'SEK',
+      'TWD',
+      'THB',
+      'TRY',
+      'UGX',
+      'AED',
+      'GBP',
+      'UYU',
+      'VND'
+    ]
+    const missing = supported.filter((code) => flagFor(code) === undefined)
+    expect(missing).toEqual([])
+  })
+
+  it('still declines the supranational currencies in that list', () => {
+    // Senegal and French Polynesia are Super Chat locations, but their currencies span many states,
+    // so no single flag is honest.
+    expect(flagFor('XOF')).toBeUndefined()
+    expect(flagFor('XPF')).toBeUndefined()
+  })
+})
+
+describe('countryName', () => {
+  it('names the country a currency comes from, for the flag tooltip', () => {
+    // The flag is a shortcut for people who recognise it; the name is for everyone else.
+    expect(countryName('JPY')).toBe('Japan')
+    expect(countryName('BRL')).toBe('Brazil')
+    expect(countryName('gbp')).toBe('United Kingdom')
+  })
+
+  it('names the euro area rather than picking a member state', () => {
+    expect(countryName('EUR')).toBe('European Union')
+  })
+
+  it('names nothing for a currency with no single country', () => {
+    expect(countryName('XOF')).toBeUndefined()
+    expect(countryName('ZZZ')).toBeUndefined()
   })
 })
 

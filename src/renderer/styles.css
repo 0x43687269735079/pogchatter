@@ -2553,3 +2553,76 @@ body,
 .pc-tab.don .pc-tab-label {
   color: var(--accent);
 }
+/* Session summary: one line per platform, kinds broken out within it. */
+.pc-don-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: var(--fs-small);
+  color: var(--dim);
+}
+.pc-don-totals.empty {
+  color: var(--dimmer);
+}
+.pc-don-total-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+.pc-don-plat {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.pc-don-plat.yt {
+  color: #ff5c5c;
+}
+.pc-don-plat.tw {
+  color: #a970ff;
+}
+/* The whole row is the read toggle, so it has to look and behave like one. */
+.pc-don-row {
+  cursor: pointer;
+  text-align: left;
+}
+.pc-don-row:hover {
+  background: var(--bgElev);
+}
+.pc-don-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+/* Small jump control, pinned right so the amount and message get the width. */
+.pc-don-jump {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--dimmer);
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 3px;
+  cursor: pointer;
+}
+.pc-don-jump:hover:not(:disabled) {
+  color: var(--accent);
+}
+.pc-don-jump:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pc-don-state {
+  font-variant: small-caps;
+}
+.pc-select {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: var(--fs-ui);
+  color: var(--fg);
+  background: var(--bgInput);
+  border: 1px solid var(--rule);
+  padding: 3px 6px;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Donation, DonationKind, DonationValue, RateTable } from '@shared/donations'
 import type { Platform } from '@shared/model'
-import { donationTotals } from '@shared/donationTotals'
+import { donationTotals, excludedCount } from '@shared/donationTotals'
 
 const rates: RateTable = { base: 'GBP', rates: { JPY: 190, USD: 1.25 }, fetchedAt: 0, stale: false }
 
@@ -34,6 +34,25 @@ const money = (amount: number, currency: string): DonationValue => ({
 })
 
 describe('donationTotals', () => {
+  it('separates the kinds instead of rolling them into one figure', () => {
+    const totals = donationTotals(
+      [
+        donation('youtube', 'superchat', money(5, 'GBP')),
+        donation('youtube', 'superchat', money(3, 'GBP')),
+        donation('youtube', 'supersticker', money(2, 'GBP')),
+        donation('youtube', 'membership', { unit: 'count' })
+      ],
+      rates,
+      'GBP',
+      0
+    )
+    expect(totals.youtube.superchat).toEqual({ count: 2, converted: 8, excluded: 0, bits: 0 })
+    expect(totals.youtube.supersticker).toEqual({ count: 1, converted: 2, excluded: 0, bits: 0 })
+    expect(totals.youtube.membership?.count).toBe(1)
+    // A kind that never arrived has no line at all, rather than a zero row.
+    expect(totals.youtube.membership_gift).toBeUndefined()
+  })
+
   it('keeps the platforms apart, with no combined figure anywhere', () => {
     const totals = donationTotals(
       [
@@ -45,10 +64,24 @@ describe('donationTotals', () => {
       'GBP',
       0
     )
-    expect(totals.youtube.converted).toBe(5)
-    expect(totals.twitch).toEqual({ bits: 500, subs: 1 })
-    // The shape itself must offer no place to put a cross-platform sum.
+    expect(totals.twitch.bits).toEqual({ count: 1, converted: 0, excluded: 0, bits: 500 })
+    expect(totals.twitch.subscription?.count).toBe(1)
     expect(Object.keys(totals).sort()).toEqual(['twitch', 'youtube'])
+  })
+
+  it('counts a Twitch gift sub under Twitch, not as a YouTube membership', () => {
+    // membership_gift is cross-platform; only `platform` tells the two apart.
+    const totals = donationTotals(
+      [
+        donation('twitch', 'membership_gift', { unit: 'count' }),
+        donation('youtube', 'membership_gift', { unit: 'count' })
+      ],
+      rates,
+      'GBP',
+      0
+    )
+    expect(totals.twitch.membership_gift?.count).toBe(1)
+    expect(totals.youtube.membership_gift?.count).toBe(1)
   })
 
   it('converts foreign amounts into the base currency', () => {
@@ -61,10 +94,10 @@ describe('donationTotals', () => {
       'GBP',
       0
     )
-    expect(totals.youtube.converted).toBeCloseTo(15)
+    expect(totals.youtube.superchat?.converted).toBeCloseTo(15)
   })
 
-  it('excludes what it cannot convert instead of understating silently', () => {
+  it('records what it could not convert rather than understating silently', () => {
     const totals = donationTotals(
       [
         donation('youtube', 'superchat', { unit: 'money-unparsed', original: 'kr 50' }),
@@ -75,35 +108,10 @@ describe('donationTotals', () => {
       'GBP',
       0
     )
-    expect(totals.youtube.converted).toBe(5)
-    expect(totals.youtube.excluded).toBe(2)
-  })
-
-  it('counts memberships and gifts rather than summing them', () => {
-    const totals = donationTotals(
-      [
-        donation('youtube', 'membership', { unit: 'count' }),
-        donation('youtube', 'membership_gift', { unit: 'count' })
-      ],
-      rates,
-      'GBP',
-      0
-    )
-    expect(totals.youtube.memberships).toBe(2)
-    expect(totals.youtube.converted).toBe(0)
-    expect(totals.youtube.excluded).toBe(0)
-  })
-
-  it('counts a Twitch gift sub as a sub, not a YouTube membership', () => {
-    // membership_gift is cross-platform; only `platform` tells the two apart.
-    const totals = donationTotals(
-      [donation('twitch', 'membership_gift', { unit: 'count' })],
-      rates,
-      'GBP',
-      0
-    )
-    expect(totals.twitch.subs).toBe(1)
-    expect(totals.youtube.memberships).toBe(0)
+    expect(totals.youtube.superchat?.converted).toBe(5)
+    expect(totals.youtube.superchat?.excluded).toBe(2)
+    expect(totals.youtube.superchat?.count).toBe(3) // still counted as donations
+    expect(excludedCount(totals.youtube)).toBe(2)
   })
 
   it('ignores donations from before the session started', () => {
@@ -116,17 +124,24 @@ describe('donationTotals', () => {
       'GBP',
       1_000
     )
-    expect(totals.youtube.converted).toBe(5)
+    expect(totals.youtube.superchat?.converted).toBe(5)
+    expect(totals.youtube.superchat?.count).toBe(1)
   })
 
-  it('reports everything as excluded when rates have never arrived', () => {
+  it('treats everything as excluded when rates have never arrived', () => {
     const totals = donationTotals(
       [donation('youtube', 'superchat', money(1900, 'JPY'))],
       undefined,
       'GBP',
       0
     )
-    expect(totals.youtube.converted).toBe(0)
-    expect(totals.youtube.excluded).toBe(1)
+    expect(totals.youtube.superchat?.converted).toBe(0)
+    expect(totals.youtube.superchat?.excluded).toBe(1)
+  })
+
+  it('is empty when nothing arrived this session', () => {
+    const totals = donationTotals([], rates, 'GBP', 0)
+    expect(totals).toEqual({ youtube: {}, twitch: {} })
+    expect(excludedCount(totals.youtube)).toBe(0)
   })
 })

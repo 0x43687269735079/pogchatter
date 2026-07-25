@@ -58,16 +58,29 @@ export interface RateTable {
   stale: boolean
 }
 
-/** Per-platform totals. Deliberately no combined field — see {@link DonationValue}. */
+/** One line of the summary: everything of a single kind on a single platform. */
+export interface KindTotal {
+  /** How many arrived. */
+  count: number
+  /** Summed in the base currency (money kinds only; 0 otherwise). */
+  converted: number
+  /** Left out of `converted` because the currency could not be identified or converted. */
+  excluded: number
+  /** Bits (Twitch cheers only; 0 otherwise). */
+  bits: number
+}
+
+/**
+ * The summary, broken down by platform and then by kind — Super Chats apart from stickers, members
+ * apart from gifted ones, cheers apart from subs — so each line means one thing.
+ *
+ * Deliberately no combined field, at either level: Twitch reports a bits count and a sub tier rather
+ * than a currency, so a figure spanning platforms would invent an exchange rate between a platform
+ * credit and money. See {@link DonationValue}.
+ */
 export interface DonationTotals {
-  youtube: {
-    /** Summed in the base currency. */
-    converted: number
-    /** Donations left out because their currency could not be identified or converted. */
-    excluded: number
-    memberships: number
-  }
-  twitch: { bits: number; subs: number }
+  youtube: Partial<Record<DonationKind, KindTotal>>
+  twitch: Partial<Record<DonationKind, KindTotal>>
 }
 
 /**

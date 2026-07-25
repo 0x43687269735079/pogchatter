@@ -3,6 +3,9 @@ import type { DonationValue, RateTable } from '@shared/donations'
 /**
  * Currencies with no minor unit. Formatting must not invent one: ¥1,500 is not ¥1,500.00, and showing
  * decimals on them reads as a tenfold error to anyone who uses them.
+ *
+ * HUF and TWD are deliberately absent — both are often *displayed* without decimals, but ISO 4217
+ * gives them two, and rounding someone's donation away is worse than an unfamiliar-looking figure.
  */
 const ZERO_DECIMAL = new Set([
   'JPY',
@@ -10,8 +13,6 @@ const ZERO_DECIMAL = new Set([
   'VND',
   'CLP',
   'ISK',
-  'HUF',
-  'TWD',
   'UGX',
   'XAF',
   'XOF',
@@ -21,91 +22,189 @@ const ZERO_DECIMAL = new Set([
   'DJF',
   'GNF',
   'KMF',
-  'MGA',
   'PYG',
   'VUV'
 ])
 
 /**
- * ISO 4217 → the ISO 3166-1 alpha-2 whose flag represents it.
+ * Every ISO 3166-1 alpha-2 code, plus `EU` for the euro.
  *
- * Only currencies with one obvious home are listed. Shared currencies (XAF/XOF across many states,
- * XCD across the Caribbean) are deliberately absent so no country is misrepresented as *the* issuer;
- * EUR maps to the EU flag, which is the honest answer for a shared currency that has one.
+ * Used only to confirm that a code derived from a currency is a real place before it becomes a flag:
+ * without the check, an unknown or retired currency would render as two bare letter tiles.
  */
-const CURRENCY_COUNTRY: Record<string, string> = {
-  USD: 'US',
-  EUR: 'EU',
-  GBP: 'GB',
-  JPY: 'JP',
-  CNY: 'CN',
-  KRW: 'KR',
-  INR: 'IN',
-  CAD: 'CA',
-  AUD: 'AU',
-  NZD: 'NZ',
-  MXN: 'MX',
-  BRL: 'BR',
-  ARS: 'AR',
-  CLP: 'CL',
-  COP: 'CO',
-  PEN: 'PE',
-  CHF: 'CH',
-  SEK: 'SE',
-  NOK: 'NO',
-  DKK: 'DK',
-  PLN: 'PL',
-  CZK: 'CZ',
-  HUF: 'HU',
-  RON: 'RO',
-  BGN: 'BG',
-  TRY: 'TR',
-  RUB: 'RU',
-  UAH: 'UA',
-  ILS: 'IL',
-  SAR: 'SA',
-  AED: 'AE',
-  ZAR: 'ZA',
-  NGN: 'NG',
-  KES: 'KE',
-  EGP: 'EG',
-  MAD: 'MA',
-  SGD: 'SG',
-  HKD: 'HK',
-  TWD: 'TW',
-  THB: 'TH',
-  MYR: 'MY',
-  IDR: 'ID',
-  PHP: 'PH',
-  VND: 'VN',
-  PKR: 'PK',
-  BDT: 'BD',
-  LKR: 'LK',
-  ISK: 'IS'
+const COUNTRIES = new Set(
+  `AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS
+   BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE
+   EG EH ER ES ET EU FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK
+   HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB
+   LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ
+   NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU
+   RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN
+   TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW`.split(/\s+/u)
+)
+
+/**
+ * Currencies whose code does not begin with their country's code. Vanishingly few do — see
+ * {@link countryFor} — so this stays a short list of genuine exceptions rather than a full table.
+ */
+const COUNTRY_OVERRIDES: Record<string, string> = {
+  // Pre-2023 codes still seen in older amounts, now superseded by the euro.
+  HRK: 'HR',
+  // The pound's code predates the alpha-2 scheme; GB happens to work, but spell it out rather than
+  // rely on coincidence.
+  GBP: 'GB'
 }
 
 /**
- * The currency a locale implies, e.g. `en-GB` → `GBP`, falling back to USD.
+ * The country a currency belongs to, or `undefined` when it has no single one.
  *
- * Derived by inverting {@link CURRENCY_COUNTRY} rather than carrying a second table, so the two can
- * never disagree. Used only to resolve a `baseCurrency` of `''` ("follow the system").
+ * ISO 4217 builds almost every code from the country's ISO 3166-1 alpha-2 code plus a letter naming
+ * the unit — GB+P, JP+Y, BR+L, ZA+R — so the country is derivable rather than something to maintain
+ * a table of. That matters here: YouTube takes Super Chats in around a hundred locations and can add
+ * more, and a hand-kept list would silently lose the flag for whichever currency it missed. Codes
+ * beginning with `X` are supranational (XOF across West Africa, XPF across French Polynesia) and
+ * name no single country, so they correctly get no flag.
+ */
+function countryFor(currency: string): string | undefined {
+  const code = currency.toUpperCase()
+  const override = COUNTRY_OVERRIDES[code]
+  if (override !== undefined) {
+    return override
+  }
+  if (code.length !== 3 || code.startsWith('X')) {
+    return undefined
+  }
+  // The euro is shared, but unlike the X-codes it has a flag of its own.
+  const country = code === 'EUR' ? 'EU' : code.slice(0, 2)
+  return COUNTRIES.has(country) ? country : undefined
+}
+
+/**
+ * The currency a locale implies, e.g. `en-GB` → `GBP`, falling back to USD. Used only to resolve a
+ * `baseCurrency` of `''` ("follow the system").
  */
 export function localeCurrency(locale: string): string {
   const region = /[-_]([A-Za-z]{2})\b/u.exec(locale)?.[1]?.toUpperCase()
-  if (region === undefined) {
+  if (region === undefined || !COUNTRIES.has(region)) {
     return 'USD'
   }
-  for (const [currency, country] of Object.entries(CURRENCY_COUNTRY)) {
-    if (country === region) {
-      return currency
+  return LOCALE_CURRENCY[region] ?? 'USD'
+}
+
+/**
+ * Region → currency for the places a user of this app is plausibly in. Only needed for the reverse
+ * direction (a locale has no currency in it), so it stays small: anything unlisted falls back to USD,
+ * and the user can set their currency explicitly.
+ */
+const LOCALE_CURRENCY: Record<string, string> = {
+  US: 'USD',
+  GB: 'GBP',
+  JP: 'JPY',
+  CN: 'CNY',
+  KR: 'KRW',
+  IN: 'INR',
+  CA: 'CAD',
+  AU: 'AUD',
+  NZ: 'NZD',
+  MX: 'MXN',
+  BR: 'BRL',
+  AR: 'ARS',
+  CL: 'CLP',
+  CO: 'COP',
+  PE: 'PEN',
+  CH: 'CHF',
+  SE: 'SEK',
+  NO: 'NOK',
+  DK: 'DKK',
+  PL: 'PLN',
+  CZ: 'CZK',
+  HU: 'HUF',
+  RO: 'RON',
+  BG: 'BGN',
+  TR: 'TRY',
+  RU: 'RUB',
+  UA: 'UAH',
+  IL: 'ILS',
+  SA: 'SAR',
+  AE: 'AED',
+  ZA: 'ZAR',
+  NG: 'NGN',
+  KE: 'KES',
+  EG: 'EGP',
+  MA: 'MAD',
+  SG: 'SGD',
+  HK: 'HKD',
+  TW: 'TWD',
+  TH: 'THB',
+  MY: 'MYR',
+  ID: 'IDR',
+  PH: 'PHP',
+  VN: 'VND',
+  PK: 'PKR',
+  BD: 'BDT',
+  LK: 'LKR',
+  IS: 'ISK',
+  // The euro area — every member resolves to the same currency.
+  AT: 'EUR',
+  BE: 'EUR',
+  CY: 'EUR',
+  DE: 'EUR',
+  EE: 'EUR',
+  ES: 'EUR',
+  FI: 'EUR',
+  FR: 'EUR',
+  GR: 'EUR',
+  HR: 'EUR',
+  IE: 'EUR',
+  IT: 'EUR',
+  LT: 'EUR',
+  LU: 'EUR',
+  LV: 'EUR',
+  MT: 'EUR',
+  NL: 'EUR',
+  PT: 'EUR',
+  SI: 'EUR',
+  SK: 'EUR'
+}
+
+/**
+ * Built lazily and reused: constructing an `Intl.DisplayNames` per render would be wasteful, and it
+ * throws on runtimes without full ICU, which must not take a render down.
+ */
+let regionNames: Intl.DisplayNames | undefined | null
+
+/**
+ * The country a currency belongs to, in words — "Japan", "Brazil" — for the flag's tooltip, so the
+ * flag is decoration over a name rather than a picture the reader has to recognise.
+ *
+ * `undefined` when the currency has no single country (the supranational codes) or when the runtime
+ * can't name regions; callers then fall back to the currency code, which is always shown anyway.
+ */
+export function countryName(currency: string): string | undefined {
+  const country = countryFor(currency)
+  if (country === undefined) {
+    return undefined
+  }
+  if (country === 'EU') {
+    return 'European Union'
+  }
+  if (regionNames === undefined) {
+    try {
+      regionNames = new Intl.DisplayNames(undefined, { type: 'region' })
+    } catch {
+      regionNames = null
     }
   }
-  return 'USD'
+  try {
+    return regionNames?.of(country) ?? undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** The flag for a currency's home, or `undefined` when it has no single one. */
 export function flagFor(currency: string): string | undefined {
-  const country = CURRENCY_COUNTRY[currency.toUpperCase()]
+  const country = countryFor(currency)
   if (country === undefined) {
     return undefined
   }

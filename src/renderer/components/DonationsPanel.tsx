@@ -1,8 +1,8 @@
 import { type ReactElement, useMemo } from 'react'
-import type { ChannelInfo } from '@shared/model'
-import type { Donation, DonationTotals } from '@shared/donations'
-import { convert, flagFor, formatMoney } from '@shared/currencyFormat'
-import { donationTotals } from '@shared/donationTotals'
+import type { ChannelInfo, Platform } from '@shared/model'
+import type { Donation, DonationKind, DonationTotals, KindTotal } from '@shared/donations'
+import { convert, countryName, flagFor, formatMoney } from '@shared/currencyFormat'
+import { donationTotals, excludedCount } from '@shared/donationTotals'
 import type { DonationsState } from '@renderer/donationsState'
 import { atName, clockHM } from '@renderer/format'
 
@@ -57,6 +57,7 @@ export function DonationsPanel({
     [donations, rates, baseCurrency, sessionStartedAt]
   )
   const unread = donations.filter((donation) => !donation.read).length
+  const excluded = excludedCount(totals.youtube) + excludedCount(totals.twitch)
 
   return (
     <section
@@ -111,10 +112,10 @@ export function DonationsPanel({
           {new Date(rates.fetchedAt).toLocaleDateString()}
         </div>
       ) : null}
-      {totals.youtube.excluded > 0 ? (
+      {excluded > 0 ? (
         <div className="pc-don-note">
-          {totals.youtube.excluded} donation{totals.youtube.excluded === 1 ? '' : 's'} not included
-          in the total — currency not recognised
+          {excluded} donation{excluded === 1 ? '' : 's'} not included in the totals — currency not
+          recognised
         </div>
       ) : null}
       <div className="pc-stream">
@@ -162,29 +163,72 @@ export function DonationsPanel({
   )
 }
 
+/** How each kind is named in the summary, per platform — the two differ for the shared kinds. */
+const KIND_LABELS: Record<Platform, Partial<Record<DonationKind, string>>> = {
+  youtube: {
+    superchat: 'super chats',
+    supersticker: 'stickers',
+    membership: 'members',
+    membership_gift: 'gifted members'
+  },
+  twitch: {
+    bits: 'bits',
+    subscription: 'subs',
+    membership_gift: 'gifted subs'
+  }
+}
+
 /**
- * Per-platform figures, never one sum: Twitch reports bits and sub counts rather than money, so a
- * combined number would invent a rate between a platform credit and currency.
+ * The session summary: one line per platform, one figure per kind.
+ *
+ * Broken out rather than rolled up, so "≈£40 super chats · 3 stickers · 2 members" says what
+ * actually happened instead of one number that hides the mix. Nothing is summed across platforms —
+ * Twitch gives bits and sub counts, never money, so a shared figure would be an invented rate.
  */
 function Totals({ totals, base }: { totals: DonationTotals; base: string }): ReactElement {
-  const parts: string[] = []
-  if (totals.youtube.converted > 0) {
-    parts.push(`YouTube ≈${formatMoney(totals.youtube.converted, base)}`)
-  }
-  if (totals.youtube.memberships > 0) {
-    parts.push(`${totals.youtube.memberships} members`)
-  }
-  if (totals.twitch.bits > 0) {
-    parts.push(`Twitch ${totals.twitch.bits.toLocaleString()} bits`)
-  }
-  if (totals.twitch.subs > 0) {
-    parts.push(`${totals.twitch.subs} subs`)
+  const lines = (['youtube', 'twitch'] as const)
+    .map((platform) => ({ platform, parts: kindParts(totals[platform], platform, base) }))
+    .filter((line) => line.parts.length > 0)
+
+  if (lines.length === 0) {
+    return <span className="pc-don-totals empty">this session: nothing yet</span>
   }
   return (
-    <span className="pc-streamnote">
-      {parts.length === 0 ? 'this session: nothing yet' : `this session: ${parts.join(' · ')}`}
+    <span className="pc-don-totals">
+      {lines.map((line) => (
+        <span key={line.platform} className="pc-don-total-line">
+          <span className={`pc-don-plat ${line.platform === 'twitch' ? 'tw' : 'yt'}`}>
+            {line.platform === 'twitch' ? 'twitch' : 'youtube'}
+          </span>
+          {line.parts.join(' · ')}
+        </span>
+      ))}
     </span>
   )
+}
+
+/** One phrase per kind that actually arrived, in the order the labels declare. */
+function kindParts(
+  platform: Partial<Record<DonationKind, KindTotal>>,
+  which: Platform,
+  base: string
+): string[] {
+  const parts: string[] = []
+  for (const [kind, label] of Object.entries(KIND_LABELS[which]) as Array<[DonationKind, string]>) {
+    const total = platform[kind]
+    if (total === undefined || total.count === 0) {
+      continue
+    }
+    if (total.bits > 0) {
+      parts.push(`${total.bits.toLocaleString()} ${label}`)
+    } else if (total.converted > 0) {
+      // The count matters as much as the money: five £1 chats is a different night to one £5.
+      parts.push(`≈${formatMoney(total.converted, base)} ${label} (${total.count})`)
+    } else {
+      parts.push(`${total.count} ${label}`)
+    }
+  }
+  return parts
 }
 
 function Feed({
@@ -254,13 +298,41 @@ function Row({
   // Only foreign currencies get a flag; the code is always shown as text so the flag is never the
   // sole carrier of meaning.
   const flag = currency !== undefined && currency !== base ? flagFor(currency) : undefined
+  // "Japan (JPY)" — the code alone means little to most people, and the flag alone means nothing
+  // to anyone who doesn't recognise it.
+  const origin =
+    currency === undefined
+      ? undefined
+      : `${countryName(currency) ?? 'unknown origin'} (${currency})`
+
+  // The row itself is the dismiss control: clicking anywhere on it marks the donation read, and
+  // clicking again puts it back, so acknowledging a list costs one click each and nothing is
+  // irreversible. A button per row would spend the width the amounts and messages need.
+  const toggleRead = (): void => {
+    onMarkRead([donation.id], !donation.read)
+  }
 
   return (
-    <article className={donation.read ? 'pc-don-row read' : 'pc-don-row'}>
+    <article
+      className={donation.read ? 'pc-don-row read' : 'pc-don-row'}
+      role="button"
+      tabIndex={0}
+      aria-pressed={donation.read}
+      title={donation.read ? 'click to mark unread' : 'click to mark read'}
+      onClick={toggleRead}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          toggleRead()
+        }
+      }}
+    >
       <div className="pc-don-main">
         <span className="pc-don-amount">{amountText(donation)}</span>
         {flag !== undefined ? (
-          <span className="pc-don-flag" aria-hidden="true">
+          // Named on hover and to a screen reader, so the flag is a shortcut for people who
+          // recognise it rather than the only way to know where the money came from.
+          <span className="pc-don-flag" title={origin} aria-label={origin}>
             {flag}
           </span>
         ) : null}
@@ -268,11 +340,25 @@ function Row({
           <span className="pc-don-code">{currency}</span>
         ) : null}
         <span className="pc-don-author">{atName(donation.author.displayName)}</span>
+        {converted !== undefined && currency !== base ? (
+          <span className="pc-don-conv">≈ {formatMoney(converted, base)}</span>
+        ) : null}
         <span className="pc-don-time">{clockHM(donation.timestamp)}</span>
+        <button
+          type="button"
+          className="pc-don-jump"
+          disabled={channelLabel === undefined}
+          aria-label={`Open ${donation.author.displayName}'s message in chat`}
+          title={channelLabel === undefined ? 'that chat is no longer open' : 'open in chat'}
+          onClick={(event) => {
+            // Without this the jump would also toggle the row it sits in.
+            event.stopPropagation()
+            onJump(donation.channelId)
+          }}
+        >
+          ↗
+        </button>
       </div>
-      {converted !== undefined && currency !== base ? (
-        <div className="pc-don-conv">≈ {formatMoney(converted, base)}</div>
-      ) : null}
       {donation.text === '' ? null : <div className="pc-don-text">{donation.text}</div>}
       <div className="pc-don-meta">
         <span className="pc-don-chan">
@@ -282,26 +368,8 @@ function Row({
         {donation.removed === true ? (
           <span className="pc-don-removed">removed from chat</span>
         ) : null}
-        <button
-          type="button"
-          className="pc-mbtn"
-          disabled={channelLabel === undefined}
-          title={channelLabel === undefined ? 'that chat is no longer open' : undefined}
-          onClick={() => {
-            onJump(donation.channelId)
-          }}
-        >
-          open in chat
-        </button>
-        <button
-          type="button"
-          className="pc-mbtn"
-          onClick={() => {
-            onMarkRead([donation.id], !donation.read)
-          }}
-        >
-          {donation.read ? 'mark unread' : 'mark read'}
-        </button>
+        {/* Spelled out, so read state is never carried by dimming alone. */}
+        <span className="pc-don-state">{donation.read ? 'read' : 'unread'}</span>
       </div>
     </article>
   )

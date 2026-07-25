@@ -17,6 +17,7 @@ import {
   type TwitchUserNotice
 } from '@main/sources/twitch/normalize'
 import { fetchRecentMessages, parseRecentMessages } from '@main/sources/twitch/recentMessages'
+import { splitChatMessage } from '@main/sources/twitch/splitMessage'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
 import { TwitchRewardProvider } from '@main/sources/twitch/TwitchRewardProvider'
@@ -507,6 +508,16 @@ export class TwitchSource extends BaseChatSource {
     if (client === undefined || !client.isConnected) {
       throw new Error('Not connected to Twitch — message not sent')
     }
+    // Split an over-long message ourselves, on grapheme boundaries: twurple would otherwise cut it
+    // on a raw UTF-16 index and tear an emoji in half (see splitChatMessage). Sequential so the
+    // parts arrive in order — twurple fans its own chunks out with Promise.all, which doesn't.
+    for (const chunk of splitChatMessage(text)) {
+      await this.#say(client, chunk, reply)
+    }
+  }
+
+  /** Deliver one already-within-limit message, bounded by {@link SEND_TIMEOUT_MS}, and echo it. */
+  async #say(client: ChatClient, text: string, reply?: SendReply): Promise<void> {
     const replyTo = reply?.parentId
     let timer: NodeJS.Timeout | undefined
     let timedOut = false

@@ -448,6 +448,35 @@ describe('TwitchSource.send', () => {
     await source.disconnect()
   })
 
+  it('splits an over-long message into within-limit parts with every emoji intact', async () => {
+    const source = makeSource(makeAuth())
+    const client = await connectSource(source)
+    client.isConnected = true
+    // Long enough to need splitting, with the emoji straddling the 500-code-unit cut: twurple's own
+    // splitter would slice mid-surrogate-pair here and post two `�` halves.
+    const text = 'x'.repeat(497) + '🎉'.repeat(30)
+    await source.send(text)
+
+    const sent = client.say.mock.calls.map((call: unknown[]) => call[1] as string)
+    expect(sent.length).toBeGreaterThan(1)
+    for (const part of sent) {
+      expect(part.length).toBeLessThanOrEqual(500)
+      expect(part).not.toMatch(/[\uD800-\uDFFF]/u) // no lone surrogate survived the split
+    }
+    expect(sent.join('')).toContain('🎉'.repeat(30))
+    await source.disconnect()
+  })
+
+  it('does not split a message that already fits', async () => {
+    const source = makeSource(makeAuth())
+    const client = await connectSource(source)
+    client.isConnected = true
+    await source.send('just a normal 🎉 message')
+    expect(client.say).toHaveBeenCalledTimes(1)
+    expect(client.say).toHaveBeenCalledWith('somechannel', 'just a normal 🎉 message', undefined)
+    await source.disconnect()
+  })
+
   it('times out a say() that never settles instead of hanging, and emits no echo', async () => {
     vi.useFakeTimers()
     const source = makeSource(makeAuth())

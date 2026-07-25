@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '@shared/model'
-import { buildThreadView, isInThread, threadCounts, threadMessages } from '@renderer/threads'
+import {
+  buildThreadView,
+  isInThread,
+  threadCounts,
+  threadMessages,
+  threadReplyTarget
+} from '@renderer/threads'
 
 /** A bare chat message; `reply.threadId` makes it part of a thread rooted at that id. */
 function msg(
   id: string,
-  opts: { threadId?: string; threadAuthor?: string; author?: string } = {}
+  opts: {
+    threadId?: string
+    threadAuthor?: string
+    author?: string
+    text?: string
+    self?: boolean
+    system?: boolean
+    deleted?: boolean
+    backlog?: boolean
+  } = {}
 ): ChatMessage {
   const message: ChatMessage = {
     id,
@@ -19,7 +34,19 @@ function msg(
       badges: [],
       roles: { broadcaster: false, moderator: false, vip: false, subscriber: false }
     },
-    fragments: []
+    fragments: opts.text === undefined ? [] : [{ type: 'text', text: opts.text }]
+  }
+  if (opts.self === true) {
+    message.self = true
+  }
+  if (opts.system === true) {
+    message.system = true
+  }
+  if (opts.deleted === true) {
+    message.deleted = true
+  }
+  if (opts.backlog === true) {
+    message.backlog = true
   }
   if (opts.threadId !== undefined) {
     message.reply = {
@@ -109,5 +136,87 @@ describe('buildThreadView', () => {
     const view = buildThreadView([msg('r1', { threadId: 'gone' })], 'gone')
     expect(view.rootAuthor).toBeUndefined()
     expect(view.rootBuffered).toBe(false)
+  })
+})
+
+describe('threadReplyTarget', () => {
+  const thread = [
+    msg('root', { author: 'Streamer', text: 'hello all' }),
+    msg('r1', { threadId: 'root', author: 'Alice', text: 'first reply' }),
+    msg('r2', { threadId: 'root', author: 'Bob', text: 'second reply' })
+  ]
+
+  it('answers the picked message, not the thread root', () => {
+    const { reply, message } = threadReplyTarget(thread, 'root', 'Streamer', 'r1')
+    expect(reply.parentId).toBe('r1')
+    expect(reply.parentAuthor).toBe('Alice')
+    expect(reply.parentText).toBe('first reply')
+    expect(message?.id).toBe('r1')
+  })
+
+  it('always names the root as the thread, whichever message is answered', () => {
+    // Twitch derives the thread from the parent, but the local echo needs the root to group.
+    const { reply } = threadReplyTarget(thread, 'root', 'Streamer', 'r1')
+    expect(reply.threadId).toBe('root')
+    expect(reply.threadAuthor).toBe('Streamer')
+  })
+
+  it('defaults to the newest reply when no message was picked', () => {
+    const { reply } = threadReplyTarget(thread, 'root', 'Streamer', undefined)
+    expect(reply.parentId).toBe('r2')
+    expect(reply.parentAuthor).toBe('Bob')
+  })
+
+  it('skips our own echoes and system notices when choosing the newest', () => {
+    // A sent reply echoes locally with an id Twitch never issued — replying to it would be rejected.
+    const withEcho = [
+      ...thread,
+      msg('echo-1', { threadId: 'root', author: 'Me', self: true }),
+      msg('notice-1', { author: 'system', system: true })
+    ]
+    const { reply } = threadReplyTarget(withEcho, 'root', 'Streamer', undefined)
+    expect(reply.parentId).toBe('r2')
+  })
+
+  it('still answers a picked message that has left the buffer, rather than redirecting', () => {
+    // Twitch needs only the id to thread the reply, so a deliberate choice survives buffer churn.
+    // Nothing is left to quote, so no author or text is invented for it.
+    const { reply, message } = threadReplyTarget(thread, 'root', 'Streamer', 'trimmed-away')
+    expect(reply.parentId).toBe('trimmed-away')
+    expect(reply.threadId).toBe('root')
+    expect(message).toBeUndefined()
+    expect('parentAuthor' in reply).toBe(false)
+    expect(reply.parentText).toBeUndefined()
+  })
+
+  it('will not answer a message a moderator removed', () => {
+    // Deleted rows stay buffered so they can render struck through; replying into one is not
+    // something to do on the user's behalf, whether it was picked or merely newest.
+    const withDeleted = [...thread, msg('r3', { threadId: 'root', author: 'Carol', deleted: true })]
+    expect(threadReplyTarget(withDeleted, 'root', 'Streamer', undefined).reply.parentId).toBe('r2')
+    expect(threadReplyTarget(withDeleted, 'root', 'Streamer', 'r3').reply.parentId).toBe('r2')
+  })
+
+  it('will not answer a row supplied by the third-party history service', () => {
+    // Backlog ids are untrusted (the same reason their moderation token is stripped), and a reply's
+    // parent is published — so they are never chosen on the user's behalf.
+    const withBacklog = [...thread, msg('h1', { threadId: 'root', author: 'Dave', backlog: true })]
+    expect(threadReplyTarget(withBacklog, 'root', 'Streamer', undefined).reply.parentId).toBe('r2')
+  })
+
+  it('falls back to the root id when nothing repliable is buffered', () => {
+    const { reply, message } = threadReplyTarget([], 'gone', 'Streamer', undefined)
+    expect(reply.parentId).toBe('gone')
+    expect(reply.threadId).toBe('gone')
+    expect(reply.parentAuthor).toBe('Streamer')
+    expect(reply.parentText).toBeUndefined()
+    expect(message).toBeUndefined()
+  })
+
+  it('omits author fields entirely when the thread starter is unknown', () => {
+    const { reply } = threadReplyTarget([], 'gone', undefined, undefined)
+    expect(reply.parentId).toBe('gone')
+    expect('parentAuthor' in reply).toBe(false)
+    expect('threadAuthor' in reply).toBe(false)
   })
 })

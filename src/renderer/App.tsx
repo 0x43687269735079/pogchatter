@@ -97,9 +97,11 @@ export function App(): ReactElement {
     { channelId: string; threadToken: string; parentAuthor: string } | undefined
   >(undefined)
   // The Twitch reply thread that's open, if any (rebuilt from the channel's buffer by root id).
-  const [threadView, setThreadView] = useState<{ channelId: string; rootId: string } | undefined>(
-    undefined
-  )
+  // `replyToId` is the message its composer targets — the one the user opened the thread from, or
+  // picked inside it; undefined means "no explicit pick", which targets the newest reply.
+  const [threadView, setThreadView] = useState<
+    { channelId: string; rootId: string; replyToId?: string } | undefined
+  >(undefined)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
@@ -662,11 +664,22 @@ export function App(): ReactElement {
   }, [])
 
   // Open the Twitch reply thread a message belongs to, keyed by its root id (a reply's threadId, or
-  // the message's own id when it is the root). Stable for the memoized rows.
+  // the message's own id when it is the root). Stable for the memoized rows. Browsing a thread
+  // ("View thread") picks no target, so its composer defaults to the newest reply.
   const openThread = useCallback((message: ChatMessage): void => {
     setThreadView({
       channelId: message.channelId,
       rootId: message.reply?.threadId ?? message.id
+    })
+  }, [])
+
+  // Replying to a message that's already in a thread: open that thread with this message as the
+  // composer's target, so the reply answers the message the user picked rather than the root.
+  const openThreadReply = useCallback((message: ChatMessage): void => {
+    setThreadView({
+      channelId: message.channelId,
+      rootId: message.reply?.threadId ?? message.id,
+      replyToId: message.id
     })
   }, [])
 
@@ -744,6 +757,7 @@ export function App(): ReactElement {
           onUserActivity={openUserActivity}
           onDonationReplies={openDonationThread}
           onViewThread={openThread}
+          onReplyInThread={openThreadReply}
           onHeldAction={handleHeldAction}
           onScrollPause={reportScrollPause}
           monitoredKeys={monitoredKeys}
@@ -1016,9 +1030,21 @@ export function App(): ReactElement {
           rootId={threadView.rootId}
           rootAuthor={thread.rootAuthor}
           rootBuffered={thread.rootBuffered}
+          replyToId={threadView.replyToId}
           canSend={threadChannel !== undefined && canSendTo(threadChannel, auth)}
           palette={palette}
           monitoredKeys={monitoredKeys}
+          onSelectReplyTarget={(messageId) => {
+            setThreadView((current) => {
+              if (current === undefined) {
+                return current
+              }
+              // Clearing the pick drops the key entirely, so the composer falls back to the default
+              // (newest reply) rather than carrying an explicit `undefined`.
+              const { replyToId: _cleared, ...rest } = current
+              return messageId === undefined ? rest : { ...rest, replyToId: messageId }
+            })
+          }}
           onJump={(channelId) => {
             jumpToChannel(channelId)
             setThreadView(undefined)

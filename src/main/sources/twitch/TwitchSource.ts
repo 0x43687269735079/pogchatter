@@ -17,6 +17,7 @@ import {
   type TwitchUserNotice
 } from '@main/sources/twitch/normalize'
 import { fetchRecentMessages, parseRecentMessages } from '@main/sources/twitch/recentMessages'
+import { splitChatMessage } from '@shared/splitMessage'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
 import { TwitchRewardProvider } from '@main/sources/twitch/TwitchRewardProvider'
@@ -79,6 +80,18 @@ const MOD_ACTIONS: ChatAction[] = [
   },
   { id: 'ban', label: 'Ban user', destructive: true }
 ]
+
+/**
+ * Wording for a long message that failed part-way through. The composer refills with the whole draft
+ * on failure, so the user has to be told which parts are already in the channel — otherwise resending
+ * posts them twice.
+ */
+function partialSendError(sent: number, total: number, reason: string): string {
+  return (
+    `Sent ${sent} of ${total} parts, then failed: ${reason}. ` +
+    'The rest was not sent — delete what already posted before sending again.'
+  )
+}
 
 /** Map a failed Helix moderation call to a user-facing error. */
 function actionError(error: unknown, label: string): Error {
@@ -507,6 +520,40 @@ export class TwitchSource extends BaseChatSource {
     if (client === undefined || !client.isConnected) {
       throw new Error('Not connected to Twitch — message not sent')
     }
+    // Split an over-long message ourselves, on grapheme boundaries: twurple would otherwise cut it
+    // on a raw UTF-16 index and tear an emoji in half (see splitChatMessage). Sequential so the
+    // parts arrive in order — twurple fans its own chunks out with Promise.all, which doesn't.
+    const chunks = splitChatMessage(text)
+    if (chunks.length === 0) {
+      // Whitespace only: the splitter trims each part away to nothing. Say so rather than reporting
+      // success for a message that was never put on the wire.
+      throw new Error('Message is empty — nothing to send')
+    }
+    for (const [index, chunk] of chunks.entries()) {
+      // Re-check per part: a disconnect (or a reconnect, which builds a fresh ChatClient) between
+      // parts would otherwise keep posting to the client we quit, and echo it as delivered.
+      if (this.#client !== client || !client.isConnected) {
+        throw new Error(partialSendError(index, chunks.length, 'the connection dropped'))
+      }
+      try {
+        await this.#say(client, chunk, reply)
+      } catch (error) {
+        if (index === 0) {
+          throw error
+        }
+        throw new Error(
+          partialSendError(
+            index,
+            chunks.length,
+            error instanceof Error ? error.message : String(error)
+          )
+        )
+      }
+    }
+  }
+
+  /** Deliver one already-within-limit message, bounded by {@link SEND_TIMEOUT_MS}, and echo it. */
+  async #say(client: ChatClient, text: string, reply?: SendReply): Promise<void> {
     const replyTo = reply?.parentId
     let timer: NodeJS.Timeout | undefined
     let timedOut = false

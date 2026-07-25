@@ -1565,6 +1565,21 @@ body,
   font-size: 17px;
   padding: 2px;
 }
+/* Remaining characters in the composer: quiet until the limit is close, loud once it's past. */
+.pc-chars {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--dimmer);
+  white-space: nowrap;
+}
+.pc-chars.near {
+  color: var(--warn);
+}
+.pc-chars.over {
+  color: var(--err);
+}
 .pc-inrow .emo:hover {
   color: var(--accent);
 }
@@ -2143,6 +2158,19 @@ body,
 }
 .pc-modal .mf.pc-thread-foot .pc-mbtn {
   flex: 0 0 auto;
+}
+/* The reply-target chip sits flush with the composer below it, not on the column's gutter. */
+.pc-thread-foot .pc-replybar {
+  padding: 0 0 4px;
+}
+/* Anchors the emoji autocomplete, which floats directly above the composer (.pc-ac is
+   bottom: 100% against its nearest positioned ancestor). */
+.pc-thread-input {
+  position: relative;
+}
+/* The wrapper is one flex child, so .pc-thread-foot's gap no longer separates these two. */
+.pc-thread-input .pc-col-err {
+  margin-bottom: 8px;
 }
 /* The reply composer: a boxed textarea with a full-height send button beside it. */
 .pc-thread-reply {

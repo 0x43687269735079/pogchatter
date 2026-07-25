@@ -1,4 +1,5 @@
-import type { ChatMessage } from '@shared/model'
+import type { ChatMessage, SendReply } from '@shared/model'
+import { plainText } from '@renderer/format'
 
 /** Reply counts per Twitch thread, keyed by the thread's root message id. */
 export type ThreadCounts = ReadonlyMap<string, number>
@@ -65,6 +66,100 @@ export function buildThreadView(messages: readonly ChatMessage[], rootId: string
     rootAuthor: root?.author.displayName ?? replyThreadAuthor(messages, rootId),
     rootBuffered: root !== undefined
   }
+}
+
+/** What a thread's composer is replying to: the send payload plus the message it targets. */
+export interface ThreadReplyTarget {
+  /** The payload for `ChatApi.send`. */
+  reply: SendReply
+  /** The targeted message, when one is buffered — names the composer's "replying to" chip. */
+  message: ChatMessage | undefined
+}
+
+/**
+ * Whether a thread line can serve as a reply parent. Excluded:
+ * - system notices and our own local echoes — their ids were never issued by Twitch, so a reply
+ *   targeting one is rejected;
+ * - messages a moderator has removed — they stay buffered so they can render struck through, but
+ *   replying to a message that no longer exists is not something to do on the user's behalf;
+ * - rows from the third-party recent-messages service — their ids are untrusted, the same reason
+ *   `parseRecentMessages` strips their moderation token, and a reply's parent is published.
+ */
+function isReplyable(message: ChatMessage): boolean {
+  return (
+    message.system !== true &&
+    message.self !== true &&
+    message.deleted !== true &&
+    message.backlog !== true
+  )
+}
+
+/**
+ * Resolve a thread composer's reply target: the message the user picked (`selectedId`), else the
+ * newest replyable message in the thread, else the root.
+ *
+ * Replying to a mid-thread message still lands in this thread — Twitch's wire format carries only
+ * the parent id (`reply-parent-msg-id`) and derives the thread root itself — so the target is the
+ * message actually being answered, which is what the quote and the recipient's mention reflect.
+ * `threadId`/`threadAuthor` always name the root, so the local echo groups with the thread.
+ */
+export function threadReplyTarget(
+  messages: readonly ChatMessage[],
+  rootId: string,
+  rootAuthor: string | undefined,
+  selectedId: string | undefined
+): ThreadReplyTarget {
+  const target = findReplyTarget(messages, selectedId)
+  const reply: SendReply = { parentId: target.id ?? rootId, threadId: rootId }
+  // Name the author only when it's actually known: the buffered target's, or — when nothing is
+  // buffered and the reply falls back to the root — the thread starter's. An explicit pick that has
+  // aged out of the buffer still replies correctly, but naming anyone there would be a guess.
+  const parentAuthor =
+    target.message?.author.displayName ?? (target.id === undefined ? rootAuthor : undefined)
+  if (parentAuthor !== undefined) {
+    reply.parentAuthor = parentAuthor
+  }
+  if (rootAuthor !== undefined) {
+    reply.threadAuthor = rootAuthor
+  }
+  if (target.message !== undefined) {
+    reply.parentText = plainText(target.message.fragments)
+  }
+  return { reply, message: target.message }
+}
+
+/** The chosen parent: its id (enough to reply) and the buffered message behind it, when there is one. */
+interface ResolvedTarget {
+  id: string | undefined
+  message: ChatMessage | undefined
+}
+
+/**
+ * The picked message when it's still buffered and a valid parent, the pick's bare id when it has
+ * aged out of the buffer (Twitch needs only the id to thread a reply, so a deliberate choice is
+ * honoured rather than silently redirected), else the newest replyable message.
+ */
+function findReplyTarget(
+  messages: readonly ChatMessage[],
+  selectedId: string | undefined
+): ResolvedTarget {
+  if (selectedId !== undefined) {
+    const picked = messages.find((message) => message.id === selectedId)
+    if (picked === undefined) {
+      return { id: selectedId, message: undefined }
+    }
+    if (isReplyable(picked)) {
+      return { id: picked.id, message: picked }
+    }
+    // Picked, then moderated away — fall through to the default rather than reply into a hole.
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message !== undefined && isReplyable(message)) {
+      return { id: message.id, message }
+    }
+  }
+  return { id: undefined, message: undefined }
 }
 
 /** Fallback thread-starter name when the root isn't buffered: the first reply that carried it. */

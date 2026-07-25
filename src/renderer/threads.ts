@@ -1,4 +1,5 @@
-import type { ChatMessage } from '@shared/model'
+import type { ChatMessage, SendReply } from '@shared/model'
+import { plainText } from '@renderer/format'
 
 /** Reply counts per Twitch thread, keyed by the thread's root message id. */
 export type ThreadCounts = ReadonlyMap<string, number>
@@ -65,6 +66,72 @@ export function buildThreadView(messages: readonly ChatMessage[], rootId: string
     rootAuthor: root?.author.displayName ?? replyThreadAuthor(messages, rootId),
     rootBuffered: root !== undefined
   }
+}
+
+/** What a thread's composer is replying to: the send payload plus the message it targets. */
+export interface ThreadReplyTarget {
+  /** The payload for `ChatApi.send`. */
+  reply: SendReply
+  /** The targeted message, when one is buffered — names the composer's "replying to" chip. */
+  message: ChatMessage | undefined
+}
+
+/**
+ * Whether a thread line can be replied to. System notices and our own local echoes carry
+ * locally-generated ids the platform never issued, so a reply targeting one is rejected.
+ */
+function isReplyable(message: ChatMessage): boolean {
+  return message.system !== true && message.self !== true
+}
+
+/**
+ * Resolve a thread composer's reply target: the message the user picked (`selectedId`), else the
+ * newest replyable message in the thread, else the root.
+ *
+ * Replying to a mid-thread message still lands in this thread — Twitch's wire format carries only
+ * the parent id (`reply-parent-msg-id`) and derives the thread root itself — so the target is the
+ * message actually being answered, which is what the quote and the recipient's mention reflect.
+ * `threadId`/`threadAuthor` always name the root, so the local echo groups with the thread.
+ */
+export function threadReplyTarget(
+  messages: readonly ChatMessage[],
+  rootId: string,
+  rootAuthor: string | undefined,
+  selectedId: string | undefined
+): ThreadReplyTarget {
+  const target = findReplyTarget(messages, selectedId)
+  const reply: SendReply = { parentId: target?.id ?? rootId, threadId: rootId }
+  const parentAuthor = target?.author.displayName ?? rootAuthor
+  if (parentAuthor !== undefined) {
+    reply.parentAuthor = parentAuthor
+  }
+  if (rootAuthor !== undefined) {
+    reply.threadAuthor = rootAuthor
+  }
+  if (target !== undefined) {
+    reply.parentText = plainText(target.fragments)
+  }
+  return { reply, message: target }
+}
+
+/** The picked message when it's still buffered and replyable, else the newest replyable one. */
+function findReplyTarget(
+  messages: readonly ChatMessage[],
+  selectedId: string | undefined
+): ChatMessage | undefined {
+  if (selectedId !== undefined) {
+    const picked = messages.find((message) => message.id === selectedId)
+    if (picked !== undefined && isReplyable(picked)) {
+      return picked
+    }
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message !== undefined && isReplyable(message)) {
+      return message
+    }
+  }
+  return undefined
 }
 
 /** Fallback thread-starter name when the root isn't buffered: the first reply that carried it. */

@@ -2144,6 +2144,10 @@ body,
 .pc-modal .mf.pc-thread-foot .pc-mbtn {
   flex: 0 0 auto;
 }
+/* The reply-target chip sits flush with the composer below it, not on the column's gutter. */
+.pc-thread-foot .pc-replybar {
+  padding: 0 0 4px;
+}
 /* The reply composer: a boxed textarea with a full-height send button beside it. */
 .pc-thread-reply {
   display: flex;

@@ -1,6 +1,7 @@
 import { type ReactElement, useRef, useState } from 'react'
 import type { ChatMessage, SendReply } from '@shared/model'
-import { atName, plainText } from '@renderer/format'
+import { atName } from '@renderer/format'
+import { threadReplyTarget } from '@renderer/threads'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { ModalShell } from '@renderer/components/ModalShell'
@@ -10,17 +11,24 @@ interface ThreadModalProps {
   channelId: string
   /** The thread's messages (root + replies), oldest→newest, gathered from the column buffer. */
   messages: ChatMessage[]
-  /** Thread root message id — the reply target (`replyTo`) so a reply lands in this thread. */
+  /** Thread root message id — groups the reply (and its echo) into this thread. */
   rootId: string
   /** Thread starter's display name for the header, when known. */
   rootAuthor?: string | undefined
   /** Whether the root message is in the buffer; false shows an "earlier messages not shown" note. */
   rootBuffered: boolean
+  /**
+   * The message the composer replies to. Absent when the thread was merely opened for reading, which
+   * targets the newest reply — see {@link threadReplyTarget}.
+   */
+  replyToId?: string | undefined
   /** Whether a sending session exists for this channel; gates the reply box. */
   canSend: boolean
   palette: readonly string[]
   /** Monitored authors (`<platform>:<authorId>`); the Set's identity changes only on toggle. */
   monitoredKeys?: ReadonlySet<string> | undefined
+  /** Retarget the composer at a thread message, or `undefined` to fall back to the newest reply. */
+  onSelectReplyTarget: (messageId: string | undefined) => void
   /** Jump to the source chat's column (also closes this view). */
   onJump: (channelId: string) => void
   onClose: () => void
@@ -32,7 +40,7 @@ interface ContextMenuState {
   y: number
 }
 
-/** A compact composer that posts a reply into the thread (targeting its root so it stays in-thread). */
+/** A compact composer that posts `reply` into the thread it belongs to. */
 function ThreadReplyBox({
   channelId,
   reply
@@ -109,8 +117,9 @@ function ThreadReplyBox({
  * A window onto a Twitch reply thread — the root followed by every reply the app has buffered.
  * Unlike YouTube's fetched donation thread, Twitch has no chat-history API, so the thread is
  * reconstructed from the column's live buffer; when the root has scrolled out, a note says so.
- * Right-clicking a line offers the same moderation/jump actions as live chat. When logged in, a
- * composer posts straight into the thread (replying to the root keeps every message in one thread).
+ * Right-clicking a line offers the same moderation/jump actions as live chat, plus Reply to aim the
+ * composer at that message. When logged in, a composer posts straight into the thread — answering
+ * the message the user picked (or the newest one), which Twitch keeps in this thread either way.
  */
 export function ThreadModal({
   channelId,
@@ -118,26 +127,25 @@ export function ThreadModal({
   rootId,
   rootAuthor,
   rootBuffered,
+  replyToId,
   canSend,
   palette,
   monitoredKeys,
+  onSelectReplyTarget,
   onJump,
   onClose
 }: ThreadModalProps): ReactElement {
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
   const replyCount = rootBuffered ? Math.max(0, messages.length - 1) : messages.length
 
-  // A reply posts to the thread root so it stays in this thread; carry the root's author/text so the
-  // local echo renders the same quote + thread indicator as everyone else's thread replies.
-  const root = messages.find((message) => message.id === rootId)
-  const replyTarget: SendReply = { parentId: rootId, threadId: rootId }
-  if (rootAuthor !== undefined) {
-    replyTarget.parentAuthor = rootAuthor
-    replyTarget.threadAuthor = rootAuthor
-  }
-  if (root !== undefined) {
-    replyTarget.parentText = plainText(root.fragments)
-  }
+  // What the composer answers: the picked message, else the newest reply. Either way the payload
+  // carries the root as `threadId`, so the reply (and its local echo) stay grouped in this thread.
+  const { reply: replyTarget, message: replyToMessage } = threadReplyTarget(
+    messages,
+    rootId,
+    rootAuthor,
+    replyToId
+  )
 
   return (
     <ModalShell className="pc-modal-wide" onClose={onClose}>
@@ -165,6 +173,23 @@ export function ThreadModal({
         )}
       </div>
       <div className="mf pc-thread-foot">
+        {canSend && replyToMessage !== undefined ? (
+          <div className="pc-replybar">
+            replying to <b>@{replyToMessage.author.displayName}</b>
+            {replyToId !== undefined ? (
+              <button
+                type="button"
+                className="pc-x"
+                aria-label="Reply to the newest message instead"
+                onClick={() => {
+                  onSelectReplyTarget(undefined)
+                }}
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {canSend ? <ThreadReplyBox channelId={channelId} reply={replyTarget} /> : null}
         <button type="button" className="pc-mbtn" onClick={onClose}>
           close
@@ -179,6 +204,14 @@ export function ThreadModal({
           onClose={() => {
             setMenu(undefined)
           }}
+          onReply={
+            canSend
+              ? (message) => {
+                  onSelectReplyTarget(message.id)
+                  setMenu(undefined)
+                }
+              : undefined
+          }
           onJump={onJump}
         />
       ) : null}

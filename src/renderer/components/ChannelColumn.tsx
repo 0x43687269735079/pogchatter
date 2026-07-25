@@ -41,6 +41,8 @@ interface ChannelColumnProps {
   onDonationReplies: (message: ChatMessage) => void
   /** Open the Twitch thread modal for a message that's part of a reply thread. */
   onViewThread: (message: ChatMessage) => void
+  /** Open that thread to reply to this specific message (the thread modal hosts the composer). */
+  onReplyInThread: (message: ChatMessage) => void
   /** Run a held message's Show/Hide review action and resolve the row to its decided state. */
   onHeldAction: HeldActionHandler
   /**
@@ -80,6 +82,7 @@ export function ChannelColumn({
   onUserActivity,
   onDonationReplies,
   onViewThread,
+  onReplyInThread,
   onHeldAction,
   onScrollPause,
   monitoredKeys,
@@ -284,8 +287,10 @@ export function ChannelColumn({
     setMenu(undefined)
     // Replying to a message already in a thread opens the thread modal (with its own composer)
     // instead of the inline reply, so the reply lands in — and the user sees — the whole thread.
+    // The picked message rides along as that composer's target, so the reply answers it rather
+    // than the thread's opening message.
     if (channel.platform === 'twitch' && isInThread(message, counts)) {
-      onViewThread(message)
+      onReplyInThread(message)
       return
     }
     if (channel.platform === 'twitch') {

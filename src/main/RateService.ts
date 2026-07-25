@@ -9,12 +9,21 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 10_000
 
 /**
- * Primary: Frankfurter — no API key, no rate cap, open source and self-hostable, sourced from
- * central banks. Fallback: ExchangeRate-API's open endpoint — also keyless, updated daily, and
- * rate-limited, which is why it is second rather than first.
+ * Tried in order, stopping at the first that answers — so the ordinary day costs exactly one request.
  *
- * Attribution: ExchangeRate-API asks for credit when the open endpoint is used; the panel names
- * whichever provider supplied the rates it is showing.
+ * ExchangeRate-API leads on *coverage*, which turned out to matter far more than it first appeared.
+ * Frankfurter serves the ECB reference basket — 30 currencies — while YouTube takes Super Chats in
+ * about seventy. Forty of those, the Costa Rican colón among them, simply are not in Frankfurter,
+ * and a failure-triggered fallback never rescues them: Frankfurter does not fail, it returns a
+ * perfectly valid table with no colón in it, so those donations would be written off as unrecognised
+ * currencies forever. ExchangeRate-API carries all of them.
+ *
+ * Frankfurter stays as the fallback: keyless, uncapped, open source and self-hostable, so a bad day
+ * at the primary still leaves the major currencies converting.
+ *
+ * Attribution: ExchangeRate-API asks for credit when its open endpoint is used; the panel names
+ * whichever provider supplied the rates it is showing. One request a day sits far inside its
+ * fair-use limit.
  */
 const PROVIDERS: ReadonlyArray<{
   name: string
@@ -22,13 +31,13 @@ const PROVIDERS: ReadonlyArray<{
   parse: (body: unknown) => Record<string, number> | undefined
 }> = [
   {
-    name: 'Frankfurter',
-    url: (base) => `https://api.frankfurter.dev/v1/latest?base=${base}`,
+    name: 'ExchangeRate-API',
+    url: (base) => `https://open.er-api.com/v6/latest/${base}`,
     parse: (body) => ratesOf((body as { rates?: unknown }).rates)
   },
   {
-    name: 'ExchangeRate-API',
-    url: (base) => `https://open.er-api.com/v6/latest/${base}`,
+    name: 'Frankfurter',
+    url: (base) => `https://api.frankfurter.dev/v1/latest?base=${base}`,
     parse: (body) => ratesOf((body as { rates?: unknown }).rates)
   }
 ]

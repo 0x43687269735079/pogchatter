@@ -24,14 +24,14 @@ describe('RateService', () => {
     const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
     await service.refresh('GBP')
 
-    expect(String(fetchFn.mock.calls[0]?.[0])).toContain('frankfurter')
+    expect(String(fetchFn.mock.calls[0]?.[0])).toContain('er-api')
     expect(service.table()).toEqual({
       base: 'GBP',
       rates: { JPY: 190, USD: 1.25 },
       fetchedAt: 1_000,
       stale: false
     })
-    expect(service.source()).toBe('Frankfurter')
+    expect(service.source()).toBe('ExchangeRate-API')
   })
 
   it('falls through to the fallback provider when the primary fails', async () => {
@@ -42,9 +42,9 @@ describe('RateService', () => {
     const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1 })
     await service.refresh('GBP')
 
-    expect(String(fetchFn.mock.calls[1]?.[0])).toContain('er-api')
+    expect(String(fetchFn.mock.calls[1]?.[0])).toContain('frankfurter')
     expect(service.table()?.rates).toEqual({ JPY: 191 })
-    expect(service.source()).toBe('ExchangeRate-API')
+    expect(service.source()).toBe('Frankfurter')
   })
 
   it('keeps the previous rates and marks them stale when every provider fails', async () => {
@@ -100,5 +100,31 @@ describe('RateService', () => {
     const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1 })
     await expect(service.refresh('GBP')).resolves.toBeUndefined()
     expect(service.table()).toBeUndefined() // nothing to show, and nothing broken
+  })
+})
+
+describe('RateService coverage and request budget', () => {
+  it('asks the wide-coverage provider first, so the long-tail currencies convert at all', async () => {
+    // The bug this pins: Frankfurter serves only the ECB basket (30 currencies), and it does not
+    // *fail* on a Costa Rican colon — it returns a valid table without one. Leading with it meant
+    // ~40 of YouTube's Super Chat currencies were permanently written off as unrecognised.
+    const fetchFn = vi.fn().mockResolvedValue(ok({ CRC: 609.44, JPY: 216.66, VND: 35040 }))
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1 })
+    await service.refresh('GBP')
+
+    expect(String(fetchFn.mock.calls[0]?.[0])).toContain('er-api')
+    expect(service.table()?.rates['CRC']).toBeCloseTo(609.44)
+    expect(service.table()?.rates['VND']).toBeCloseTo(35040)
+  })
+
+  it('costs exactly one request on an ordinary day', async () => {
+    // The whole point of caching for a day: the free endpoints are fair-use, and one call a day
+    // sits far inside that. A second provider is only ever touched when the first says nothing.
+    const fetchFn = vi.fn().mockResolvedValue(ok({ CRC: 609.44 }))
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
+    await service.refresh('GBP')
+    await service.refresh('GBP')
+    await service.refresh('GBP')
+    expect(fetchFn).toHaveBeenCalledTimes(1)
   })
 })

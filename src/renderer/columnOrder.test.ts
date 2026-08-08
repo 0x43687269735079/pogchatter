@@ -67,13 +67,13 @@ describe('reconcileColumnOrder', () => {
   it('slots a late-hydrating monitor second, after the flagged view — not rightmost', () => {
     // The reported bug: channels arrive before settings hydrate, so the monitor view used to be
     // appended after every chat column.
-    const prev = ['flagged', 'tw:a', 'yt:b']
+    const prev = ['flagged', 'donations', 'tw:a', 'yt:b']
     const next = reconcileColumnOrder(prev, {
       flaggedVisible: true,
       monitorIds: new Set(['mon-1']),
       channelIds: ['tw:a', 'yt:b']
     })
-    expect(next).toEqual(['flagged', 'mon-1', 'tw:a', 'yt:b'])
+    expect(next).toEqual(['flagged', 'donations', 'mon-1', 'tw:a', 'yt:b'])
   })
 
   it('without a flagged view, a monitor leads; a flagged view appearing later takes precedence', () => {
@@ -82,18 +82,18 @@ describe('reconcileColumnOrder', () => {
       monitorIds: new Set(['mon-1']),
       channelIds: ['tw:a']
     })
-    expect(noFlag).toEqual(['mon-1', 'tw:a'])
+    expect(noFlag).toEqual(['donations', 'mon-1', 'tw:a'])
     const withFlag = reconcileColumnOrder(noFlag, {
       flaggedVisible: true,
       monitorIds: new Set(['mon-1']),
       channelIds: ['tw:a']
     })
-    expect(withFlag).toEqual(['flagged', 'mon-1', 'tw:a'])
+    expect(withFlag).toEqual(['flagged', 'donations', 'mon-1', 'tw:a'])
   })
 
   it('leaves explicitly arranged columns where the session put them', () => {
     // The user moved a chat ahead of the monitor: membership reconciles must not "fix" that.
-    const prev = ['flagged', 'tw:a', 'mon-1', 'yt:b']
+    const prev = ['flagged', 'donations', 'tw:a', 'mon-1', 'yt:b']
     const next = reconcileColumnOrder(prev, {
       flaggedVisible: true,
       monitorIds: new Set(['mon-1']),
@@ -103,25 +103,25 @@ describe('reconcileColumnOrder', () => {
   })
 
   it('drops removed columns and keeps the rest in place', () => {
-    const next = reconcileColumnOrder(['flagged', 'mon-1', 'tw:a', 'yt:b'], {
+    const next = reconcileColumnOrder(['flagged', 'donations', 'mon-1', 'tw:a', 'yt:b'], {
       flaggedVisible: true,
       monitorIds: new Set(['mon-1']),
       channelIds: ['yt:b'] // tw:a was closed
     })
-    expect(next).toEqual(['flagged', 'mon-1', 'yt:b'])
+    expect(next).toEqual(['flagged', 'donations', 'mon-1', 'yt:b'])
   })
 
   it('restores the persisted arrangement once, rank-slotting ids the stored order does not name', () => {
     // Stored order says the user keeps a chat leftmost; a new monitor (not in the stored list)
     // still slots by the default rule among what remains.
-    const prev = ['flagged', 'mon-1', 'tw:a', 'yt:b'] // default order built pre-hydration
+    const prev = ['flagged', 'donations', 'mon-1', 'tw:a', 'yt:b'] // default order built pre-hydration
     const next = reconcileColumnOrder(prev, {
       flaggedVisible: true,
       monitorIds: new Set(['mon-1']),
       channelIds: ['tw:a', 'yt:b'],
       stored: ['tw:a', 'flagged', 'yt:b'] // explicit arrangement from the last session
     })
-    expect(next).toEqual(['mon-1', 'tw:a', 'flagged', 'yt:b'])
+    expect(next).toEqual(['donations', 'mon-1', 'tw:a', 'flagged', 'yt:b'])
   })
 
   it('ignores stored ids that no longer exist', () => {
@@ -131,6 +131,6 @@ describe('reconcileColumnOrder', () => {
       channelIds: ['tw:a'],
       stored: ['yt:gone', 'tw:a']
     })
-    expect(next).toEqual(['tw:a'])
+    expect(next).toEqual(['donations', 'tw:a'])
   })
 })

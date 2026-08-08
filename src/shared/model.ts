@@ -4,6 +4,9 @@
  * Every platform connector (Twitch, YouTube, ...) maps its native payloads onto
  * these types so the UI never has to branch on the source platform.
  */
+// Type-only both ways (donations.ts imports `Platform` from here), so the cycle is erased at
+// compile time and never exists at runtime.
+import type { Donation, DonationsSnapshot, RateTable } from '@shared/donations'
 
 export type Platform = 'twitch' | 'youtube'
 
@@ -83,6 +86,13 @@ export interface Highlight {
    * The member's own typed message (milestone chat) rides in the message's `fragments`.
    */
   headerText?: string
+  /**
+   * This line announces membership activity that is not itself a purchase: a milestone from someone
+   * who joined months ago, or a gifted membership being delivered to its recipient (the gifter's
+   * purchase was already announced separately). Rendering treats it like any other membership line;
+   * it exists so revenue accounting doesn't count the same money twice.
+   */
+  notAPurchase?: boolean
 }
 
 export interface ReplyContext {
@@ -543,6 +553,15 @@ export interface AppSettings {
   /** Chat-to-disk logging. */
   chatLog: ChatLogSettings
   /**
+   * ISO 4217 code the donations panel converts amounts into. Empty means "follow the system" — the
+   * main process resolves it from the OS locale at use. Kept empty rather than resolved at write
+   * time so the stored default stays deterministic and a user who moves country isn't pinned to
+   * where they first launched.
+   */
+  baseCurrency: string
+  /** Whether the donations panel shows the converted secondary amount beside the original. */
+  showConvertedAmounts: boolean
+  /**
    * Allow saved logins to persist as plaintext on disk when no OS keyring is available (Linux
    * without a Secret Service). Off by default: without it, credentials are memory-only there.
    */
@@ -607,6 +626,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   columnOrder: [],
   layout: 'scroll',
   chatLog: { enabled: false, directory: '' },
+  baseCurrency: '',
+  showConvertedAmounts: true,
   allowPlaintextCredentials: false,
   keepAwake: true,
   twitchHistory: true
@@ -660,6 +681,25 @@ export type ChatEvent =
   /** Full channel list, re-sent whenever a source is added/removed (handles late-added sources). */
   | { kind: 'channels'; channels: ChannelInfo[] }
   | { kind: 'auth'; auth: AuthState }
+  /** A paid event was collected into the donations panel (main owns the store; this is the delta). */
+  | { kind: 'donation'; donation: Donation }
+  /** Read state changed, echoed from main so every window folds the same update. */
+  | { kind: 'donationsRead'; ids: string[]; read: boolean }
+  /** A collected donation's message was removed from chat by a moderator. */
+  | { kind: 'donationsRemoved'; ids: string[] }
+  /**
+   * Exchange rates arrived or were refreshed. `source` names the provider that supplied them, for the
+   * panel's attribution line — carried on every update so a provider switch or a late first fetch keeps
+   * the credit correct (it is not derivable from the table).
+   */
+  | { kind: 'rates'; table: RateTable; source?: string }
+  /**
+   * The currency the panel converts into changed (the user's setting, resolved). Carried on its own so
+   * the base follows the setting even when no rate table is available — an offline base change would
+   * otherwise leave the panel on the old currency (a rate table names the base it was *fetched* for,
+   * which is not the same thing).
+   */
+  | { kind: 'baseCurrency'; base: string }
 
 /** Surface exposed to the renderer through the preload context bridge. */
 export interface ChatApi {
@@ -670,6 +710,11 @@ export interface ChatApi {
    * crash-reload) can refill its buffers instead of opening empty.
    */
   getBacklog(): Promise<ChatEvent[]>
+  /** The donations panel's opening state: stored donations, rates, and the session start. */
+  getDonations(): Promise<DonationsSnapshot>
+  /** Mark the named donations read (or unread); the change echoes back as a `donationsRead` event. */
+  markDonationsRead(ids: string[], read: boolean): Promise<void>
+  markAllDonationsRead(): Promise<void>
   listChannels(): Promise<ChannelInfo[]>
   /** Send a message. `reply` carries the Twitch native-reply + thread target; YouTube tags the user inline and ignores it. */
   send(channelId: string, text: string, reply?: SendReply): Promise<SendResult>

@@ -2458,3 +2458,184 @@ body,
   font-size: var(--fs-ui);
   color: var(--err);
 }
+
+/* ── Donations panel ─────────────────────────────────────────────────────── */
+.pc-col.don .pc-stream {
+  padding: 0 var(--gut);
+}
+/* A short notice above the feed: stale rates, or amounts left out of the total. */
+.pc-don-note {
+  flex: 0 0 auto;
+  padding: 5px var(--gut);
+  font-size: var(--fs-small);
+  color: var(--warn);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-don-foot {
+  flex: 0 0 auto;
+  padding: 4px var(--gut);
+  font-size: 10px;
+  color: var(--dimmer);
+  border-top: 1px solid var(--rule);
+}
+.pc-don-day {
+  padding: 8px 0 3px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--dimmer);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-don-row {
+  /* Long feeds stay cheap to paint, matching how the chat stream defers offscreen rows. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 76px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+}
+/* Read rows recede, but the state is also spelled out on the button — never colour alone. */
+.pc-don-row.read {
+  opacity: 0.55;
+}
+.pc-don-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pc-don-amount {
+  font-weight: 700;
+  color: var(--accent);
+}
+.pc-don-flag {
+  font-size: 13px;
+}
+.pc-don-code,
+.pc-don-time {
+  font-size: 10px;
+  color: var(--dimmer);
+}
+.pc-don-author {
+  color: var(--fg);
+}
+.pc-don-conv {
+  font-size: var(--fs-small);
+  color: var(--dim);
+}
+.pc-don-text {
+  padding-top: 2px;
+  overflow-wrap: anywhere;
+}
+.pc-don-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  font-size: 10px;
+  color: var(--dimmer);
+}
+.pc-don-chan {
+  margin-right: auto;
+}
+.pc-don-removed {
+  color: var(--err);
+}
+/* Unread donations count on its tab — a number, not just a dot, since the amount matters. */
+.pc-tab-badge {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
+}
+.pc-tab.don .pc-tab-label {
+  color: var(--accent);
+}
+/* Session summary: one line per platform, kinds broken out within it. */
+.pc-don-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: var(--fs-small);
+  color: var(--dim);
+}
+.pc-don-totals.empty {
+  color: var(--dimmer);
+}
+.pc-don-total-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+.pc-don-plat {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.pc-don-plat.yt {
+  color: #ff5c5c;
+}
+.pc-don-plat.tw {
+  color: #a970ff;
+}
+/* The whole row is the read toggle, so it has to look and behave like one. */
+.pc-don-row {
+  cursor: pointer;
+  text-align: left;
+}
+.pc-don-row:hover {
+  background: var(--bgElev);
+}
+.pc-don-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+/* Small jump control, pinned right so the amount and message get the width. */
+.pc-don-jump {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--dimmer);
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 3px;
+  cursor: pointer;
+}
+.pc-don-jump:hover:not(:disabled) {
+  color: var(--accent);
+}
+.pc-don-jump:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pc-don-state {
+  font-variant: small-caps;
+}
+.pc-select {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: var(--fs-ui);
+  color: var(--fg);
+  background: var(--bgInput);
+  border: 1px solid var(--rule);
+  padding: 3px 6px;
+}
+/* The written-out read state doubles as the keyboard-reachable toggle. */
+.pc-don-state {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant: small-caps;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.pc-don-state:hover {
+  color: var(--accent);
+}

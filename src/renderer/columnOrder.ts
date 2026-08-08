@@ -3,11 +3,15 @@ import type { ChannelInfo, MonitorView } from '@shared/model'
 /** The built-in flagged-messages view's column id (reserved; not a real channel/monitor). */
 export const FLAGGED_COLUMN_ID = 'flagged'
 
+/** The built-in donations view's column id (reserved; not a real channel/monitor). */
+export const DONATIONS_COLUMN_ID = 'donations'
+
 /** A rendered column: a chat channel, a combined monitor view, or the built-in flagged view. */
 export type Column =
   | { kind: 'channel'; id: string; channel: ChannelInfo }
   | { kind: 'monitor'; id: string; monitor: MonitorView }
   | { kind: 'flagged'; id: string }
+  | { kind: 'donations'; id: string }
 
 /**
  * Swap a column one step left (`-1`) or right (`+1`). Returns the input array unchanged (same
@@ -49,7 +53,13 @@ export function moveColumnTo(order: string[], id: string, toIndex: number): stri
  * (moderation) view leads, monitor views come second, chat columns follow.
  */
 function rankOf(id: string, monitorIds: ReadonlySet<string>): number {
-  return id === FLAGGED_COLUMN_ID ? 0 : monitorIds.has(id) ? 1 : 2
+  if (id === FLAGGED_COLUMN_ID) {
+    return 0
+  }
+  if (id === DONATIONS_COLUMN_ID) {
+    return 1
+  }
+  return monitorIds.has(id) ? 2 : 3
 }
 
 /**
@@ -84,7 +94,14 @@ export interface ReconcileOptions {
  */
 export function reconcileColumnOrder(prev: string[], options: ReconcileOptions): string[] {
   const { flaggedVisible, monitorIds, channelIds, stored } = options
-  const ids = [...(flaggedVisible ? [FLAGGED_COLUMN_ID] : []), ...monitorIds, ...channelIds]
+  // The donations view is always present: it is the feature's entry point and has its own empty
+  // state, unlike the flagged view which only appears once moderation rules exist.
+  const ids = [
+    ...(flaggedVisible ? [FLAGGED_COLUMN_ID] : []),
+    DONATIONS_COLUMN_ID,
+    ...monitorIds,
+    ...channelIds
+  ]
   let base = prev.filter((id) => ids.includes(id))
   if (stored !== undefined) {
     const storedIndex = new Map(stored.map((id, index) => [id, index]))

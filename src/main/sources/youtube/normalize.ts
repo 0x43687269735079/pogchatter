@@ -621,9 +621,16 @@ function collect(
     const message = baseMessage(sourceId, renderer)
     message.system = true
     const highlight: Highlight = { kind: 'membership' }
-    const header = textToString(renderer.headerPrimaryText) || textToString(renderer.headerSubtext)
+    const milestone = textToString(renderer.headerPrimaryText)
+    const header = milestone || textToString(renderer.headerSubtext)
     if (header !== '') {
       highlight.headerText = header
+    }
+    if (milestone !== '') {
+      // headerPrimaryText only appears on a milestone ("Member for 6 months"), which an existing
+      // member posts repeatedly — no money changes hands, so revenue accounting must not count it
+      // as a new membership every time.
+      highlight.notAPurchase = true
     }
     message.highlight = highlight
     messages.push(message)
@@ -651,8 +658,17 @@ function collect(
         fragments: [],
         system: true
       }
-      message.highlight =
-        headerText !== '' ? { kind: 'membership_gift', headerText } : { kind: 'membership_gift' }
+      const highlight: Highlight = { kind: 'membership_gift' }
+      if (headerText !== '') {
+        highlight.headerText = headerText
+      }
+      // "Gifted 5 memberships" is one event but five subs; without the count the panel would report
+      // it as a single gifted member. Twitch community gifts already carry a count — mirror that here.
+      const gifted = giftCount(headerText)
+      if (gifted !== undefined) {
+        highlight.count = gifted
+      }
+      message.highlight = highlight
       messages.push(message)
     }
   } else if (item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer !== undefined) {
@@ -665,8 +681,12 @@ function collect(
     const headerText = textToString(
       item.liveChatSponsorshipsGiftRedemptionAnnouncementRenderer.message
     )
+    // The gifter's purchase was already announced by its own renderer, so this delivery to the
+    // recipient must not be counted as a second membership.
     message.highlight =
-      headerText !== '' ? { kind: 'membership', headerText } : { kind: 'membership' }
+      headerText !== ''
+        ? { kind: 'membership', headerText, notAPurchase: true }
+        : { kind: 'membership', notAPurchase: true }
     message.fragments = []
     messages.push(message)
   } else if (item.liveChatModeChangeMessageRenderer !== undefined) {
@@ -679,6 +699,21 @@ function collect(
       messages.push(notice)
     }
   }
+}
+
+/**
+ * How many memberships a gift-purchase announcement covered, from its "Gifted N memberships" header —
+ * `undefined` when no plain number is present. YouTube localizes the wording but the quantity is a
+ * digit run, so the first integer is taken (grouping separators stripped); a wildly implausible value
+ * is ignored so a mis-parse cannot invent a huge gift.
+ */
+function giftCount(headerText: string): number | undefined {
+  const match = /(\d[\d,]*)/u.exec(headerText)
+  if (match?.[1] === undefined) {
+    return undefined
+  }
+  const count = Number.parseInt(match[1].replace(/,/gu, ''), 10)
+  return Number.isInteger(count) && count > 0 && count <= 100_000 ? count : undefined
 }
 
 /** The YouTube-authored system identity carried by mode-change and moderation-activity notices. */

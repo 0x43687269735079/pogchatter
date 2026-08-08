@@ -23,6 +23,34 @@ const BUFFER_NOTE: Record<number, string> = {
   5000: 'maximum'
 }
 
+/**
+ * Currencies offered as the donations panel's base. The three a streamer is most likely to want come
+ * first; the rest cover the large Super Chat markets. Anything outside this list still *displays*
+ * correctly — the base is only what amounts are converted into.
+ */
+const BASE_CURRENCIES: ReadonlyArray<{ code: string; name: string }> = [
+  { code: 'USD', name: 'US dollar' },
+  { code: 'EUR', name: 'euro' },
+  { code: 'GBP', name: 'pound sterling' },
+  { code: 'AUD', name: 'Australian dollar' },
+  { code: 'BRL', name: 'Brazilian real' },
+  { code: 'CAD', name: 'Canadian dollar' },
+  { code: 'CHF', name: 'Swiss franc' },
+  { code: 'INR', name: 'Indian rupee' },
+  { code: 'JPY', name: 'Japanese yen' },
+  { code: 'KRW', name: 'South Korean won' },
+  { code: 'MXN', name: 'Mexican peso' },
+  { code: 'NOK', name: 'Norwegian krone' },
+  { code: 'NZD', name: 'New Zealand dollar' },
+  { code: 'PHP', name: 'Philippine peso' },
+  { code: 'PLN', name: 'Polish złoty' },
+  { code: 'SEK', name: 'Swedish krona' },
+  { code: 'SGD', name: 'Singapore dollar' },
+  { code: 'TRY', name: 'Turkish lira' },
+  { code: 'TWD', name: 'New Taiwan dollar' },
+  { code: 'ZAR', name: 'South African rand' }
+]
+
 const EMOTE_PROVIDERS: ReadonlyArray<{ key: keyof EmoteProviderSettings; name: string }> = [
   { key: 'sevenTv', name: '7TV' },
   { key: 'bttv', name: 'BTTV' },
@@ -245,6 +273,50 @@ export function SettingsModal({
             checked={settings.twitchHistory}
             onChange={(event) => {
               onChange({ twitchHistory: event.target.checked })
+            }}
+          />
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
+            <span className="pc-setting-name">donation currency</span>
+            <span className="pc-setting-desc">
+              Currency the donations panel converts amounts into. Leave blank to follow your system.
+              Rates come from open.er-api.com (frankfurter.dev if that is unreachable), fetched once
+              a day; amounts still show exactly as the platform sent them when rates are
+              unavailable.
+            </span>
+          </span>
+          <select
+            className="pc-select"
+            value={settings.baseCurrency}
+            aria-label="Donation base currency"
+            onChange={(event) => {
+              onChange({ baseCurrency: event.target.value })
+            }}
+          >
+            <option value="">follow system</option>
+            {BASE_CURRENCIES.map((option) => (
+              <option key={option.code} value={option.code}>
+                {option.code} — {option.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
+            <span className="pc-setting-name">show converted amounts</span>
+            <span className="pc-setting-desc">
+              Show an approximate amount in your own currency beside each donation&rsquo;s original.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="pc-switch"
+            checked={settings.showConvertedAmounts}
+            onChange={(event) => {
+              onChange({ showConvertedAmounts: event.target.checked })
             }}
           />
         </label>

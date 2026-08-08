@@ -39,9 +39,14 @@ export function applyDonationEvents(state: DonationsState, events: ChatEvent[]):
     } else if (event.kind === 'donationsRemoved') {
       next = applyRemoved(next, event.ids)
     } else if (event.kind === 'rates') {
-      // The table names the base it was fetched for, which is also how a base-currency change
-      // reaches the panel — otherwise it would keep formatting against the currency it opened with.
-      next = { ...next, rates: event.table, baseCurrency: event.table.base }
+      // Adopt the table and the provider that supplied it. The base is *not* taken from the table —
+      // the table names the base it was fetched for, which lags the chosen base after a change and
+      // reverts on a failed refresh; the base follows the dedicated baseCurrency event instead.
+      next = { ...next, rates: event.table, rateSource: event.source ?? next.rateSource }
+    } else if (event.kind === 'baseCurrency') {
+      // The user's chosen conversion currency, resolved. Independent of the rate table so the panel
+      // follows the setting even when no table is available.
+      next = { ...next, baseCurrency: event.base }
     }
   }
   return next
@@ -96,7 +101,17 @@ export function applyDonationsSnapshot(
   const donations = [...byId.values()]
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, DONATION_RETENTION)
-  return { ...state, ...snapshot, donations }
+  // The snapshot is a one-time read taken at mount, so a rates event that completed while it was in
+  // flight is newer: keep the live rates/source when the renderer already has them, rather than letting
+  // the older snapshot overwrite them. Base and session start come from the snapshot (authoritative at
+  // mount); a later baseCurrency event corrects the base if it changed.
+  return {
+    donations,
+    rates: state.rates ?? snapshot.rates,
+    rateSource: state.rateSource ?? snapshot.rateSource,
+    baseCurrency: snapshot.baseCurrency,
+    sessionStartedAt: snapshot.sessionStartedAt
+  }
 }
 
 function applyRead(state: DonationsState, ids: string[], read: boolean): DonationsState {

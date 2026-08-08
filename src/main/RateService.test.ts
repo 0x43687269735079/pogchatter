@@ -190,4 +190,70 @@ describe('RateService coverage recovery', () => {
     service.recoverMissing('GBP', 'JPY')
     expect(fetchFn).toHaveBeenCalledTimes(1)
   })
+
+  it('does not fetch for the base currency itself', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(ok({ JPY: 190 }))
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
+    await service.refresh('GBP')
+    service.recoverMissing('GBP', 'GBP') // convert handles same-currency directly; nothing to fetch
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces a coverage-recovery result through onChange so the panel can update', async () => {
+    // Recovery updates the table out of band; without a change notification an open panel would keep
+    // showing the donation as excluded until a reload.
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(fail())
+      .mockResolvedValueOnce(ok({ JPY: 190 }))
+    let changes = 0
+    const service = new RateService({
+      dir,
+      fetchFn: fetchFn as never,
+      now: () => 1_000,
+      onChange: () => {
+        changes += 1
+      }
+    })
+    await service.refresh('GBP') // lands on Frankfurter (one change)
+    expect(changes).toBe(1)
+
+    fetchFn.mockResolvedValue(ok({ JPY: 190, CRC: 609 }))
+    service.recoverMissing('GBP', 'CRC')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(service.table()?.rates['CRC']).toBe(609)
+    expect(changes).toBe(2) // recovery committed and announced
+  })
 })
+
+describe('RateService concurrent base changes', () => {
+  it('commits the base chosen last even when an earlier one resolves last', async () => {
+    // A base change while the first fetch is in flight (GBP then EUR). If GBP resolves last it must not
+    // overwrite EUR — otherwise the panel silently reverts to a base the user already left.
+    const gbp = deferred()
+    const eur = deferred()
+    const fetchFn = vi
+      .fn()
+      .mockImplementationOnce(() => gbp.promise)
+      .mockImplementationOnce(() => eur.promise)
+    const service = new RateService({ dir, fetchFn: fetchFn as never, now: () => 1_000 })
+
+    const gbpDone = service.refresh('GBP')
+    const eurDone = service.refresh('EUR')
+    eur.resolve(ok({ JPY: 160 }))
+    await eurDone
+    gbp.resolve(ok({ JPY: 190 }))
+    await gbpDone
+
+    expect(service.table()?.base).toBe('EUR')
+    expect(service.table()?.rates).toEqual({ JPY: 160 })
+  })
+})
+
+function deferred(): { promise: Promise<Response>; resolve: (value: Response) => void } {
+  let resolve!: (value: Response) => void
+  const promise = new Promise<Response>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}

@@ -16,6 +16,12 @@ import { parseAmount } from '@shared/currencyParse'
  * which is better than inventing one. More importantly, the message must come from the *official
  * StreamElements account*: without that, any viewer could type "someone just tipped £500!" and plant
  * a fake donation in the streamer's records.
+ *
+ * **Why Twitch only.** The account check keys on `author.name`, which on Twitch is the immutable, unique
+ * login — so "streamelements" identifies exactly one account. On YouTube `author.name` is the settable,
+ * non-unique display name, so any viewer could rename their channel "StreamElements" and forge a tip.
+ * There is no chat-visible immutable identity for a YouTube bot, so YouTube tip recognition is refused
+ * rather than trusted; StreamElements tips reach this app through Twitch chat regardless.
  */
 
 /**
@@ -58,6 +64,11 @@ export interface ParsedTip {
  * unrecognised one is kept as-is rather than guessed at.
  */
 export function parseTipAnnouncement(message: ChatMessage): ParsedTip | undefined {
+  // Twitch only: the trust gate below relies on `author.name` being an immutable unique login, which
+  // holds on Twitch but not on YouTube (where it is a forgeable display name). See the module note.
+  if (message.platform !== 'twitch') {
+    return undefined
+  }
   if (message.author.name.toLowerCase() !== TIP_BOT_LOGIN) {
     return undefined
   }

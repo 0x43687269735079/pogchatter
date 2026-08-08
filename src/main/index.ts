@@ -272,10 +272,10 @@ function collectDonation(event: ChatEvent): void {
     return
   }
   // A moderator deleting the message afterwards arrives as a `clear`, not as a changed message, so
-  // the donation's `removed` flag has to be maintained here rather than copied once at ingestion.
+  // the donation's `removed` flag has to be maintained here rather than copied once at ingestion. A
+  // per-message delete names the message; a timeout/ban names the user, so both are matched.
   if (event.kind === 'clear') {
-    const { messageId } = event.target
-    const changed = messageId === undefined ? [] : donationStore.markRemoved(messageId)
+    const changed = donationStore.markRemovedByTarget(event.channelId, event.target)
     if (changed.length > 0) {
       batcher?.push({ kind: 'donationsRemoved', ids: changed })
     }
@@ -305,20 +305,21 @@ function effectiveBaseCurrency(): string {
 
 /**
  * Bring exchange rates up to date, in the background. Deliberately not awaited anywhere: rates are a
- * nicety on top of amounts the panel can already show, so nothing waits on the network for them.
+ * nicety on top of amounts the panel can already show, so nothing waits on the network for them. The
+ * renderer is told about the outcome by the service's onChange (a committed fetch, a recovery, or a
+ * failure that marked the cache stale), so this doesn't diff before/after itself.
  */
 function refreshRates(): void {
-  const service = rateService
-  if (service === undefined) {
-    return
-  }
-  const before = service.table()
-  void service.refresh(effectiveBaseCurrency()).then(() => {
-    const after = service.table()
-    if (after !== undefined && after !== before) {
-      batcher?.push({ kind: 'rates', table: after })
-    }
-  })
+  void rateService?.refresh(effectiveBaseCurrency())
+}
+
+/**
+ * Tell the renderer which currency the panel should convert into. Pushed on its own — separately from
+ * rates — so the base follows the setting even when no rate table can be fetched (e.g. an offline base
+ * change); otherwise the panel would keep the currency it opened with.
+ */
+function broadcastBaseCurrency(): void {
+  batcher?.push({ kind: 'baseCurrency', base: effectiveBaseCurrency() })
 }
 
 /** (Re)open or close the chat logger from settings. */
@@ -425,7 +426,8 @@ function debugLogChatEvent(event: ChatEvent): void {
   if (
     event.kind === 'donationsRead' ||
     event.kind === 'donationsRemoved' ||
-    event.kind === 'rates'
+    event.kind === 'rates' ||
+    event.kind === 'baseCurrency'
   ) {
     // Local bookkeeping; nothing diagnostic to record.
     return
@@ -665,6 +667,7 @@ void app
         }
       },
       refreshRates,
+      broadcastBaseCurrency,
       markAllDonationsRead: () => {
         const changed = donationStore?.markAllRead() ?? []
         if (changed.length > 0) {
@@ -712,7 +715,20 @@ void app
     // window. Rates refresh in the background on a daily timer; nothing waits on either.
     const userDataDir = app.getPath('userData')
     donationStore = new DonationStore({ dir: userDataDir })
-    rateService = new RateService({ dir: userDataDir })
+    rateService = new RateService({
+      dir: userDataDir,
+      // Any table/source change (a committed fetch, a coverage recovery, or a failure that marked the
+      // cache stale) reaches the open panel as a rates event carrying the provider for attribution.
+      onChange: () => {
+        const table = rateService?.table()
+        if (table !== undefined) {
+          const source = rateService?.source()
+          batcher?.push(
+            source !== undefined ? { kind: 'rates', table, source } : { kind: 'rates', table }
+          )
+        }
+      }
+    })
     refreshRates()
     const rateTimer = setInterval(refreshRates, 24 * 60 * 60 * 1000)
     rateTimer.unref()

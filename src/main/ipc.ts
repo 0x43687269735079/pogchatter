@@ -62,6 +62,8 @@ export interface IpcDeps {
   markAllDonationsRead(): void
   /** Re-fetch exchange rates for the current base currency (no-op while the cache is fresh). */
   refreshRates(): void
+  /** Tell the renderer which currency the panel converts into (so the base follows the setting). */
+  broadcastBaseCurrency(): void
   /** Push an auth snapshot to the renderer through the event batcher. */
   broadcastAuth(): void
   /** The retained chat history, replayed into a fresh renderer (startup race, crash-reload). */
@@ -368,6 +370,9 @@ export function registerIpc(deps: IpcDeps): void {
       void deps.getEmoteEngine()?.applyProviderSettings()
     }
     if ('baseCurrency' in patch) {
+      // Tell the panel the new base right away, so it follows the setting even if rates can't be
+      // fetched (offline) — the base must not stay on the currency the panel opened with.
+      deps.broadcastBaseCurrency()
       // Rates are fetched for one base and conversion refuses a table built for another, so without
       // this every donation would read as an unrecognised currency until the next daily refresh.
       deps.refreshRates()

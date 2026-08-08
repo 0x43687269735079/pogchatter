@@ -408,5 +408,9 @@ function amountText(donation: Donation): string {
   if (value.unit === 'bits') {
     return `${value.bits.toLocaleString()} bits`
   }
-  return donation.kind === 'membership_gift' ? 'gifted' : 'member'
+  if (donation.kind === 'membership_gift') {
+    // A community gift can be many subs at once; say how many rather than a flat "gifted".
+    return value.count > 1 ? `gifted ×${value.count.toLocaleString()}` : 'gifted'
+  }
+  return 'member'
 }

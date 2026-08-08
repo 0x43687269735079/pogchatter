@@ -57,6 +57,13 @@ describe('parseTipAnnouncement', () => {
     expect(parseTipAnnouncement(botMessage(REAL, 'STREAMELEMENTS'))?.donor).toBe('kota3684')
   })
 
+  it('refuses a YouTube message even from a channel named exactly like the bot', () => {
+    // On YouTube `name` is the mutable display name, so the login gate cannot vouch for identity —
+    // any viewer could rename to "StreamElements" and forge a tip. Recognition is Twitch-only.
+    const onYouTube: ChatMessage = { ...botMessage(REAL, 'streamelements'), platform: 'youtube' }
+    expect(parseTipAnnouncement(onYouTube)).toBeUndefined()
+  })
+
   it('ignores bot chatter that merely resembles a tip', () => {
     expect(parseTipAnnouncement(botMessage('that just tipped the scales!'))).toBeUndefined()
     expect(parseTipAnnouncement(botMessage('welcome to the stream!'))).toBeUndefined()

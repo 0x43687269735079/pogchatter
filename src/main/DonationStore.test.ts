@@ -238,4 +238,87 @@ describe('DonationStore ordering and durability', () => {
     )
     expect(store().list()).toEqual([])
   })
+
+  it('rejects a persisted record whose kind cannot occur on its platform', () => {
+    // Well-typed but impossible: YouTube has no bits. Accepting it would make a feed row the
+    // per-platform summary labels can't present.
+    writeFileSync(
+      file,
+      JSON.stringify({
+        donations: [
+          {
+            id: 'yt-bits',
+            channelId: 'yt:vid',
+            platform: 'youtube',
+            kind: 'bits',
+            timestamp: 1,
+            author: { id: 'u', displayName: 'U' },
+            value: { unit: 'bits', bits: 500 },
+            text: '',
+            read: false
+          }
+        ]
+      })
+    )
+    expect(store().list()).toEqual([])
+  })
+
+  it('restores timestamp order when the persisted file is not sorted', () => {
+    // record() assumes ascending order; a hand-edited or older arrival-ordered file may not be, so a
+    // later insert would land in the wrong place and retention could evict a newer record.
+    const record = (id: string, timestamp: number): Record<string, unknown> => ({
+      id,
+      channelId: 'yt:vid',
+      platform: 'youtube',
+      kind: 'superchat',
+      timestamp,
+      author: { id: 'u', displayName: 'U' },
+      value: { unit: 'money', amount: 5, currency: 'GBP', original: '£5.00' },
+      text: '',
+      read: false
+    })
+    writeFileSync(
+      file,
+      JSON.stringify({ donations: [record('newer', 3_000), record('older', 1_000)] })
+    )
+
+    const reopened = store()
+    reopened.record(superchat('middle', '$1.00', 2_000), 'yt:vid')
+    expect(reopened.list().map((d) => d.id)).toEqual(['newer', 'middle', 'older'])
+  })
+})
+
+describe('DonationStore removal by clear target', () => {
+  const cheer = (id: string, authorId: string): ChatMessage => ({
+    id,
+    platform: 'twitch',
+    channelId: 'tw:chan',
+    timestamp: 1_000,
+    author: { id: authorId, name: 'x', displayName: 'X', badges: [], roles: {} as never },
+    fragments: [],
+    highlight: { kind: 'bits', amount: 500 }
+  })
+
+  it('marks a donation removed when its author is cleared, not only by message id', () => {
+    // A viewer cheers and is then timed out/banned: Twitch emits a by-user clear, so matching only the
+    // message id would leave the donation unmarked while its chat row is struck.
+    const donations = store()
+    donations.record(cheer('cheer', 'u1'), 'tw:chan')
+    expect(donations.markRemovedByTarget('tw:chan', { userId: 'u1' })).toEqual(['cheer'])
+    expect(donations.list()[0]?.removed).toBe(true)
+  })
+
+  it('does not match a user clear in a different channel', () => {
+    const donations = store()
+    donations.record(cheer('cheer', 'u1'), 'tw:chan')
+    expect(donations.markRemovedByTarget('tw:other', { userId: 'u1' })).toEqual([])
+  })
+
+  it('leaves donations alone on a whole-chat clear', () => {
+    // A /clear wipes the live view, not the money that was spent.
+    const donations = store()
+    donations.record(superchat('a'), 'yt:vid')
+    expect(donations.markRemovedByTarget('yt:vid', {})).toEqual([])
+    expect(donations.list()[0]?.removed).toBeUndefined()
+  })
 })

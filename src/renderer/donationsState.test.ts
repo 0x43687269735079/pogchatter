@@ -125,14 +125,51 @@ describe('applyDonationsSnapshot', () => {
     expect(merged.donations).toHaveLength(1)
     expect(merged.donations[0]?.read).toBe(true)
   })
+
+  it('keeps live rates that arrived before the snapshot resolved', () => {
+    // The snapshot is a one-time mount read; a rates fetch that completed during it is newer, so
+    // merging must not revert to the snapshot's (absent, older) rates.
+    const table = { base: 'EUR', rates: { JPY: 160 }, fetchedAt: 9, stale: false }
+    const live = applyDonationEvents(EMPTY_DONATIONS, [
+      { kind: 'rates', table, source: 'ExchangeRate-API' }
+    ])
+    const merged = applyDonationsSnapshot(live, {
+      donations: [],
+      rates: undefined,
+      rateSource: undefined,
+      baseCurrency: 'GBP',
+      sessionStartedAt: 1
+    })
+    expect(merged.rates).toEqual(table)
+    expect(merged.rateSource).toBe('ExchangeRate-API')
+  })
 })
 
 describe('donations state follows the base currency and removals', () => {
-  it('adopts the base a rates event was fetched for', () => {
-    // How a base-currency change reaches the panel; without it the panel keeps formatting against
-    // whatever it opened with.
+  it('follows a base-currency event, independent of any rate table', () => {
+    // The base is the user's setting, carried on its own event so the panel follows it even when no
+    // rate table is available (offline) — a rate table only names the base it was *fetched* for.
+    const state = applyDonationEvents(EMPTY_DONATIONS, [{ kind: 'baseCurrency', base: 'EUR' }])
+    expect(state.baseCurrency).toBe('EUR')
+  })
+
+  it('records the provider a rates event names, for attribution', () => {
     const state = applyDonationEvents(EMPTY_DONATIONS, [
-      { kind: 'rates', table: { base: 'EUR', rates: { JPY: 160 }, fetchedAt: 1, stale: false } }
+      {
+        kind: 'rates',
+        table: { base: 'GBP', rates: { JPY: 190 }, fetchedAt: 1, stale: false },
+        source: 'ExchangeRate-API'
+      }
+    ])
+    expect(state.rateSource).toBe('ExchangeRate-API')
+  })
+
+  it('does not let a rates event move the base off the chosen currency', () => {
+    // A stale table can name an old base; adopting it would revert the panel's currency on a failed
+    // refresh. The base must change only via a baseCurrency event.
+    let state = applyDonationEvents(EMPTY_DONATIONS, [{ kind: 'baseCurrency', base: 'EUR' }])
+    state = applyDonationEvents(state, [
+      { kind: 'rates', table: { base: 'GBP', rates: { JPY: 190 }, fetchedAt: 1, stale: false } }
     ])
     expect(state.baseCurrency).toBe('EUR')
   })

@@ -118,7 +118,8 @@ describe('donationFrom exclusions', () => {
 
 describe('donationFrom tips announced in chat', () => {
   function botTip(text: string, login = 'streamelements'): ChatMessage {
-    const built = message()
+    // Tips ride in Twitch chat, where `name` is the immutable login the trust gate depends on.
+    const built = message({ platform: 'twitch' })
     built.author = { id: 'b', name: login, displayName: login, badges: [], roles: {} as never }
     built.fragments = [{ type: 'text', text }]
     return built
@@ -143,5 +144,20 @@ describe('donationFrom tips announced in chat', () => {
   it('will not take a tip announcement from an ordinary viewer', () => {
     // Without the bot check, anyone could type this and plant money in the streamer's records.
     expect(donationFrom(botTip('x just tipped £500.00!', 'some_viewer'), 'tw:chan')).toBeUndefined()
+  })
+
+  it('will not take a forged tip from a YouTube viewer posing as the bot', () => {
+    // On YouTube `name` is a settable display name, so the login check cannot be trusted: a viewer
+    // renaming to "StreamElements" must not be able to plant a donation. Tip parsing is Twitch-only.
+    const forged = message({ platform: 'youtube' })
+    forged.author = {
+      id: 'u',
+      name: 'streamelements',
+      displayName: 'StreamElements',
+      badges: [],
+      roles: {} as never
+    }
+    forged.fragments = [{ type: 'text', text: 'victim just tipped £500.00!' }]
+    expect(donationFrom(forged, 'yt:v')).toBeUndefined()
   })
 })

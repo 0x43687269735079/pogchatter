@@ -614,7 +614,8 @@ describe('YouTube membership gifts and mode changes', () => {
     expect(messages[0]?.author.id).toBe('UCgifter')
     expect(messages[0]?.highlight).toEqual({
       kind: 'membership_gift',
-      headerText: 'Gifted 5 memberships'
+      headerText: 'Gifted 5 memberships',
+      count: 5
     })
   })
 

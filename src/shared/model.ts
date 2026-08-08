@@ -687,8 +687,19 @@ export type ChatEvent =
   | { kind: 'donationsRead'; ids: string[]; read: boolean }
   /** A collected donation's message was removed from chat by a moderator. */
   | { kind: 'donationsRemoved'; ids: string[] }
-  /** Exchange rates arrived or were refreshed. */
-  | { kind: 'rates'; table: RateTable }
+  /**
+   * Exchange rates arrived or were refreshed. `source` names the provider that supplied them, for the
+   * panel's attribution line — carried on every update so a provider switch or a late first fetch keeps
+   * the credit correct (it is not derivable from the table).
+   */
+  | { kind: 'rates'; table: RateTable; source?: string }
+  /**
+   * The currency the panel converts into changed (the user's setting, resolved). Carried on its own so
+   * the base follows the setting even when no rate table is available — an offline base change would
+   * otherwise leave the panel on the old currency (a rate table names the base it was *fetched* for,
+   * which is not the same thing).
+   */
+  | { kind: 'baseCurrency'; base: string }
 
 /** Surface exposed to the renderer through the preload context bridge. */
 export interface ChatApi {

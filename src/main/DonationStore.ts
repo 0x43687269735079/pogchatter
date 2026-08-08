@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ChatMessage, Platform } from '@shared/model'
+import type { ChatMessage, ClearTarget, Platform } from '@shared/model'
 import {
   type Donation,
   type DonationKind,
@@ -108,11 +108,24 @@ export class DonationStore {
     return changed
   }
 
-  /** Flag a donation whose chat message a moderator removed; returns the ids that changed. */
-  markRemoved(messageId: string): string[] {
+  /**
+   * Flag donations affected by a moderator clear: a single removed message, or every donation from a
+   * user whose messages were cleared (a Twitch timeout/ban emits a by-user clear, not a per-message one).
+   * Returns the ids that changed. A whole-chat clear (no message id and no user id) is intentionally not
+   * matched — it clears the live view, not the individual paid events, which still happened.
+   */
+  markRemovedByTarget(channelId: string, target: ClearTarget): string[] {
     const changed: string[] = []
     for (const donation of this.#donations) {
-      if (donation.id === messageId && donation.removed !== true) {
+      if (donation.removed === true) {
+        continue
+      }
+      const byMessage = target.messageId !== undefined && donation.id === target.messageId
+      const byAuthor =
+        target.userId !== undefined &&
+        donation.channelId === channelId &&
+        donation.author.id === target.userId
+      if (byMessage || byAuthor) {
         donation.removed = true
         changed.push(donation.id)
       }
@@ -180,13 +193,25 @@ export class DonationStore {
       if (!Array.isArray(raw)) {
         return
       }
-      for (const value of raw.slice(-DONATION_RETENTION)) {
+      const loaded: Donation[] = []
+      for (const value of raw) {
         const donation = sanitizeDonation(value)
         if (donation !== undefined && !this.#ids.has(donation.id)) {
-          this.#donations.push(donation)
           this.#ids.add(donation.id)
+          loaded.push(donation)
         }
       }
+      // `record` maintains #donations in ascending timestamp order and evicts the oldest at capacity.
+      // A file need not be sorted — an older arrival-ordered file, or a valid hand-edited one, can be in
+      // any order — so restore the invariant here: sort ascending, then keep the newest, rather than
+      // trusting file order (which would mis-place later inserts and could evict a newer record).
+      loaded.sort((a, b) => a.timestamp - b.timestamp)
+      if (loaded.length > DONATION_RETENTION) {
+        for (const dropped of loaded.splice(0, loaded.length - DONATION_RETENTION)) {
+          this.#ids.delete(dropped.id)
+        }
+      }
+      this.#donations = loaded
     } catch {
       // A truncated or hand-edited file starts empty rather than preventing startup.
       this.#donations = []
@@ -204,6 +229,17 @@ const KINDS: ReadonlySet<string> = new Set([
   'bits',
   'subscription'
 ])
+
+/**
+ * Which kinds each platform can actually produce — a superchat is never a Twitch event, bits never a
+ * YouTube one. Checked on load so a hand-edited (or otherwise malformed) file can't smuggle in a
+ * platform/kind pairing the panel's per-platform labels don't model. Tips ride in Twitch chat only
+ * (see parseTipAnnouncement); gifted subs/memberships normalise to the same kind on both.
+ */
+const KINDS_FOR_PLATFORM: Record<Platform, ReadonlySet<string>> = {
+  youtube: new Set(['superchat', 'supersticker', 'membership', 'membership_gift']),
+  twitch: new Set(['bits', 'subscription', 'membership_gift', 'tip'])
+}
 
 /** One donation from untrusted JSON, or undefined when it isn't a well-formed record. */
 function sanitizeDonation(value: unknown): Donation | undefined {
@@ -229,6 +265,11 @@ function sanitizeDonation(value: unknown): Donation | undefined {
     typeof author !== 'object' ||
     author === null
   ) {
+    return undefined
+  }
+  // A well-typed record can still be an impossible one (youtube + bits, twitch + superchat); reject it
+  // so it can't create a feed row or total the per-platform labels don't model.
+  if (!KINDS_FOR_PLATFORM[platform].has(kind)) {
     return undefined
   }
   const donationValue = sanitizeValue(kind as DonationKind, input['value'])

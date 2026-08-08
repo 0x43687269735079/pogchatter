@@ -51,6 +51,12 @@ export interface RateServiceDeps {
   dir: string
   fetchFn?: typeof fetch
   now?: () => number
+  /**
+   * Called whenever the table or source changes (a fetch committed, or a failed refresh marked the
+   * cache stale). Lets the owner push the new rates to the renderer, so a coverage-recovery fetch or a
+   * provider switch reaches an open panel instead of waiting for a reload.
+   */
+  onChange?: () => void
 }
 
 /**
@@ -65,12 +71,17 @@ export class RateService {
   readonly #path: string
   readonly #fetch: typeof fetch
   readonly #now: () => number
+  readonly #onChange: (() => void) | undefined
   #table: RateTable | undefined
   /** Provider that supplied the current table, for the attribution line. */
   #source: string | undefined
-  #inFlight: Promise<void> | undefined
-  /** Which base the in-flight fetch is for, so a different one is not silently satisfied by it. */
-  #inFlightBase: string | undefined
+  /** In-flight fetches keyed by base, so a second request for the same base joins the first. */
+  readonly #inFlight = new Map<string, Promise<void>>()
+  /**
+   * Bumped on every new fetch intent. A fetch commits its result only if its generation is still the
+   * latest, so an older base's slow response can never overwrite a newer base the user just chose.
+   */
+  #generation = 0
   /** When a coverage-recovery fetch was last attempted; undefined means never (see recoverMissing). */
   #lastRecovery: number | undefined
 
@@ -78,6 +89,7 @@ export class RateService {
     this.#path = join(deps.dir, 'rates.json')
     this.#fetch = deps.fetchFn ?? proxiedFetch
     this.#now = deps.now ?? Date.now
+    this.#onChange = deps.onChange
     this.#load()
   }
 
@@ -97,10 +109,11 @@ export class RateService {
    */
   async refresh(base: string): Promise<void> {
     const wanted = base.toUpperCase()
-    // Keyed by base: a fetch already running for a *different* currency answers a different question,
-    // and returning it would leave the newly-chosen base unfetched until the next daily tick.
-    if (this.#inFlight !== undefined && this.#inFlightBase === wanted) {
-      return this.#inFlight
+    // A fetch already running for this base answers the same question — join it rather than duplicate.
+    // A fetch for a *different* base is left alone, so the newly-chosen base is still fetched.
+    const existing = this.#inFlight.get(wanted)
+    if (existing !== undefined) {
+      return existing
     }
     const current = this.#table
     if (
@@ -113,12 +126,17 @@ export class RateService {
     ) {
       return
     }
-    this.#inFlightBase = wanted
-    this.#inFlight = this.#fetchFrom(wanted).finally(() => {
-      this.#inFlight = undefined
-      this.#inFlightBase = undefined
+    return this.#start(wanted)
+  }
+
+  /** Begin (and track) a fetch for `base`; concurrent callers share it, and only the latest commits. */
+  #start(base: string): Promise<void> {
+    const generation = ++this.#generation
+    const inFlight = this.#fetchFrom(base, generation).finally(() => {
+      this.#inFlight.delete(base)
     })
-    return this.#inFlight
+    this.#inFlight.set(base, inFlight)
+    return inFlight
   }
 
   /**
@@ -132,13 +150,23 @@ export class RateService {
    * turn into a stream of requests. Fire-and-forget; never rejects.
    */
   recoverMissing(base: string, currency: string): void {
+    const wanted = base.toUpperCase()
     const code = currency.toUpperCase()
+    // The base itself never needs a rate — a same-currency donation converts directly (see convert).
+    if (code === wanted) {
+      return
+    }
     const table = this.#table
-    if (table !== undefined && table.rates[code] !== undefined) {
+    // Only a table fetched for *this* base can say whether the currency is covered; one left over from
+    // a previous base is about a different question, so its coverage must not short-circuit recovery.
+    if (table !== undefined && table.base === wanted && table.rates[code] !== undefined) {
       return
     }
     const onWidestAndFresh =
-      table !== undefined && !table.stale && this.#source === PROVIDERS[0]?.name
+      table !== undefined &&
+      table.base === wanted &&
+      !table.stale &&
+      this.#source === PROVIDERS[0]?.name
     if (onWidestAndFresh) {
       return
     }
@@ -149,26 +177,41 @@ export class RateService {
     if (last !== undefined && now - last < RECOVERY_INTERVAL_MS) {
       return
     }
+    // A refresh for this base is already running and will deliver a table — don't duplicate the traffic.
+    if (this.#inFlight.has(wanted)) {
+      return
+    }
     this.#lastRecovery = now
     // Past the freshness check deliberately: the cache is not the problem, its coverage is.
-    void this.#fetchFrom(base.toUpperCase())
+    void this.#start(wanted)
   }
 
-  async #fetchFrom(base: string): Promise<void> {
+  async #fetchFrom(base: string, generation: number): Promise<void> {
     for (const provider of PROVIDERS) {
       const rates = await this.#tryProvider(provider, base)
       if (rates !== undefined) {
+        // A newer intent (a base change, say) started while this was in flight — its result is the one
+        // that should stand, so drop this now-stale one rather than overwrite the newer base.
+        if (generation !== this.#generation) {
+          return
+        }
         this.#table = { base, rates, fetchedAt: this.#now(), stale: false }
         this.#source = provider.name
         this.#persist()
+        this.#notify()
         return
       }
     }
     // Both providers failed. Keep serving what we have, but say that it is old rather than passing
-    // yesterday's figures off as today's.
-    if (this.#table !== undefined) {
+    // yesterday's figures off as today's — unless a newer intent has already superseded this base.
+    if (generation === this.#generation && this.#table !== undefined) {
       this.#table = { ...this.#table, stale: true }
+      this.#notify()
     }
+  }
+
+  #notify(): void {
+    this.#onChange?.()
   }
 
   async #tryProvider(

@@ -255,7 +255,7 @@ export class TwitchSource extends BaseChatSource {
           this.#rawSink?.(line, 'live')
         }
         if (msg.command === 'USERNOTICE' && msg.tags.get('msg-id') === 'anongiftpaidupgrade') {
-          this.#anonGiftUpgrade(msg.tags.get('id'))
+          this.#anonGiftUpgrade(msg.tags)
         }
       }),
       client.onConnect(() => {
@@ -835,25 +835,31 @@ export class TwitchSource extends BaseChatSource {
   }
 
   /**
-   * `anongiftpaidupgrade` — a sub that was gifted anonymously being continued. twurple parses no
-   * event for it, so it is built here from the USERNOTICE's own tags and emitted as the same kind
-   * of system line as the gift-upgrade notice twurple does surface. Anonymous, so no menu token.
+   * `anongiftpaidupgrade` — a viewer continuing a sub that was gifted to them anonymously. twurple
+   * parses no event for it, so it is built here from the USERNOTICE's own tags and emitted as the
+   * same kind of system line as the gift-upgrade notice twurple does surface. The tags name the
+   * *continuing* viewer; the anonymity belongs to the original gifter. No menu token: the line is a
+   * notice, not a message to moderate.
    */
-  #anonGiftUpgrade(id: string | undefined): void {
+  #anonGiftUpgrade(tags: ReadonlyMap<string, string>): void {
     this.#echoCount += 1
+    const login = tags.get('login') ?? ''
+    const name = tags.get('display-name') || login || 'Someone'
     this.#emitUserNotice({
-      id: id ?? `anon-upgrade-${this.id}-${this.#echoCount}-${Date.now()}`,
+      id: tags.get('id') ?? `anon-upgrade-${this.id}-${this.#echoCount}-${Date.now()}`,
       platform: 'twitch',
       channelId: this.id,
       timestamp: Date.now(),
       author: {
-        id: 'ananonymousgifter',
-        name: 'ananonymousgifter',
-        displayName: 'Anonymous',
+        id: tags.get('user-id') ?? '',
+        name: login,
+        displayName: name,
         badges: [],
         roles: { broadcaster: false, moderator: false }
       },
-      fragments: [{ type: 'text', text: 'Anonymous continued their gift sub' }],
+      fragments: [
+        { type: 'text', text: `${name} is continuing the gift sub they got from an anonymous user` }
+      ],
       system: true
     })
   }

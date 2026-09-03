@@ -467,11 +467,15 @@ describe('TwitchSource anonymous gift-sub upgrade', () => {
     const client = await connectSource(source)
     const anyMessage = client.handlers.get('anyMessage')
     anyMessage?.({
-      rawLine: '@msg-id=anongiftpaidupgrade;id=notice-1 :tmi.twitch.tv USERNOTICE #somechannel',
+      rawLine:
+        '@msg-id=anongiftpaidupgrade;id=notice-1;login=viewer_one;display-name=Viewer_One;user-id=200000001 :tmi.twitch.tv USERNOTICE #somechannel',
       command: 'USERNOTICE',
       tags: new Map([
         ['msg-id', 'anongiftpaidupgrade'],
-        ['id', 'notice-1']
+        ['id', 'notice-1'],
+        ['login', 'viewer_one'],
+        ['display-name', 'Viewer_One'],
+        ['user-id', '200000001']
       ])
     })
     // Every other USERNOTICE reaches the column through twurple's own typed events; picking them
@@ -489,10 +493,14 @@ describe('TwitchSource anonymous gift-sub upgrade', () => {
     expect(messages[0]?.id).toBe('notice-1')
     expect(messages[0]?.system).toBe(true)
     expect(messages[0]?.highlight).toBeUndefined()
-    expect(messages[0]?.author.displayName).toBe('Anonymous')
+    expect(messages[0]?.author.displayName).toBe('Viewer_One')
+    expect(messages[0]?.author.id).toBe('200000001')
     expect(messages[0]?.menuToken).toBeUndefined()
     expect(messages[0]?.fragments).toEqual([
-      { type: 'text', text: 'Anonymous continued their gift sub' }
+      {
+        type: 'text',
+        text: 'Viewer_One is continuing the gift sub they got from an anonymous user'
+      }
     ])
     await source.disconnect()
   })

@@ -11,7 +11,7 @@ multi-column window. Built with Electron, React, and TypeScript.
 - A donations tab collecting Super Chats, members, cheers, subs and StreamElements tips across
   every open chat, grouped per streamer, with currency conversion
 - Right-click a tab to open a streamer's YouTube waiting rooms and live chat in order
-- Twitch GIFs shown as links; spell-check in the composer (US or UK English)
+- Twitch GIFs shown inline, as on twitch.tv; spell-check in the composer (US or UK English)
 
 ## Install
 
@@ -109,8 +109,9 @@ Everything the app talks to, so you can judge it for yourself:
 - **Spelling dictionaries** — on Windows and Linux the built-in spell-checker downloads its
   Hunspell dictionary once from Chromium's CDN (a Google host). macOS uses the system checker and
   downloads nothing. Turn spelling off in Settings to avoid it.
-- **GIF links** — a Twitch GIF message is shown as a link; the GIF is only fetched if you click it,
-  in your browser.
+- **Twitch GIFs** — a GIF message is shown inline, loaded from GIPHY's CDN (`media*.giphy.com`) the
+  same way twitch.tv loads it. GIPHY refuses these URLs as a page you open directly, so there is no
+  "open in browser" for them.
 
 Nothing else is contacted. The optional **raw message log** (Settings → Advanced) writes every
 inbound Twitch and YouTube message verbatim to a `raw` folder inside the chat-log folder — it stores

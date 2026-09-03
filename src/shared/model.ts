@@ -62,7 +62,11 @@ export type Fragment =
     }
   | { type: 'mention'; text: string; userId?: string }
   /** A hyperlink — rendered as a clickable link (used for Twitch GIFs). */
-  | { type: 'link'; text: string; url: string }
+  /**
+   * A Twitch chat GIF: `text` is the platform's placeholder ("[Name GIF by Author]"), shown when the
+   * image can't be rendered; `url` is the image URL exactly as supplied and must be used unmodified.
+   */
+  | { type: 'gif'; text: string; url: string; id: string }
 
 export type HighlightKind =
   | 'superchat'
@@ -803,8 +807,6 @@ export interface ChatApi {
   getSettings(): Promise<AppSettings>
   /** Update one or more settings; returns the merged, persisted result. */
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>
-  /** Open a URL in the system's default browser. */
-  openExternal(url: string): Promise<void>
   /** The raw wire-level log's current state (on/off, file size, why it's off if disabled). */
   rawLogStatus(): Promise<RawLogStatus>
   /** Reveal the raw log directory in the OS file manager. */

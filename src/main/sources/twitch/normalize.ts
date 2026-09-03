@@ -104,9 +104,10 @@ function spliceGifs(
       fragments.push({ type: 'text', text: codePoints.slice(cursor, range.start).join('') })
     }
     fragments.push({
-      type: 'link',
+      type: 'gif',
       text: codePoints.slice(range.start, range.end + 1).join(''),
-      url: range.url
+      url: range.url,
+      id: range.id
     })
     cursor = range.end + 1
   }

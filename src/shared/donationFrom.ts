@@ -116,7 +116,7 @@ function textOf(message: ChatMessage): string {
       if (fragment.type === 'text') {
         return fragment.text
       }
-      if (fragment.type === 'link') {
+      if (fragment.type === 'gif') {
         // The url has no other home in a donation record, so it rides along in the text rather
         // than being dropped (a gift link is otherwise unrecoverable from the panel).
         return `${fragment.text} (${fragment.url})`

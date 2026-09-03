@@ -10,6 +10,7 @@ import type { ChatMessage, Fragment as Frag, HeldAction, HeldActionHandler } fro
 import { Avatar } from '@renderer/components/Avatar'
 import { Badges } from '@renderer/components/Badges'
 import { EmoteImg } from '@renderer/components/EmoteImg'
+import { GifImg } from '@renderer/components/GifImg'
 import { atName, clockHM } from '@renderer/format'
 import { contrastText, darken } from '@renderer/color'
 import { nameColor } from '@renderer/theme'
@@ -26,7 +27,7 @@ type RenderNode =
   | { kind: 'mention'; text: string }
   | { kind: 'emoji'; text: string }
   | { kind: 'emote'; base: EmoteFragment; overlays: EmoteFragment[] }
-  | { kind: 'link'; text: string; url: string }
+  | { kind: 'gif'; text: string; url: string }
 
 // Handles span Unicode letters/digits plus `_ . -` (e.g. @KozumiNezō, @RandomRabbit.c, @Fiza-k5j).
 const MENTION_RE = /(@[\p{L}\p{N}_.-]+)/gu
@@ -61,9 +62,9 @@ function buildNodes(fragments: Frag[]): RenderNode[] {
       }
     } else if (fragment.type === 'mention') {
       nodes.push({ kind: 'mention', text: fragment.text })
-    } else if (fragment.type === 'link') {
+    } else if (fragment.type === 'gif') {
       // A link's own text isn't split for @mentions/emoji — it renders verbatim inside the anchor.
-      nodes.push({ kind: 'link', text: fragment.text, url: fragment.url })
+      nodes.push({ kind: 'gif', text: fragment.text, url: fragment.url })
     } else {
       for (const part of fragment.text.split(MENTION_RE)) {
         if (part === '') {
@@ -99,22 +100,8 @@ function renderFragments(fragments: Frag[]): ReactNode {
         </span>
       )
     }
-    if (node.kind === 'link') {
-      return (
-        <a
-          key={index}
-          className="pc-link"
-          href={node.url}
-          title={node.url}
-          rel="noreferrer"
-          onClick={(event) => {
-            event.preventDefault()
-            void window.chat.openExternal(node.url)
-          }}
-        >
-          {node.text}
-        </a>
-      )
+    if (node.kind === 'gif') {
+      return <GifImg key={index} text={node.text} url={node.url} />
     }
     const dot = PROVIDER_DOT[node.base.provider]
     return (

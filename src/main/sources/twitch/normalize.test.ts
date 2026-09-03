@@ -349,13 +349,13 @@ describe('normalizeTwitchMessage cheermotes', () => {
 })
 
 describe('normalizeTwitchMessage gifs tag', () => {
-  it("splices Twitch's documented GIF example into a single link fragment", () => {
+  it("splices Twitch's documented GIF example into a single GIF fragment", () => {
     const text = '[Y A Y Yes GIF by Djemilah Birnie]'
     const url =
       'https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=abc&ep=v1_gifs_trending&rid=giphy.gif&ct=g'
     const tags = new Map([['gifs', `0-33|joSNxeswxuc74Juo8X|${url}`]])
     const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
-    expect(message.fragments).toEqual([{ type: 'link', text, url }])
+    expect(message.fragments).toEqual([{ type: 'gif', text, url, id: 'joSNxeswxuc74Juo8X' }])
   })
 
   it('positions the GIF by code points, so an emoji before it does not shift the range', () => {
@@ -369,7 +369,7 @@ describe('normalizeTwitchMessage gifs tag', () => {
     const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
     expect(message.fragments).toEqual([
       { type: 'text', text: '🙂 ' },
-      { type: 'link', text: placeholder, url: 'https://cdn/x.gif' }
+      { type: 'gif', text: placeholder, url: 'https://cdn/x.gif', id: 'abc' }
     ])
   })
 
@@ -393,12 +393,12 @@ describe('normalizeTwitchMessage gifs tag', () => {
     const tags = new Map([['gifs', `0-2|abc|${url}`]])
     const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
     expect(message.fragments).toEqual([
-      { type: 'link', text: 'gif', url },
+      { type: 'gif', text: 'gif', url, id: 'abc' },
       { type: 'text', text: ' here' }
     ])
   })
 
-  it('keeps a preceding emote fragment alongside the GIF link', () => {
+  it('keeps a preceding emote fragment alongside the GIF', () => {
     const text = 'Kappa hello'
     const tags = new Map([['gifs', '6-10|abc|https://cdn/g.gif']])
     const msg = ircMessage({}, tags)
@@ -412,7 +412,7 @@ describe('normalizeTwitchMessage gifs tag', () => {
         provider: 'twitch'
       },
       { type: 'text', text: ' ' },
-      { type: 'link', text: 'hello', url: 'https://cdn/g.gif' }
+      { type: 'gif', text: 'hello', url: 'https://cdn/g.gif', id: 'abc' }
     ])
   })
 

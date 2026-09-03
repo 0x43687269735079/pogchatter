@@ -16,7 +16,7 @@ describe('plainText', () => {
   it('flattens a link fragment to its shown text, alongside emotes and plain text', () => {
     const fragments: Fragment[] = [
       { type: 'text', text: 'thanks ' },
-      { type: 'link', text: '[X GIF by Y]', url: 'https://example.test/g.gif' },
+      { type: 'gif', text: '[X GIF by Y]', url: 'https://example.test/g.gif', id: 'x' },
       { type: 'text', text: ' ' },
       { type: 'emote', code: 'Kappa', url: 'u', provider: '7tv' }
     ]

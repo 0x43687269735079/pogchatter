@@ -9,8 +9,8 @@ function sameFragment(a: Fragment, b: Fragment): boolean {
   if (a.type === 'emote') {
     return b.type === 'emote' && a.code === b.code && a.url === b.url
   }
-  if (a.type === 'link') {
-    return b.type === 'link' && a.text === b.text && a.url === b.url
+  if (a.type === 'gif') {
+    return b.type === 'gif' && a.text === b.text && a.url === b.url
   }
   if (a.type === 'mention') {
     return b.type === 'mention' && a.text === b.text

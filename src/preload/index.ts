@@ -167,9 +167,6 @@ const api: ChatApi = {
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     return ipcRenderer.invoke('chat:setSettings', patch) as Promise<AppSettings>
   },
-  openExternal(url: string): Promise<void> {
-    return ipcRenderer.invoke('chat:openExternal', url) as Promise<void>
-  },
   rawLogStatus(): Promise<RawLogStatus> {
     return ipcRenderer.invoke('chat:rawLogStatus') as Promise<RawLogStatus>
   },

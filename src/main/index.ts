@@ -34,7 +34,6 @@ import { ConfigStore } from '@main/ConfigStore'
 import { closeDebugLog, debugLog, debugLogEnabled, initDebugLog } from '@main/debugLog'
 import { KeepAlive } from '@main/KeepAlive'
 import { migrateLegacyUserData } from '@main/migrateUserData'
-import { isOpenableUrl } from '@main/openExternal'
 import { RawMessageLogger, rawLogBytes } from '@main/RawMessageLogger'
 import { SourceManager } from '@main/SourceManager'
 import { applySpelling } from '@main/spelling'
@@ -772,11 +771,6 @@ void app
       rendererUrl: RENDERER_URL,
       appFilePath: APP_FILE_PATH,
       sendDebug: SEND_DEBUG,
-      openExternal: async (url) => {
-        if (isOpenableUrl(url)) {
-          await shell.openExternal(url)
-        }
-      },
       // Files written earlier still take space after logging is turned off; size the folder itself.
       rawLogStatus: () => rawLogger?.status() ?? { enabled: false, bytes: rawLogBytes(rawDir()) },
       openRawLogDir: async () => {

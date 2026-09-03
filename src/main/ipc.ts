@@ -90,8 +90,6 @@ export interface IpcDeps {
   appFilePath: string
   /** POGCHATTER_SEND_DEBUG: time the send round-trip (IPC receipt → platform send resolved). */
   sendDebug: boolean
-  /** Open a URL in the system's default browser. */
-  openExternal(url: string): Promise<void>
   /** The raw wire-level log's current state (on/off, file size, why it's off if disabled). */
   rawLogStatus(): RawLogStatus
   /** Reveal the raw log directory in the OS file manager. */
@@ -521,11 +519,6 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: true, rules: sanitizeBanRules(parsed.rules) }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : 'Failed to read file' }
-    }
-  })
-  handle('chat:openExternal', async (_event, url) => {
-    if (typeof url === 'string') {
-      await deps.openExternal(url)
     }
   })
   handle('chat:rawLogStatus', (): RawLogStatus => deps.rawLogStatus())

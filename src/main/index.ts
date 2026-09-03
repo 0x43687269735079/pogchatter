@@ -940,7 +940,7 @@ void app
           emotes: twitchEmotes,
           cheermotes: twitchCheermotes
         },
-        () => config.settings().twitchHistory
+        { twitchHistory: () => config.settings().twitchHistory }
       )
     }
 

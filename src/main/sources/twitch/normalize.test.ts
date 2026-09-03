@@ -4,8 +4,10 @@ import {
   decodeTwitchMenuToken,
   encodeTwitchMenuToken,
   normalizeTwitchAnnouncement,
+  normalizeTwitchCommunitySub,
   normalizeTwitchMessage,
   normalizeTwitchNotice,
+  normalizeTwitchSub,
   normalizeTwitchSubGift
 } from '@main/sources/twitch/normalize'
 
@@ -223,6 +225,62 @@ describe('normalizeTwitchSubGift moderation context', () => {
     const message = normalizeTwitchSubGift('s', subInfo, msg)
     expect(message.author.displayName).toBe('Anonymous')
     expect(message.menuToken).toBeUndefined()
+  })
+})
+
+describe("Twitch's anonymous service accounts", () => {
+  it('labels an anonymous cheer and offers no moderation menu', () => {
+    // Anonymous cheers arrive as an ordinary PRIVMSG from Twitch's shared AnAnonymousCheerer
+    // account — banning it would moderate no one and block the channel's future anonymous cheers.
+    const msg = ircMessage({ userId: 'id-anon-cheer', userName: 'ananonymouscheerer' })
+    ;(msg as { bits: number }).bits = 500
+    const message = normalizeTwitchMessage('s', 'Cheer500', msg)
+    expect(message.highlight).toEqual({ kind: 'bits', amount: 500 })
+    expect(message.author.displayName).toBe('Anonymous')
+    expect(message.menuToken).toBeUndefined()
+  })
+
+  it('labels an anonymous community gift while keeping its batch count', () => {
+    const msg = ircMessage({ userId: 'id-anon-gift', userName: 'ananonymousgifter' })
+    const message = normalizeTwitchCommunitySub('s', { count: 5, plan: '1000' }, msg)
+    expect(message.highlight).toMatchObject({ kind: 'membership_gift', count: 5 })
+    expect(message.author.displayName).toBe('Anonymous')
+    expect(message.menuToken).toBeUndefined()
+  })
+
+  it('still moderates (and names) an ordinary cheerer', () => {
+    const msg = ircMessage()
+    ;(msg as { bits: number }).bits = 500
+    const message = normalizeTwitchMessage('s', 'Cheer500', msg)
+    expect(message.author.displayName).toBe('Alice')
+    expect(message.menuToken).toBeDefined()
+  })
+})
+
+describe('normalizeTwitchSub gifted-sub renewals', () => {
+  const subInfo = {
+    userId: 'u100',
+    displayName: 'Alice',
+    plan: '1000',
+    planName: 'T1',
+    isPrime: false,
+    months: 6
+  }
+
+  it('marks a month of a multi-month gifted sub as not a purchase', () => {
+    // The gifter's purchase was already announced (and counted) when they bought the gift.
+    const message = normalizeTwitchSub(
+      's',
+      { ...subInfo, originalGiftInfo: { anonymous: true, duration: 6, redeemedMonth: 2 } },
+      ircMessage(),
+      'resub'
+    )
+    expect(message.highlight?.notAPurchase).toBe(true)
+  })
+
+  it('leaves a self-paid resub countable', () => {
+    const message = normalizeTwitchSub('s', subInfo, ircMessage(), 'resub')
+    expect(message.highlight?.notAPurchase).toBeUndefined()
   })
 })
 

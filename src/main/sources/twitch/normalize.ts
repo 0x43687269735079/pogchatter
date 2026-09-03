@@ -133,9 +133,7 @@ function toFragments(
     msg.emoteOffsets,
     cheermoteNames.length > 0 ? cheermoteNames : undefined
   )
-  // Optional chaining defends against test doubles built before `tags` existed on this Pick;
-  // every real twurple message carries a `tags` Map (empty when the IRC line had none).
-  const gifRanges = parseGifTag(msg.tags?.get('gifs'))
+  const gifRanges = parseGifTag(msg.tags.get('gifs'))
   const codePoints = gifRanges.length > 0 ? [...text] : []
   const fragments: Fragment[] = []
   for (const part of parts) {
@@ -286,6 +284,43 @@ function toAuthor(user: ChatUser, options: NormalizeOptions): Author {
 }
 
 /**
+ * Twitch's shared service accounts for anonymous cheers and anonymous gifts. Their lines get a
+ * human label and no moderation menu — banning a service account moderates no one and would block
+ * the channel's future anonymous notices.
+ */
+const ANONYMOUS_LOGINS = new Set(['ananonymouscheerer', 'ananonymousgifter'])
+
+/**
+ * Label the author and attach the right-click moderation context, where each applies: an anonymous
+ * service account reads as "Anonymous" and is never moderable, and the logged-in user's own lines
+ * carry no menu (there is nothing to moderate). `noDelete` marks a USERNOTICE-derived card, which
+ * Helix cannot delete.
+ */
+function applyIdentity(
+  message: ChatMessage,
+  user: ChatUser,
+  options: NormalizeOptions,
+  noDelete: boolean
+): void {
+  if (ANONYMOUS_LOGINS.has(user.userName)) {
+    message.author.displayName = 'Anonymous'
+    return
+  }
+  if (user.userId === options.selfUserId) {
+    return
+  }
+  const context: TwitchMenuContext = {
+    messageId: message.id,
+    userId: user.userId,
+    userLogin: user.userName
+  }
+  if (noDelete) {
+    context.noDelete = true
+  }
+  message.menuToken = encodeTwitchMenuToken(context)
+}
+
+/**
  * Build the reply context for a Twitch message: the directly-replied-to parent plus, when present,
  * the thread root id. The thread starter's display name is only carried when the parent is itself
  * the root (IRC gives no display name for the thread root otherwise — the renderer resolves it).
@@ -348,19 +383,7 @@ function fromUserNotice(
     author: toAuthor(msg.userInfo, options),
     fragments: []
   }
-  if (msg.userInfo.userName === 'ananonymousgifter') {
-    // Twitch sends anonymous gifts from its shared AnAnonymousGifter account. Show a human
-    // label and offer no moderation menu — banning the service account moderates no one and
-    // blocks the channel's future anonymous gift notices.
-    message.author.displayName = 'Anonymous'
-  } else if (msg.userInfo.userId !== options.selfUserId) {
-    message.menuToken = encodeTwitchMenuToken({
-      messageId: msg.id,
-      userId: msg.userInfo.userId,
-      userLogin: msg.userInfo.userName,
-      noDelete: true
-    })
-  }
+  applyIdentity(message, msg.userInfo, options, true)
   return message
 }
 
@@ -388,6 +411,11 @@ export function normalizeTwitchSub(
   }
   if (resub) {
     highlight.count = subInfo.months
+  }
+  if (subInfo.originalGiftInfo !== undefined) {
+    // A multi-month gifted sub renewing itself: the gifter's purchase was announced (and counted)
+    // when they bought it, so this month's line must not be counted as money again.
+    highlight.notAPurchase = true
   }
   message.highlight = highlight
   if (subInfo.message !== undefined && subInfo.message !== '') {
@@ -503,13 +531,7 @@ export function normalizeTwitchMessage(
     fragments: toFragments(text, msg, msg.bits > 0 ? options.cheermotes : undefined)
   }
 
-  if (msg.userInfo.userId !== options.selfUserId) {
-    message.menuToken = encodeTwitchMenuToken({
-      messageId: msg.id,
-      userId: msg.userInfo.userId,
-      userLogin: msg.userInfo.userName
-    })
-  }
+  applyIdentity(message, msg.userInfo, options, false)
 
   const highlight = toHighlight(msg)
   if (highlight !== undefined) {

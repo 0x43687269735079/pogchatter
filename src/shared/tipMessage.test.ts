@@ -27,9 +27,9 @@ describe('parseTipAnnouncement', () => {
 
   it('copes with the streamer having rewritten the thank-you wording', () => {
     // Only the lead-in is relied upon; everything after it is the streamer's own text.
-    const custom = 'someone just tipped $5.00! you are a legend and the stream thanks you'
+    const custom = 'alice_b just tipped $5.00! you are a legend and the stream thanks you'
     expect(parseTipAnnouncement(botMessage(custom))).toEqual({
-      donor: 'someone',
+      donor: 'alice_b',
       amount: '$5.00',
       text: ''
     })
@@ -62,6 +62,22 @@ describe('parseTipAnnouncement', () => {
     // any viewer could rename to "StreamElements" and forge a tip. Recognition is Twitch-only.
     const onYouTube: ChatMessage = { ...botMessage(REAL, 'streamelements'), platform: 'youtube' }
     expect(parseTipAnnouncement(onYouTube)).toBeUndefined()
+  })
+
+  it('accepts a donor name with spaces, as the tip page allows', () => {
+    expect(parseTipAnnouncement(botMessage('John Smith just tipped $5.00! thanks'))?.donor).toBe(
+      'John Smith'
+    )
+  })
+
+  it('folds every way of not being named into one Anonymous donor', () => {
+    // Money given without a name is still money given; the panel must count it and group it.
+    for (const lead of ['Anonymous', 'anonymous', 'An anonymous user', 'Someone', '***']) {
+      expect(parseTipAnnouncement(botMessage(`${lead} just tipped £5.00!`))?.donor).toBe(
+        'Anonymous'
+      )
+    }
+    expect(parseTipAnnouncement(botMessage('Anonymous just tipped £5.00!'))?.amount).toBe('£5.00')
   })
 
   it('ignores bot chatter that merely resembles a tip', () => {

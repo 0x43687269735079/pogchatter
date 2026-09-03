@@ -1,6 +1,11 @@
 import { proxiedFetch } from '@main/net/proxy'
 
-const TIMEOUT_MS = 6000
+/**
+ * Emote sets run large — a 600-emote 7TV channel set is ordinary — and the providers' CDNs are
+ * slow under load, so the budget is generous: a scope that times out shows no emotes at all
+ * until its retry lands.
+ */
+export const TIMEOUT_MS = 15_000
 // Descriptive UA: emote providers prefer clients to identify themselves.
 // (Browser-spoofing is reserved for YouTube InnerTube only.)
 const USER_AGENT = 'pogchatter/0.1'

@@ -12,8 +12,15 @@ import {
   type SevenTvSetChange,
   type SocketFactory
 } from '@main/emotes/SevenTvEvents'
+import { debugLog } from '@main/debugLog'
 
 type EmoteIndex = Map<string, ResolvedEmote>
+
+/** A loadable emote scope: the platform + channel id a third-party set loads under. */
+export type EmoteScope = { platform: Platform; channelId: string }
+
+/** What {@link EmoteEngine.onIndexChanged} reports: one channel scope, or the everywhere layer. */
+export type IndexChange = EmoteScope | 'shared'
 
 interface ScopeTag {
   scope: 'global' | 'channel' | 'library'
@@ -58,6 +65,15 @@ const ALL_PROVIDERS_ENABLED: EmoteProviderSettings = { sevenTv: true, bttv: true
 const RETRY_BASE_MS = 30_000
 const RETRY_CAP_MS = 300_000
 
+// A scope every provider 404'd is cached as loaded, so nothing would ever fetch it again — but a
+// channel can sign up to 7TV mid-session. Re-check it the next time a column asks for it, no more
+// often than this.
+const NOT_FOUND_RECHECK_MS = 300_000
+
+// Every load rebuilds the shared library, so a burst of columns starting together would fan out one
+// 'shared' notification each. Coalesce them into one per window.
+const SHARED_NOTIFY_MS = 250
+
 /** What a skipped 7TV fetch yields: no set id (so no EventAPI watch) and no emotes. */
 function emptySevenTvSet(): SevenTvSet {
   return { setId: undefined, emotes: [] }
@@ -93,6 +109,39 @@ async function settleProviders(
     complete:
       ffz.status === 'fulfilled' && bttv.status === 'fulfilled' && sevenTv.status === 'fulfilled'
   }
+}
+
+/**
+ * Whether every enabled provider answered "no such channel": each fetch settled (nothing threw,
+ * so this is not a network outage) and each returned nothing. Indistinguishable from a channel
+ * that exists on every provider with zero emotes, which is why it is re-checked rather than
+ * retried.
+ */
+function isNotFound(load: ProviderLoad): boolean {
+  return (
+    load.complete &&
+    load.lists.ffz.length === 0 &&
+    load.lists.bttv.length === 0 &&
+    load.lists.sevenTv.length === 0
+  )
+}
+
+/** One line per settled load — counts and scope keys only, never emote data. */
+function logScopeLoad(key: string, load: ProviderLoad, notFound: boolean): void {
+  debugLog('emotes', 'scope loaded', {
+    scope: key,
+    ffz: load.lists.ffz.length,
+    bttv: load.lists.bttv.length,
+    sevenTv: load.lists.sevenTv.length,
+    complete: load.complete,
+    notFound
+  })
+}
+
+/** What a settled load left behind, for the not-found re-check. */
+interface ScopeState {
+  loadedAt: number
+  notFound: boolean
 }
 
 /** Mutate the 7TV slice: drop removed (and replaced) codes, then append the additions. */
@@ -137,9 +186,11 @@ export class EmoteEngine {
   readonly #channelLists = new Map<string, ThirdPartyLists>()
   #userLists: ThirdPartyLists | undefined
   /** Every ensured channel's identity, kept so provider toggles can re-fetch known scopes. */
-  readonly #channelScopes = new Map<string, { platform: Platform; channelId: string }>()
+  readonly #channelScopes = new Map<string, EmoteScope>()
+  /** How each channel scope's last load settled, keyed like #channels; drives the 404 re-check. */
+  readonly #scopeState = new Map<string, ScopeState>()
   /** The identity loadUserEmotes was last called with, kept for the same re-fetch. */
-  #userScope: { platform: Platform; channelId: string } | undefined
+  #userScope: EmoteScope | undefined
   /** Pending failure retries per scope key ('global', 'user', or `platform:id`). */
   readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   readonly #retryAttempts = new Map<string, number>()
@@ -148,11 +199,76 @@ export class EmoteEngine {
   #sevenTvEvents: SevenTvEvents | undefined
   readonly #createSocket: SocketFactory | undefined
   readonly #providers: () => EmoteProviderSettings
+  readonly #now: () => number
+  /** Index-change subscribers; see {@link onIndexChanged}. */
+  readonly #indexListeners = new Set<(changed: IndexChange) => void>()
+  /** The in-flight 'shared' coalescing window, if one is open. */
+  #sharedNotifyTimer: ReturnType<typeof setTimeout> | undefined
   #disposed = false
 
-  constructor(createSocket?: SocketFactory, providers?: () => EmoteProviderSettings) {
+  constructor(
+    createSocket?: SocketFactory,
+    providers?: () => EmoteProviderSettings,
+    now?: () => number
+  ) {
     this.#createSocket = createSocket
     this.#providers = providers ?? ((): EmoteProviderSettings => ALL_PROVIDERS_ENABLED)
+    this.#now = now ?? Date.now
+  }
+
+  /**
+   * Subscribe to emote-index changes so already-rendered messages can be re-tokenized: a channel's
+   * set often finishes loading after its first messages (and the recent-messages backlog) arrived,
+   * and 7TV live updates land later still. Reports the channel scope whose index changed, or
+   * 'shared' for the layers that apply in every column. Returns the unsubscribe function.
+   */
+  onIndexChanged(listener: (changed: IndexChange) => void): () => void {
+    this.#indexListeners.add(listener)
+    return (): void => {
+      this.#indexListeners.delete(listener)
+    }
+  }
+
+  /**
+   * Resolve once the scope's first load has settled — succeeded, come back empty, or failed
+   * outright; the background retry cycle is not awaited. Resolves immediately for a scope that is
+   * already loaded or was never ensured. Never rejects.
+   */
+  async whenChannelLoaded(scope: EmoteScope): Promise<void> {
+    const pending = this.#pending.get(`${scope.platform}:${scope.channelId}`)
+    if (pending === undefined) {
+      return
+    }
+    try {
+      await pending
+    } catch {
+      // A failed first load has still settled: the caller wanted "stop waiting", not "succeeded".
+    }
+  }
+
+  #notifyIndexChanged(changed: IndexChange): void {
+    for (const listener of this.#indexListeners) {
+      listener(changed)
+    }
+  }
+
+  /** Report a channel key's change, if the scope is still registered. */
+  #notifyScopeKey(key: string): void {
+    const scope = this.#channelScopes.get(key)
+    if (scope !== undefined) {
+      this.#notifyIndexChanged(scope)
+    }
+  }
+
+  /** Queue one 'shared' notification per {@link SHARED_NOTIFY_MS} window. */
+  #notifySharedChanged(): void {
+    if (this.#disposed || this.#sharedNotifyTimer !== undefined) {
+      return
+    }
+    this.#sharedNotifyTimer = setTimeout(() => {
+      this.#sharedNotifyTimer = undefined
+      this.#notifyIndexChanged('shared')
+    }, SHARED_NOTIFY_MS)
   }
 
   #indexLists(lists: ThirdPartyLists): EmoteIndex {
@@ -176,6 +292,9 @@ export class EmoteEngine {
     this.#globalLists = load.lists
     this.#global = this.#indexLists(load.lists)
     this.#watchSevenTvSet(load.sevenTvSetId, 'global')
+    logScopeLoad('global', load, isNotFound(load))
+    // The global layer applies in every column, so it rides the shared notification.
+    this.#notifySharedChanged()
     this.#settleRetry('global', load.complete, () => this.loadGlobals())
   }
 
@@ -185,13 +304,25 @@ export class EmoteEngine {
     // Always (re)register the scope: a release during an in-flight load must not win
     // over a re-add, and the load's apply step checks this registry.
     this.#channelScopes.set(key, { platform, channelId })
-    if (this.#channels.has(key) || this.#pending.has(key)) {
+    if (this.#pending.has(key)) {
+      return
+    }
+    if (this.#channels.has(key) && !this.#dueForRecheck(key)) {
       return
     }
     const task = this.#loadChannel(key, { platform, channelId }).finally(() => {
       this.#pending.delete(key)
     })
     this.#pending.set(key, task)
+  }
+
+  /** Whether a loaded scope every provider 404'd has been cached long enough to try again. */
+  #dueForRecheck(key: string): boolean {
+    const state = this.#scopeState.get(key)
+    if (state === undefined || !state.notFound) {
+      return false
+    }
+    return this.#now() - state.loadedAt >= NOT_FOUND_RECHECK_MS
   }
 
   /**
@@ -203,6 +334,7 @@ export class EmoteEngine {
     const key = `${platform}:${channelId}`
     this.#channelScopes.delete(key)
     this.#channelLists.delete(key)
+    this.#scopeState.delete(key)
     this.#clearRetry(key)
     this.#unbindSevenTvScope(key)
     if (this.#channels.delete(key)) {
@@ -211,7 +343,7 @@ export class EmoteEngine {
   }
 
   /** Fetch one channel scope and apply whatever succeeded; retries until every provider answers. */
-  async #loadChannel(key: string, scope: { platform: Platform; channelId: string }): Promise<void> {
+  async #loadChannel(key: string, scope: EmoteScope): Promise<void> {
     const enabled = this.#providers()
     const load = await settleProviders(
       [
@@ -228,6 +360,10 @@ export class EmoteEngine {
     this.#channels.set(key, this.#indexLists(load.lists))
     this.#rebuildShared()
     this.#watchSevenTvSet(load.sevenTvSetId, key)
+    const notFound = isNotFound(load)
+    this.#scopeState.set(key, { loadedAt: this.#now(), notFound })
+    logScopeLoad(key, load, notFound)
+    this.#notifyIndexChanged(scope)
     this.#settleRetry(key, load.complete, () => this.#loadChannel(key, scope))
   }
 
@@ -238,7 +374,7 @@ export class EmoteEngine {
     await this.#loadUser(scope)
   }
 
-  async #loadUser(scope: { platform: Platform; channelId: string }): Promise<void> {
+  async #loadUser(scope: EmoteScope): Promise<void> {
     const enabled = this.#providers()
     const load = await settleProviders(
       [
@@ -256,6 +392,7 @@ export class EmoteEngine {
     this.#userEmotes = this.#indexLists(load.lists)
     this.#rebuildShared()
     this.#watchSevenTvSet(load.sevenTvSetId, 'user')
+    logScopeLoad('user', load, isNotFound(load))
     this.#settleRetry('user', load.complete, () => this.#loadUser(scope))
   }
 
@@ -358,6 +495,10 @@ export class EmoteEngine {
   dispose(): void {
     this.#disposed = true
     this.#clearAllRetries()
+    if (this.#sharedNotifyTimer !== undefined) {
+      clearTimeout(this.#sharedNotifyTimer)
+      this.#sharedNotifyTimer = undefined
+    }
     this.#sevenTvEvents?.stop()
     this.#sevenTvEvents = undefined
   }
@@ -409,6 +550,8 @@ export class EmoteEngine {
       if (scope === 'global' && this.#globalLists !== undefined) {
         mutateSevenTv(this.#globalLists, change)
         this.#global = this.#indexLists(this.#globalLists)
+        // Global emotes apply in every column, so they report as the everywhere layer.
+        this.#notifySharedChanged()
       } else if (scope === 'user' && this.#userLists !== undefined) {
         mutateSevenTv(this.#userLists, change)
         this.#userEmotes = this.#indexLists(this.#userLists)
@@ -418,6 +561,7 @@ export class EmoteEngine {
         if (lists !== undefined) {
           mutateSevenTv(lists, change)
           this.#channels.set(scope, this.#indexLists(lists))
+          this.#notifyScopeKey(scope)
           sharedDirty = true
         }
       }
@@ -427,7 +571,10 @@ export class EmoteEngine {
     }
   }
 
-  /** Rebuild the shared library = every added channel's third-party emotes + the user's own. */
+  /**
+   * Rebuild the shared library = every added channel's third-party emotes + the user's own, and
+   * report it (coalesced) since it applies in every column.
+   */
   #rebuildShared(): void {
     const shared: EmoteIndex = new Map()
     for (const index of this.#channels.values()) {
@@ -439,6 +586,7 @@ export class EmoteEngine {
       shared.set(code, emote)
     }
     this.#shared = shared
+    this.#notifySharedChanged()
   }
 
   /** Set the Twitch global + user emote catalog (Helix), or clear it on logout. */
@@ -470,7 +618,7 @@ export class EmoteEngine {
    * shadows a global one with the same code (matching tokenize precedence), so each
    * code appears once.
    */
-  list(scope?: { platform: Platform; channelId: string }): Array<ResolvedEmote & ScopeTag> {
+  list(scope?: EmoteScope): Array<ResolvedEmote & ScopeTag> {
     const out: Array<ResolvedEmote & ScopeTag> = []
     const seen = new Set<string>()
     const push = (index: EmoteIndex | undefined, tag: ScopeTag['scope']): void => {

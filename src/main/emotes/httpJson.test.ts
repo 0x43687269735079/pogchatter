@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@main/net/proxy', () => ({ proxiedFetch: vi.fn() }))
 
 import { proxiedFetch } from '@main/net/proxy'
-import { getJson } from '@main/emotes/httpJson'
+import { getJson, TIMEOUT_MS } from '@main/emotes/httpJson'
 
 const mockFetch = vi.mocked(proxiedFetch)
 
@@ -46,20 +46,30 @@ describe('getJson', () => {
     await expect(getJson('https://api.example/offline')).rejects.toThrow('fetch failed')
   })
 
-  it('aborts a hung request after the timeout and propagates the failure', async () => {
+  it('gives a slow provider 15s before aborting — a large emote set must not be cut off', async () => {
+    expect(TIMEOUT_MS).toBe(15_000)
     vi.useFakeTimers()
     try {
+      let aborted = false
       mockFetch.mockImplementation(
         (_url, init) =>
           new Promise((_resolve, reject) => {
             init?.signal?.addEventListener('abort', () => {
+              aborted = true
               reject(new Error('aborted'))
             })
           })
       )
       const pending = getJson('https://api.example/hung')
       const failure = expect(pending).rejects.toThrow('aborted')
-      await vi.advanceTimersByTimeAsync(6000)
+
+      // Still waiting one millisecond short of the budget…
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS - 1)
+      expect(aborted).toBe(false)
+
+      // …and aborted the moment it elapses.
+      await vi.advanceTimersByTimeAsync(1)
+      expect(aborted).toBe(true)
       await failure
     } finally {
       vi.useRealTimers()

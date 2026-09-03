@@ -288,10 +288,14 @@ function sanitizeDonation(value: unknown): Donation | undefined {
     timestamp,
     value: donationValue,
     text: typeof input['text'] === 'string' ? input['text'] : '',
-    read: input['read'] === true
+    read: input['read'] === true,
+    streamerKey: typeof input['streamerKey'] === 'string' ? input['streamerKey'] : channelId
   }
   if (input['removed'] === true) {
     donation.removed = true
+  }
+  if (typeof input['headerText'] === 'string') {
+    donation.headerText = input['headerText']
   }
   return donation
 }

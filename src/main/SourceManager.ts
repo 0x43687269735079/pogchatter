@@ -119,7 +119,8 @@ export class SourceManager {
         id: source.id,
         platform: source.platform,
         label: this.#labels.get(source.id) ?? source.id,
-        status: source.status()
+        status: source.status(),
+        streamerKey: placeholderStreamerKey(source.id)
       }
       const restriction = source.sendRestriction?.()
       if (restriction !== undefined) {
@@ -328,4 +329,12 @@ export class SourceManager {
     this.#sources.clear()
     this.#labels.clear()
   }
+}
+
+/**
+ * Temporary `streamerKey` derived from a source id: the part after the first `:` for `twitch:`
+ * ids, else the whole id. Not a real cross-platform identity yet — a later task resolves one.
+ */
+function placeholderStreamerKey(id: string): string {
+  return id.startsWith('twitch:') ? id.slice(id.indexOf(':') + 1) : id
 }

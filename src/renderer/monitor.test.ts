@@ -28,7 +28,8 @@ const channel = (id: string, label: string): ChannelInfo => ({
   id,
   platform: 'youtube',
   label,
-  status: { state: 'live' }
+  status: { state: 'live' },
+  streamerKey: id
 })
 
 describe('mergeMonitorMessages', () => {

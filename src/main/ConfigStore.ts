@@ -16,7 +16,8 @@ import {
   type MonitoredUser,
   type MonitorView,
   type Platform,
-  type PrebanSettings
+  type PrebanSettings,
+  type RawLogSettings
 } from '@shared/model'
 import { MAX_PATTERN_LENGTH } from '@shared/patternMatch'
 import { channelId, isPlatform } from '@main/sources/channelId'
@@ -214,6 +215,15 @@ function sanitizeChatLog(value: unknown): ChatLogSettings | undefined {
   }
 }
 
+/** Raw-log settings from untrusted JSON, or undefined if not a valid object. */
+function sanitizeRawLog(value: unknown): RawLogSettings | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined
+  }
+  const input = value as Record<string, unknown>
+  return { enabled: input['enabled'] === true }
+}
+
 /** Keep only known setting keys with the right types, so a stale file or the renderer can't inject arbitrary config. */
 function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof value !== 'object' || value === null) {
@@ -306,6 +316,17 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   }
   if (typeof input['showConvertedAmounts'] === 'boolean') {
     settings.showConvertedAmounts = input['showConvertedAmounts']
+  }
+  if (
+    input['spelling'] === 'en-US' ||
+    input['spelling'] === 'en-GB' ||
+    input['spelling'] === 'off'
+  ) {
+    settings.spelling = input['spelling']
+  }
+  const rawLog = sanitizeRawLog(input['rawLog'])
+  if (rawLog !== undefined) {
+    settings.rawLog = rawLog
   }
   return settings
 }

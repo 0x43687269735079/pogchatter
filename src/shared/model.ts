@@ -61,6 +61,8 @@ export type Fragment =
       animated?: boolean
     }
   | { type: 'mention'; text: string; userId?: string }
+  /** A hyperlink — rendered as a clickable link (used for Twitch GIFs). */
+  | { type: 'link'; text: string; url: string }
 
 export type HighlightKind =
   | 'superchat'
@@ -262,6 +264,10 @@ export interface ChannelInfo {
   platform: Platform
   label: string
   status: SourceStatus
+  /** Normalised username identifying the streamer across platforms. */
+  streamerKey: string
+  /** YouTube creator channel id, when resolved. */
+  creatorId?: string
   /**
    * Why the signed-in user currently can't send here (e.g. "Subscribers-only mode"), when the
    * platform reports a chat restriction. Undefined means no known restriction. Only meaningful
@@ -489,6 +495,21 @@ export interface ChatLogSettings {
   directory: string
 }
 
+/**
+ * Raw wire-level connector payload logging, independent of the human-readable {@link ChatLogSettings}
+ * log — for troubleshooting a platform's response shape rather than reviewing chat.
+ */
+export interface RawLogSettings {
+  enabled: boolean
+}
+
+/** The raw log's current state, surfaced to Settings: whether it's on, its file size, and why it's off. */
+export interface RawLogStatus {
+  enabled: boolean
+  bytes: number
+  disabledReason?: string
+}
+
 /** UI theme (the two built-in TUI palettes). */
 export type ThemeName = 'ice' | 'midnight'
 
@@ -577,6 +598,10 @@ export interface AppSettings {
    * serves no chat history, so this uses the third-party recent-messages service; on by default.
    */
   twitchHistory: boolean
+  /** Spelling dialect for the composer's inline spellcheck; `'off'` disables it. */
+  spelling: 'en-US' | 'en-GB' | 'off'
+  /** Raw wire-level connector logging, for troubleshooting (see {@link RawLogSettings}). */
+  rawLog: RawLogSettings
 }
 
 /**
@@ -630,7 +655,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showConvertedAmounts: true,
   allowPlaintextCredentials: false,
   keepAwake: true,
-  twitchHistory: true
+  twitchHistory: true,
+  spelling: 'en-US',
+  rawLog: { enabled: false }
 }
 
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */
@@ -652,7 +679,7 @@ export interface SendReply {
 
 /** Result of bulk-adding a YouTube channel's live + waiting-room streams as columns. */
 export type AddStreamsResult =
-  | { ok: true; added: number; total: number }
+  | { ok: true; added: number; total: number; channelIds: string[] }
   | { ok: false; error: string }
 
 /** Result of starting a Twitch device-code login: a code to enter, or an error. */
@@ -776,6 +803,12 @@ export interface ChatApi {
   getSettings(): Promise<AppSettings>
   /** Update one or more settings; returns the merged, persisted result. */
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>
+  /** Open a URL in the system's default browser. */
+  openExternal(url: string): Promise<void>
+  /** The raw wire-level log's current state (on/off, file size, why it's off if disabled). */
+  rawLogStatus(): Promise<RawLogStatus>
+  /** Reveal the raw log directory in the OS file manager. */
+  openRawLogDir(): Promise<void>
 }
 
 /** Native window controls + platform, exposed to the renderer for the frameless window chrome. */

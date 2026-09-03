@@ -682,7 +682,11 @@ void app
       effectiveLogDir,
       rendererUrl: RENDERER_URL,
       appFilePath: APP_FILE_PATH,
-      sendDebug: SEND_DEBUG
+      sendDebug: SEND_DEBUG,
+      // TODO: replace with real implementations (external-link opening, raw wire-level logging).
+      openExternal: async () => {},
+      rawLogStatus: () => ({ enabled: false, bytes: 0 }),
+      openRawLogDir: async () => {}
     })
     registerWindowControls(RENDERER_URL)
     applyContentSecurityPolicy()
@@ -957,6 +961,7 @@ void app
         // adding a channel's streams next to its handle column doesn't duplicate the live chat.
         const open = sourceManager.youtubeVideoIds()
         let added = 0
+        const channelIds: string[] = []
         for (const stream of streams) {
           if (open.has(stream.videoId)) {
             continue
@@ -965,9 +970,10 @@ void app
           if (result?.ok === true) {
             added += 1
             open.add(stream.videoId)
+            channelIds.push(channelId('youtube', stream.videoId))
           }
         }
-        return { ok: true, added, total: streams.length }
+        return { ok: true, added, total: streams.length, channelIds }
       },
       async remove(channelId) {
         await sourceManager.remove(channelId)

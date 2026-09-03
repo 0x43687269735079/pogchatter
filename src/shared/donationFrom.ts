@@ -57,7 +57,12 @@ export function donationFrom(message: ChatMessage, channelId: string): Donation 
     timestamp: message.timestamp,
     value: valueOf(kind, highlight),
     text: textOf(message),
-    read: false
+    read: false,
+    // A later task resolves the real cross-platform streamer identity; this stands in until then.
+    streamerKey: channelId
+  }
+  if (highlight.headerText !== undefined) {
+    donation.headerText = highlight.headerText
   }
   if (message.deleted === true) {
     donation.removed = true
@@ -131,7 +136,8 @@ function tipDonation(message: ChatMessage, channelId: string): Donation | undefi
         ? { unit: 'money-unparsed', original: tip.amount }
         : { unit: 'money', amount: parsed.amount, currency: parsed.currency, original: tip.amount },
     text: tip.text,
-    read: false
+    read: false,
+    streamerKey: channelId
   }
   if (message.deleted === true) {
     donation.removed = true

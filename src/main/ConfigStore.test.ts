@@ -44,7 +44,9 @@ const DEFAULTS = {
   showConvertedAmounts: true,
   allowPlaintextCredentials: false,
   keepAwake: true,
-  twitchHistory: true
+  twitchHistory: true,
+  spelling: 'en-US',
+  rawLog: { enabled: false }
 }
 
 describe('ConfigStore settings', () => {
@@ -216,5 +218,25 @@ describe('ConfigStore donation settings', () => {
     // A garbage value must never reach the rate request — the previous good value stands.
     expect(store.setSettings({ baseCurrency: 'pounds' } as never).baseCurrency).toBe('GBP')
     expect(store.setSettings({ baseCurrency: 42 } as never).baseCurrency).toBe('GBP')
+  })
+})
+
+describe('ConfigStore spelling and raw-log settings', () => {
+  it('accepts a known dialect and rejects anything else, leaving the default in place', () => {
+    const store = new ConfigStore()
+    expect(store.setSettings({ spelling: 'fr' } as never).spelling).toBe('en-US')
+    expect(store.setSettings({ spelling: 'en-GB' }).spelling).toBe('en-GB')
+  })
+
+  it('sanitizes raw-log settings, coercing types', () => {
+    const result = new ConfigStore().setSettings({ rawLog: { enabled: 'yes' } } as never)
+    expect(result.rawLog).toEqual({ enabled: false })
+  })
+
+  it('defaults spelling and raw-log when the settings file omits them', () => {
+    writeFileSync(CONFIG, JSON.stringify({ channels: [], settings: {} }))
+    const settings = new ConfigStore().settings()
+    expect(settings.spelling).toBe('en-US')
+    expect(settings.rawLog).toEqual({ enabled: false })
   })
 })

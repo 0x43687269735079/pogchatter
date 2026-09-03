@@ -19,7 +19,8 @@ function donation(id: string, timestamp: number, read = false): Donation {
     timestamp,
     value: { unit: 'money', amount: 5, currency: 'GBP', original: '£5.00' },
     text: '',
-    read
+    read,
+    streamerKey: 'x'
   }
 }
 

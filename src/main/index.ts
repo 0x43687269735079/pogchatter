@@ -33,7 +33,8 @@ import { KeepAlive } from '@main/KeepAlive'
 import { migrateLegacyUserData } from '@main/migrateUserData'
 import { SourceManager } from '@main/SourceManager'
 import { AuthStore } from '@main/auth/AuthStore'
-import { EmoteEngine } from '@main/emotes/EmoteEngine'
+import { EmoteEngine, type IndexChange } from '@main/emotes/EmoteEngine'
+import { retokenizeAgainst } from '@main/retokenize'
 import { type ChannelService, registerIpc } from '@main/ipc'
 import { isLoopbackRendererUrl } from '@main/net/origin'
 import { proxiedFetch, proxyIgnoresCert, proxyUrl } from '@main/net/proxy'
@@ -583,6 +584,29 @@ void app
       batcher?.push(event)
       collectDonation(event)
     }
+    // A channel's 7TV set (or the shared library every column tokenizes against) often finishes
+    // loading after the first messages did, leaving an emote's name sitting in those rows as plain
+    // text. Re-run the affected columns' buffered messages and push the rows that changed straight
+    // to the renderer: `replace` swaps a rendered row in place, so it must not go through
+    // emitEvent (no second chat-log line, no donation re-collection, no debug line).
+    const retokenizeBuffered = (changed: IndexChange): void => {
+      for (const info of sourceManager.list()) {
+        const scope = sourceManager.emoteScope(info.id)
+        const affected =
+          changed === 'shared' ||
+          (scope?.platform === changed.platform && scope.channelId === changed.channelId)
+        if (!affected) {
+          continue
+        }
+        const updated = retokenizeAgainst(backlog.messagesFor(info.id), (fragments) =>
+          emotes.tokenize(fragments, info.platform, scope?.channelId)
+        )
+        for (const message of updated) {
+          backlog.replaceMessage(info.id, message)
+          batcher?.push({ kind: 'replace', channelId: info.id, message })
+        }
+      }
+    }
     const sourceManager = new SourceManager(
       (event) => {
         emitEvent(event)
@@ -743,6 +767,7 @@ void app
 
     const emotes = new EmoteEngine(undefined, () => config.settings().emoteProviders)
     emoteEngine = emotes
+    emotes.onIndexChanged(retokenizeBuffered)
     void emotes.loadGlobals().catch(() => {
       // Non-fatal: chat still works with native emotes only.
     })

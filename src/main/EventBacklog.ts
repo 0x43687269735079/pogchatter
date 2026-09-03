@@ -58,6 +58,28 @@ export class EventBacklog {
     return events
   }
 
+  /** The channel's currently buffered chat messages (from `message` events only), oldest first. */
+  messagesFor(channelId: string): ChatMessage[] {
+    return [...(this.#byChannel.get(channelId) ?? [])]
+  }
+
+  /**
+   * Swap the buffered message sharing `message.id` for `message`, so a later `snapshot()`
+   * reflects its new fragments. Returns `false` (leaving the ring untouched) when no such message
+   * is buffered for the channel.
+   */
+  replaceMessage(channelId: string, message: ChatMessage): boolean {
+    const list = this.#byChannel.get(channelId)
+    if (list?.some((m) => m.id === message.id) !== true) {
+      return false
+    }
+    this.#byChannel.set(
+      channelId,
+      list.map((m) => (m.id === message.id ? message : m))
+    )
+    return true
+  }
+
   /**
    * Apply a YouTube `replaceChatItemAction` to the retained ring, mirroring the renderer
    * ({@link applyEventsToMessages}): update a buffered id in place (a held card decided to

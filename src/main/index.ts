@@ -390,9 +390,16 @@ function applySpellingSetting(value: AppSettings['spelling']): void {
   applySpelling(session.defaultSession, value)
 }
 
-/** Record an event to the chat log when logging is on (every open chat is logged). */
+/**
+ * Record an event to the chat log when logging is on (every open chat is logged). Replacements are
+ * logged too, so a held message's approve/hide outcome reaches the log — the logger already knew
+ * how to write them; the funnel was filtering them out.
+ */
 function recordChatEvent(event: ChatEvent): void {
-  if (chatLogger === undefined || (event.kind !== 'message' && event.kind !== 'clear')) {
+  if (
+    chatLogger === undefined ||
+    (event.kind !== 'message' && event.kind !== 'replace' && event.kind !== 'clear')
+  ) {
     return
   }
   chatLogger.record(event)

@@ -12,7 +12,8 @@ import {
   FONT_SIZE_OPTIONS,
   type HighlightRule,
   type LinuxKeyringBackend,
-  type ModerationRule
+  type ModerationRule,
+  type RawLogStatus
 } from '@shared/model'
 
 const BUFFER_NOTE: Record<number, string> = {
@@ -21,6 +22,20 @@ const BUFFER_NOTE: Record<number, string> = {
   1000: 'large',
   2000: 'very large',
   5000: 'maximum'
+}
+
+/** Formats a byte count for the raw-log size line (`0 B`, `12.3 KB`, `4.1 MB`, `1.2 GB`). */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 /**
@@ -126,9 +141,12 @@ export function SettingsModal({
   onClose
 }: SettingsModalProps): ReactElement {
   const log = settings.chatLog
+  const isMac = window.win.platform === 'darwin'
   const [defaultDir, setDefaultDir] = useState('')
+  const [rawLogStatus, setRawLogStatus] = useState<RawLogStatus | undefined>(undefined)
   useEffect(() => {
     void window.chat.defaultLogDirectory().then(setDefaultDir)
+    void window.chat.rawLogStatus().then(setRawLogStatus)
   }, [])
 
   function updateLog(patch: Partial<ChatLogSettings>): void {
@@ -140,6 +158,11 @@ export function SettingsModal({
     if (dir !== undefined) {
       updateLog({ directory: dir })
     }
+  }
+
+  async function toggleRawLog(enabled: boolean): Promise<void> {
+    onChange({ rawLog: { enabled } })
+    setRawLogStatus(await window.chat.rawLogStatus())
   }
 
   return (
@@ -275,6 +298,37 @@ export function SettingsModal({
               onChange({ twitchHistory: event.target.checked })
             }}
           />
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
+            <span className="pc-setting-name">spelling</span>
+            <span className="pc-setting-desc">
+              {isMac
+                ? 'Spelling is managed by macOS (System Settings → Keyboard); only Off applies here.'
+                : 'Underlines misspellings in the composer; right-click a word for suggestions. ' +
+                  "On Windows and Linux the dictionary is downloaded once from Chromium's CDN."}
+            </span>
+          </span>
+          <select
+            className="pc-select"
+            value={settings.spelling}
+            aria-label="Spelling"
+            onChange={(event) => {
+              const value = event.target.value
+              onChange({
+                spelling: value === 'en-GB' ? 'en-GB' : value === 'off' ? 'off' : 'en-US'
+              })
+            }}
+          >
+            <option value="en-US" disabled={isMac}>
+              English (US)
+            </option>
+            <option value="en-GB" disabled={isMac}>
+              English (UK)
+            </option>
+            <option value="off">Off</option>
+          </select>
         </label>
 
         <label className="pc-setting">
@@ -492,6 +546,41 @@ export function SettingsModal({
             </ul>
           </div>
         ) : null}
+
+        <div className="pc-setting-group">
+          <div className="pc-setting-group-title">Advanced</div>
+          <label className="pc-setting">
+            <span className="pc-setting-meta">
+              <span className="pc-setting-name">raw message log</span>
+              <span className="pc-setting-desc">
+                Writes every raw Twitch IRC line and YouTube chat action, verbatim, to a{' '}
+                <code>raw</code> folder inside the chat-log folder — one file per platform per day.
+                This stores full message content.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="pc-switch"
+              checked={settings.rawLog.enabled}
+              onChange={(event) => void toggleRawLog(event.target.checked)}
+            />
+          </label>
+          <div className="pc-log-dir">
+            <span className="pc-log-path">
+              {rawLogStatus === undefined ? '…' : formatBytes(rawLogStatus.bytes)}
+            </span>
+            <button
+              type="button"
+              className="pc-mbtn"
+              onClick={() => void window.chat.openRawLogDir()}
+            >
+              show folder
+            </button>
+          </div>
+          {rawLogStatus?.disabledReason !== undefined ? (
+            <p className="pc-setting-note">Logging stopped: {rawLogStatus.disabledReason}</p>
+          ) : null}
+        </div>
       </div>
       <div className="mf">
         <button type="button" className="pc-mbtn" onClick={onClose}>

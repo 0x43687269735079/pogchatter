@@ -3,7 +3,12 @@ import type { ChannelInfo, Platform } from '@shared/model'
 import type { Donation, DonationKind, DonationTotals, KindTotal } from '@shared/donations'
 import { convert, countryName, flagFor, formatMoney } from '@shared/currencyFormat'
 import { donationTotals, excludedCount } from '@shared/donationTotals'
-import type { DonationsState } from '@renderer/donationsState'
+import {
+  type DonationsState,
+  type StreamerChip,
+  streamerChips,
+  visibleDonations
+} from '@renderer/donationsState'
 import { atName, clockHM } from '@renderer/format'
 
 interface DonationsPanelProps {
@@ -18,6 +23,9 @@ interface DonationsPanelProps {
   canMoveLeft: boolean
   canMoveRight: boolean
   inTab?: boolean
+  /** The streamer chip row's selection ('all' or a streamer key); App state, not part of DonationsState. */
+  selectedStreamer: string
+  onSelectStreamer: (key: string) => void
   onActivate: (id: string) => void
   /** Open the donation's own chat column (inactive once its message has left the buffer). */
   onJump: (channelId: string) => void
@@ -26,6 +34,9 @@ interface DonationsPanelProps {
   onMove: (id: string, direction: -1 | 1) => void
   onResize: (id: string, width: number) => void
 }
+
+/** Chips beyond this count move into the overflow `<select>`, so the row can't grow unbounded. */
+const MAX_STREAMER_CHIPS = 5
 
 /**
  * Every paid event from both platforms in one feed, with read tracking.
@@ -44,6 +55,8 @@ export function DonationsPanel({
   canMoveLeft,
   canMoveRight,
   inTab = false,
+  selectedStreamer,
+  onSelectStreamer,
   onActivate,
   onJump,
   onMarkRead,
@@ -52,12 +65,23 @@ export function DonationsPanel({
   onResize
 }: DonationsPanelProps): ReactElement {
   const { donations, rates, baseCurrency, sessionStartedAt } = state
+  const chips = useMemo(() => streamerChips(donations, channels), [donations, channels])
+  // A selection whose streamer no longer has any donations (its chat closed mid-session, say)
+  // reverts to 'all' rather than silently scoping to an empty feed.
+  const selected =
+    selectedStreamer === 'all' || chips.some((chip) => chip.key === selectedStreamer)
+      ? selectedStreamer
+      : 'all'
+  const scoped = useMemo(() => visibleDonations(donations, selected), [donations, selected])
   const totals = useMemo(
-    () => donationTotals(donations, rates, baseCurrency, sessionStartedAt),
-    [donations, rates, baseCurrency, sessionStartedAt]
+    () => donationTotals(scoped, rates, baseCurrency, sessionStartedAt),
+    [scoped, rates, baseCurrency, sessionStartedAt]
   )
   const unread = donations.filter((donation) => !donation.read).length
   const excluded = excludedCount(totals.youtube) + excludedCount(totals.twitch)
+  const visibleChips =
+    chips.length > MAX_STREAMER_CHIPS + 1 ? chips.slice(0, MAX_STREAMER_CHIPS) : chips
+  const overflowChips = chips.length > MAX_STREAMER_CHIPS + 1 ? chips.slice(MAX_STREAMER_CHIPS) : []
 
   return (
     <section
@@ -106,6 +130,14 @@ export function DonationsPanel({
           )}
         </span>
       </header>
+      {chips.length > 1 ? (
+        <StreamerChips
+          chips={visibleChips}
+          overflow={overflowChips}
+          selected={selected}
+          onSelect={onSelectStreamer}
+        />
+      ) : null}
       {rates?.stale === true ? (
         <div className="pc-don-note">
           exchange rates could not be refreshed — converted amounts are from{' '}
@@ -119,13 +151,13 @@ export function DonationsPanel({
         </div>
       ) : null}
       <div className="pc-stream">
-        {donations.length === 0 ? (
+        {scoped.length === 0 ? (
           <div className="pc-empty">
             no donations yet — Super Chats, members, cheers and subs land here
           </div>
         ) : (
           <Feed
-            donations={donations}
+            donations={scoped}
             channels={channels}
             rates={state.rates}
             base={baseCurrency}
@@ -206,6 +238,72 @@ function Totals({ totals, base }: { totals: DonationTotals; base: string }): Rea
         </span>
       ))}
     </span>
+  )
+}
+
+/**
+ * The streamer selector: an "all" chip plus one chip per streamer represented in the feed, with
+ * any beyond the first few folded into a `<select>` so the row can't grow past the column's width.
+ * The selected chip is marked with `aria-pressed` and distinguished visually by weight/outline, not
+ * colour alone — same rule the read/unread state already follows below.
+ */
+function StreamerChips({
+  chips,
+  overflow,
+  selected,
+  onSelect
+}: {
+  chips: StreamerChip[]
+  overflow: StreamerChip[]
+  selected: string
+  onSelect: (key: string) => void
+}): ReactElement {
+  const overflowSelected = overflow.some((chip) => chip.key === selected)
+  return (
+    <div className="pc-don-chips">
+      <button
+        type="button"
+        className="pc-chip"
+        aria-pressed={selected === 'all'}
+        onClick={() => {
+          onSelect('all')
+        }}
+      >
+        all
+      </button>
+      {chips.map((chip) => (
+        <button
+          key={chip.key}
+          type="button"
+          className="pc-chip"
+          aria-pressed={selected === chip.key}
+          onClick={() => {
+            onSelect(chip.key)
+          }}
+        >
+          {chip.label} · {chip.unread}
+        </button>
+      ))}
+      {overflow.length > 0 ? (
+        <select
+          className="pc-select"
+          aria-label="More streamers"
+          value={overflowSelected ? selected : ''}
+          onChange={(event) => {
+            if (event.target.value !== '') {
+              onSelect(event.target.value)
+            }
+          }}
+        >
+          <option value="">more…</option>
+          {overflow.map((chip) => (
+            <option key={chip.key} value={chip.key}>
+              {chip.label} · {chip.unread}
+            </option>
+          ))}
+        </select>
+      ) : null}
+    </div>
   )
 }
 

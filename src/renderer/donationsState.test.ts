@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatEvent } from '@shared/model'
+import type { ChannelInfo, ChatEvent } from '@shared/model'
 import type { Donation } from '@shared/donations'
 import {
   applyDonationEvents,
   applyDonationsSnapshot,
   type DonationsState,
   EMPTY_DONATIONS,
-  unreadCount
+  streamerChips,
+  unreadCount,
+  visibleDonations
 } from '@renderer/donationsState'
 
-function donation(id: string, timestamp: number, read = false): Donation {
+function donation(id: string, timestamp: number, read = false, streamerKey = 'x'): Donation {
   return {
     id,
     channelId: 'yt:vid',
@@ -20,7 +22,18 @@ function donation(id: string, timestamp: number, read = false): Donation {
     value: { unit: 'money', amount: 5, currency: 'GBP', original: '£5.00' },
     text: '',
     read,
-    streamerKey: 'x'
+    streamerKey
+  }
+}
+
+function channel(overrides: Partial<ChannelInfo>): ChannelInfo {
+  return {
+    id: 'youtube:@a',
+    platform: 'youtube',
+    label: 'a',
+    status: { state: 'connected' },
+    streamerKey: 'a',
+    ...overrides
   }
 }
 
@@ -179,5 +192,51 @@ describe('donations state follows the base currency and removals', () => {
     let state = applyDonationEvents(EMPTY_DONATIONS, [added(donation('a', 1_000))])
     state = applyDonationEvents(state, [{ kind: 'donationsRemoved', ids: ['a'] }])
     expect(state.donations[0]?.removed).toBe(true)
+  })
+
+  it('never carries a selectedStreamer field — that is App state, not part of the store', () => {
+    const merged = applyDonationsSnapshot(EMPTY_DONATIONS, {
+      donations: [],
+      rates: undefined,
+      rateSource: undefined,
+      baseCurrency: 'GBP',
+      sessionStartedAt: 1
+    })
+    expect(merged).not.toHaveProperty('selectedStreamer')
+  })
+})
+
+describe('streamerChips', () => {
+  it('builds one chip per streamer, newest donation first, labelled from an open channel', () => {
+    const donations = [
+      donation('a1', 2_000, false, 'a'),
+      donation('b1', 1_000, true, 'b'),
+      donation('a2', 500, false, 'a')
+    ]
+    const chips = streamerChips(donations, [channel({ streamerKey: 'a', label: '#a' })])
+    expect(chips).toEqual([
+      { key: 'a', label: '#a', unread: 2 },
+      { key: 'b', label: 'b', unread: 0 }
+    ])
+  })
+
+  it('returns an empty list for no donations', () => {
+    expect(streamerChips([], [])).toEqual([])
+  })
+})
+
+describe('visibleDonations', () => {
+  const list = [donation('a1', 2_000, false, 'a'), donation('b1', 1_000, false, 'b')]
+
+  it("returns the same reference for 'all'", () => {
+    expect(visibleDonations(list, 'all')).toBe(list)
+  })
+
+  it('filters to just the selected streamer', () => {
+    expect(visibleDonations(list, 'b').map((d) => d.id)).toEqual(['b1'])
+  })
+
+  it('returns an empty list when nothing matches the selection', () => {
+    expect(visibleDonations(list, 'nope')).toEqual([])
   })
 })

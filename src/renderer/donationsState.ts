@@ -1,4 +1,4 @@
-import type { ChatEvent } from '@shared/model'
+import type { ChannelInfo, ChatEvent } from '@shared/model'
 import { type Donation, DONATION_RETENTION, type RateTable } from '@shared/donations'
 
 /** The donations panel's view state: a projection of the store the main process owns. */
@@ -130,4 +130,43 @@ function applyRead(state: DonationsState, ids: string[], read: boolean): Donatio
 /** How many donations still need acknowledging — the tab's badge. */
 export function unreadCount(state: DonationsState): number {
   return state.donations.reduce((total, donation) => total + (donation.read ? 0 : 1), 0)
+}
+
+/** One streamer chip for the donations panel: its display label and unread count. */
+export interface StreamerChip {
+  key: string
+  label: string
+  unread: number
+}
+
+/**
+ * One chip per distinct streamer represented in `donations`, newest donation first.
+ *
+ * The label prefers an open channel's own label (a chat the user is actually watching) over the
+ * bare key, so the chip reads like the rest of the UI; a streamer with no open channel (e.g. a
+ * chat that's since been closed) falls back to the key itself rather than disappearing.
+ */
+export function streamerChips(donations: Donation[], channels: ChannelInfo[]): StreamerChip[] {
+  const newest = new Map<string, number>()
+  const unread = new Map<string, number>()
+  for (const donation of donations) {
+    const key = donation.streamerKey
+    newest.set(key, Math.max(newest.get(key) ?? -Infinity, donation.timestamp))
+    unread.set(key, (unread.get(key) ?? 0) + (donation.read ? 0 : 1))
+  }
+  return [...newest.keys()]
+    .sort((a, b) => (newest.get(b) ?? 0) - (newest.get(a) ?? 0))
+    .map((key) => ({
+      key,
+      label: channels.find((channel) => channel.streamerKey === key)?.label ?? key,
+      unread: unread.get(key) ?? 0
+    }))
+}
+
+/** The donations shown for a chip selection: everything for `'all'`, else just that streamer's. */
+export function visibleDonations(donations: Donation[], selected: string): Donation[] {
+  if (selected === 'all') {
+    return donations
+  }
+  return donations.filter((donation) => donation.streamerKey === selected)
 }

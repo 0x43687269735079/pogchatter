@@ -2488,6 +2488,36 @@ body,
   color: var(--warn);
   border-bottom: 1px solid var(--rule);
 }
+/* Streamer chip row: which of the session's streamers the totals/feed are scoped to. */
+.pc-don-chips {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 5px var(--gut);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-don-chips .pc-chip {
+  height: auto;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.pc-don-chips .pc-chip:hover {
+  border-color: var(--ruleStrong);
+  color: var(--fg);
+}
+/* The selected chip is marked by weight and outline, never colour alone. */
+.pc-don-chips .pc-chip[aria-pressed='true'] {
+  color: var(--fg);
+  font-weight: 700;
+  border-color: var(--accent);
+}
+.pc-don-chips .pc-chip:focus-visible,
+.pc-don-chips .pc-select:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
 .pc-don-foot {
   flex: 0 0 auto;
   padding: 4px var(--gut);

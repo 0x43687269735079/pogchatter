@@ -116,6 +116,9 @@ export function App(): ReactElement {
   >(undefined)
   // Donations are owned by main and projected here; the tab's badge derives from this list.
   const [donations, setDonations] = useState<DonationsState>(EMPTY_DONATIONS)
+  // The donations panel's streamer-chip selection ('all' or a streamer key); a view concern, not
+  // part of the projected DonationsState.
+  const [selectedStreamer, setSelectedStreamer] = useState<string>('all')
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
@@ -911,6 +914,8 @@ export function App(): ReactElement {
           canMoveLeft={canMoveLeft}
           canMoveRight={canMoveRight}
           inTab={inTab}
+          selectedStreamer={selectedStreamer}
+          onSelectStreamer={setSelectedStreamer}
           onActivate={setActiveId}
           onJump={jumpToChannel}
           onMarkRead={(ids, read) => {

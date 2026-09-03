@@ -3,20 +3,26 @@ import { channelBaseUrl } from '@main/sources/youtube/urls'
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
 
+/** Maximum concurrent `getBasicInfo` lookups when resolving waiting entries' scheduled starts. */
+const SCHEDULED_START_LOOKUP_CONCURRENCY = 4
+
 /** A live or waiting-room (scheduled/upcoming) stream discovered on a channel's Live tab. */
 export interface DiscoveredStream {
   videoId: string
   title: string
   state: 'live' | 'waiting'
+  scheduledStart?: number
 }
 
 /**
  * List a YouTube channel's live and waiting-room streams by reading its "Live" tab. The tab is built
  * from `lockupViewModel` nodes (youtubei.js's `.videos` getter doesn't surface them), where a
  * thumbnail badge marks each item as LIVE, Upcoming, or a past VOD (a duration) — we keep the first
- * two. Returns [] only when the channel genuinely has nothing to add (non-YouTube target, no
- * streams tab); a network/parse failure throws so the caller can surface it instead of reporting
- * a successful no-op.
+ * two. For each waiting entry, best-effort resolves a `scheduledStart` via `reader.getBasicInfo`
+ * (see {@link resolveScheduledStarts}); the returned array is in discovery order, unsorted — call
+ * {@link sortForOpening} to order it. Returns [] only when the channel genuinely has nothing to add
+ * (non-YouTube target, no streams tab); a network/parse failure of the channel/tab itself throws so
+ * the caller can surface it instead of reporting a successful no-op.
  */
 export async function discoverChannelStreams(
   reader: Innertube,
@@ -36,7 +42,79 @@ export async function discoverChannelStreams(
     return []
   }
   const streams = await channel.getLiveStreams()
-  return collectLiveAndUpcoming(lockupsOf(streams))
+  const discovered = collectLiveAndUpcoming(lockupsOf(streams))
+  await resolveScheduledStarts(reader, discovered)
+  return discovered
+}
+
+/**
+ * Orders discovered streams for opening: live streams first (in discovery order), then waiting
+ * streams with a known `scheduledStart` soonest-first, then waiting streams with no known start
+ * (in discovery order). Pure — returns a new array, leaving `streams` untouched.
+ */
+export function sortForOpening(streams: DiscoveredStream[]): DiscoveredStream[] {
+  const live = streams.filter((stream) => stream.state === 'live')
+  const scheduled = streams.filter(
+    (stream) => stream.state === 'waiting' && stream.scheduledStart !== undefined
+  )
+  const unscheduled = streams.filter(
+    (stream) => stream.state === 'waiting' && stream.scheduledStart === undefined
+  )
+  scheduled.sort((a, b) => (a.scheduledStart ?? 0) - (b.scheduledStart ?? 0))
+  return [...live, ...scheduled, ...unscheduled]
+}
+
+/**
+ * Best-effort resolution of `scheduledStart` for each `waiting` entry, mutating the entries in
+ * place. Looks up at most `SCHEDULED_START_LOOKUP_CONCURRENCY` videos at once via
+ * `reader.getBasicInfo`; a lookup that fails simply leaves that entry without a `scheduledStart`
+ * rather than failing the whole discovery.
+ */
+async function resolveScheduledStarts(
+  reader: Innertube,
+  streams: DiscoveredStream[]
+): Promise<void> {
+  const waiting = streams.filter((stream) => stream.state === 'waiting')
+  await runWithConcurrencyLimit(waiting, SCHEDULED_START_LOOKUP_CONCURRENCY, async (stream) => {
+    const start = await lookupScheduledStart(reader, stream.videoId)
+    if (start !== undefined) {
+      stream.scheduledStart = start
+    }
+  })
+}
+
+/** Resolves a single video's scheduled start time, or `undefined` if the lookup fails. */
+async function lookupScheduledStart(
+  reader: Innertube,
+  videoId: string
+): Promise<number | undefined> {
+  try {
+    const info = await reader.getBasicInfo(videoId)
+    return info.basic_info.start_timestamp?.getTime()
+  } catch {
+    return undefined
+  }
+}
+
+/** Runs `task` over `items` with at most `limit` calls in flight at once. */
+async function runWithConcurrencyLimit<T>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0
+  async function worker(): Promise<void> {
+    for (;;) {
+      const index = next++
+      if (index >= items.length) {
+        return
+      }
+      const item = items[index] as T
+      await task(item)
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  await Promise.all(workers)
 }
 
 /** The Live tab's video lockups, read from the feed's parse memo (keyed by node type name). */

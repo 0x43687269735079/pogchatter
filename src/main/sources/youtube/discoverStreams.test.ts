@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Innertube } from 'youtubei.js'
+import type { DiscoveredStream } from '@main/sources/youtube/discoverStreams'
 import {
   collectLiveAndUpcoming,
-  discoverChannelStreams
+  discoverChannelStreams,
+  sortForOpening
 } from '@main/sources/youtube/discoverStreams'
 
 /** A streams-tab video lockup with the given thumbnail badge. */
@@ -65,6 +67,8 @@ function fakeReader(over: {
   browseId?: unknown
   hasStreams?: boolean
   lockups?: readonly unknown[]
+  getBasicInfoCalls?: string[]
+  basicInfo?: (videoId: string) => Promise<{ basic_info: { start_timestamp?: Date } }>
 }): Innertube {
   return {
     resolveURL: () => Promise.resolve({ payload: { browseId: over.browseId } }),
@@ -73,7 +77,11 @@ function fakeReader(over: {
         has_live_streams: over.hasStreams ?? true,
         getLiveStreams: () =>
           Promise.resolve({ memo: new Map([['LockupView', over.lockups ?? []]]) })
-      })
+      }),
+    getBasicInfo: (videoId: string) => {
+      over.getBasicInfoCalls?.push(videoId)
+      return over.basicInfo?.(videoId) ?? Promise.resolve({ basic_info: {} })
+    }
   } as unknown as Innertube
 }
 
@@ -114,5 +122,106 @@ describe('discoverChannelStreams', () => {
       getChannel: () => Promise.reject(new Error('429 rate limited'))
     } as unknown as Innertube
     await expect(discoverChannelStreams(reader, '@lofigirl')).rejects.toThrow('429 rate limited')
+  })
+
+  it('resolves scheduledStart for waiting entries via getBasicInfo', async () => {
+    const start = new Date('2026-09-10T18:00:00Z')
+    const reader = fakeReader({
+      browseId: 'UC123',
+      lockups: [live, upcoming],
+      basicInfo: (videoId) =>
+        videoId === 'bbbbbbbbbbb'
+          ? Promise.resolve({ basic_info: { start_timestamp: start } })
+          : Promise.resolve({ basic_info: {} })
+    })
+    const streams = await discoverChannelStreams(reader, '@lofigirl')
+    expect(streams).toEqual([
+      { videoId: 'aaaaaaaaaaa', title: 'Live now', state: 'live' },
+      {
+        videoId: 'bbbbbbbbbbb',
+        title: 'Waiting room',
+        state: 'waiting',
+        scheduledStart: start.getTime()
+      }
+    ])
+  })
+
+  it('leaves scheduledStart unset when a getBasicInfo lookup rejects, without failing the others', async () => {
+    const failing = lockup('ccccccccccd', 'Waiting, unknown time', { text: 'Upcoming' })
+    const start = new Date('2026-09-10T18:00:00Z')
+    const reader = fakeReader({
+      browseId: 'UC123',
+      lockups: [upcoming, failing],
+      basicInfo: (videoId) =>
+        videoId === 'bbbbbbbbbbb'
+          ? Promise.resolve({ basic_info: { start_timestamp: start } })
+          : Promise.reject(new Error('boom'))
+    })
+    const streams = await discoverChannelStreams(reader, '@lofigirl')
+    expect(streams).toEqual([
+      {
+        videoId: 'bbbbbbbbbbb',
+        title: 'Waiting room',
+        state: 'waiting',
+        scheduledStart: start.getTime()
+      },
+      { videoId: 'ccccccccccd', title: 'Waiting, unknown time', state: 'waiting' }
+    ])
+  })
+
+  it('calls getBasicInfo only for waiting entries, never for live ones', async () => {
+    const calls: string[] = []
+    const reader = fakeReader({
+      browseId: 'UC123',
+      lockups: [live, upcoming],
+      getBasicInfoCalls: calls
+    })
+    await discoverChannelStreams(reader, '@lofigirl')
+    expect(calls).toEqual(['bbbbbbbbbbb'])
+  })
+})
+
+describe('sortForOpening', () => {
+  const liveEntry: DiscoveredStream = { videoId: 'aaaaaaaaaaa', title: 'Live', state: 'live' }
+  const waiting2000: DiscoveredStream = {
+    videoId: 'ccccccccccc',
+    title: '8pm start',
+    state: 'waiting',
+    scheduledStart: new Date('2026-09-10T20:00:00Z').getTime()
+  }
+  const waiting1800: DiscoveredStream = {
+    videoId: 'bbbbbbbbbbb',
+    title: '6pm start',
+    state: 'waiting',
+    scheduledStart: new Date('2026-09-10T18:00:00Z').getTime()
+  }
+  const waitingNone: DiscoveredStream = {
+    videoId: 'ddddddddddd',
+    title: 'No known start',
+    state: 'waiting'
+  }
+
+  it('orders live first, then scheduled waiting entries soonest-first, then unscheduled ones', () => {
+    const sorted = sortForOpening([waiting2000, liveEntry, waiting1800, waitingNone])
+    expect(sorted.map((s) => s.videoId)).toEqual([
+      liveEntry.videoId,
+      waiting1800.videoId,
+      waiting2000.videoId,
+      waitingNone.videoId
+    ])
+  })
+
+  it('keeps live entries in their discovery order', () => {
+    const liveA: DiscoveredStream = { videoId: 'eeeeeeeeeee', title: 'A', state: 'live' }
+    const liveB: DiscoveredStream = { videoId: 'fffffffffff', title: 'B', state: 'live' }
+    const sorted = sortForOpening([liveB, liveA])
+    expect(sorted.map((s) => s.videoId)).toEqual(['fffffffffff', 'eeeeeeeeeee'])
+  })
+
+  it('returns a new array without mutating the input', () => {
+    const input = [waiting2000, liveEntry]
+    const sorted = sortForOpening(input)
+    expect(sorted).not.toBe(input)
+    expect(input.map((s) => s.videoId)).toEqual(['ccccccccccc', 'aaaaaaaaaaa'])
   })
 })

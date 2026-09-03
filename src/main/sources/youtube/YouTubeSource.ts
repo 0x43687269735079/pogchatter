@@ -109,8 +109,7 @@ export class YouTubeSource extends BaseChatSource {
     fetchFn: typeof fetch,
     emotes: EmoteEngine,
     auth: YouTubeAuthManager,
-    persistedStreamerKey?: string,
-    rawSink?: (action: unknown) => void
+    options?: { persistedStreamerKey?: string; rawSink?: (action: unknown) => void }
   ) {
     super()
     this.#target = normalizeTarget('youtube', target)
@@ -119,8 +118,8 @@ export class YouTubeSource extends BaseChatSource {
     this.#emotes = emotes
     this.#auth = auth
     this.#fixedVideo = VIDEO_ID_RE.test(this.#target)
-    this.#persistedStreamerKey = persistedStreamerKey
-    this.#rawSink = rawSink
+    this.#persistedStreamerKey = options?.persistedStreamerKey
+    this.#rawSink = options?.rawSink
     this.id = channelId('youtube', target)
   }
 

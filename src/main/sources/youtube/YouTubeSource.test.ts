@@ -1116,7 +1116,7 @@ describe('YouTubeSource creator identity', () => {
       idleFetch,
       emotes,
       auth,
-      'other'
+      { persistedStreamerKey: 'other' }
     )
 
     await source.connect()
@@ -1164,8 +1164,7 @@ describe('YouTubeSource raw action sink', () => {
       idleFetch,
       emotes,
       auth,
-      undefined,
-      rawSink
+      { rawSink }
     )
 
     await source.connect()

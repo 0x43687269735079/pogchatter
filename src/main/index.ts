@@ -49,7 +49,8 @@ import {
 } from '@main/sources/channelId'
 import {
   type DiscoveredStream,
-  discoverChannelStreams
+  discoverChannelStreams,
+  sortForOpening
 } from '@main/sources/youtube/discoverStreams'
 import { TwitchSource } from '@main/sources/twitch/TwitchSource'
 import { TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
@@ -286,9 +287,13 @@ function collectDonation(event: ChatEvent): void {
   if (event.kind !== 'message') {
     return
   }
-  // Derived from the channel id until the source's own resolved identity is wired through here.
+  // The source's resolved cross-platform identity when the source is still registered (it always
+  // is, on the same event that carries the message); a legacy channel-id-derived key otherwise.
+  const streamerKey = manager?.streamerKeyOf(event.channelId) ?? legacyStreamerKey(event.channelId)
+  const creatorId = manager?.creatorIdOf(event.channelId)
   const donation = donationStore.record(event.message, event.channelId, {
-    streamerKey: legacyStreamerKey(event.channelId)
+    streamerKey,
+    ...(creatorId !== undefined ? { creatorId } : {})
   })
   if (donation === undefined) {
     return
@@ -625,9 +630,11 @@ void app
       (scope) => {
         emoteEngine?.releaseChannel(scope.platform, scope.channelId)
       },
-      // A source's cross-platform identity resolved (YouTube's creator channel). Not yet wired to
-      // persist it back onto the channel's config entry — a later task does that.
-      () => {}
+      // A source's cross-platform identity resolved (YouTube's creator channel): persist it onto
+      // the channel's config entry so it survives restarts. `configStore` is assigned later in this
+      // closure (after ConfigStore is constructed), so it's read fresh on each call via the
+      // module-level binding rather than captured now.
+      (sourceId, identity) => configStore?.updateChannel(sourceId, identity)
     )
     manager = sourceManager
     // Detect OS sleep/resume (event + wall-clock watchdog) and reconnect both connectors immediately,
@@ -907,9 +914,22 @@ void app
 
     const makeSource = (platform: Platform, target: string): ChatSource => {
       if (platform === 'youtube') {
+        // A previously-resolved streamer key persisted onto this channel's config entry (e.g. from
+        // an earlier run's creator resolution), so donations attribute correctly from the first
+        // message instead of only after this run re-resolves the creator.
+        const persistedStreamerKey = config
+          .channels()
+          .find((c) => c.id === channelId(platform, target))?.streamerKey
         // Pass the reader factory, not an awaited instance: YouTubeSource acquires it
         // inside connect(), so creating a YouTube channel never blocks add()/restore.
-        return new YouTubeSource(target, getYouTubeReader, pageFetch, emotes, ytAuth)
+        return new YouTubeSource(
+          target,
+          getYouTubeReader,
+          pageFetch,
+          emotes,
+          ytAuth,
+          persistedStreamerKey !== undefined ? { persistedStreamerKey } : undefined
+        )
       }
       return new TwitchSource(
         target,
@@ -994,7 +1014,8 @@ void app
         const open = sourceManager.youtubeVideoIds()
         let added = 0
         const channelIds: string[] = []
-        for (const stream of streams) {
+        const ordered = sortForOpening(streams)
+        for (const stream of ordered) {
           if (open.has(stream.videoId)) {
             continue
           }

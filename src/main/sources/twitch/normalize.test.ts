@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage as TwitchChatMessage } from '@twurple/chat'
+import { buildEmoteImageUrl, type ChatMessage as TwitchChatMessage } from '@twurple/chat'
 import {
   decodeTwitchMenuToken,
   encodeTwitchMenuToken,
@@ -10,11 +10,15 @@ import {
 } from '@main/sources/twitch/normalize'
 
 /** A minimal twurple ChatMessage covering the fields `normalizeTwitchMessage` reads. */
-function ircMessage(author: { userId?: string; userName?: string } = {}): TwitchChatMessage {
+function ircMessage(
+  author: { userId?: string; userName?: string } = {},
+  tags: Map<string, string> = new Map()
+): TwitchChatMessage {
   return {
     id: 'msg-1',
     date: new Date(1_700_000_000_000),
     emoteOffsets: new Map(),
+    tags,
     bits: 0,
     isFirst: false,
     isHighlight: false,
@@ -283,5 +287,71 @@ describe('normalizeTwitchMessage cheermotes', () => {
   it('never cheer-parses a message that carries no bits', () => {
     const message = normalizeTwitchMessage('s', 'Cheer100 hi', ircMessage(), { cheermotes })
     expect(message.fragments).toEqual([{ type: 'text', text: 'Cheer100 hi' }])
+  })
+})
+
+describe('normalizeTwitchMessage gifs tag', () => {
+  it("splices Twitch's documented GIF example into a single link fragment", () => {
+    const text = '[Y A Y Yes GIF by Djemilah Birnie]'
+    const url =
+      'https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=abc&ep=v1_gifs_trending&rid=giphy.gif&ct=g'
+    const tags = new Map([['gifs', `0-33|joSNxeswxuc74Juo8X|${url}`]])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'link', text, url }])
+  })
+
+  it('leaves the text unchanged when the range is not numeric', () => {
+    const text = 'hello world'
+    const tags = new Map([['gifs', 'abc|x|https://a']])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'text', text }])
+  })
+
+  it('drops a non-https GIF url, leaving the text unchanged', () => {
+    const text = 'hello'
+    const tags = new Map([['gifs', '0-3|x|http://a']])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'text', text }])
+  })
+
+  it('keeps the full URL when it contains pipes', () => {
+    const text = 'gif here'
+    const url = 'https://cdn/x?a=1|b=2'
+    const tags = new Map([['gifs', `0-2|abc|${url}`]])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([
+      { type: 'link', text: 'gif', url },
+      { type: 'text', text: ' here' }
+    ])
+  })
+
+  it('keeps a preceding emote fragment alongside the GIF link', () => {
+    const text = 'Kappa hello'
+    const tags = new Map([['gifs', '6-10|abc|https://cdn/g.gif']])
+    const msg = ircMessage({}, tags)
+    ;(msg as { emoteOffsets: Map<string, string[]> }).emoteOffsets = new Map([['e1', ['0-4']]])
+    const message = normalizeTwitchMessage('s', text, msg)
+    expect(message.fragments).toEqual([
+      {
+        type: 'emote',
+        code: 'Kappa',
+        url: buildEmoteImageUrl('e1', { size: '2.0', backgroundType: 'dark' }),
+        provider: 'twitch'
+      },
+      { type: 'text', text: ' ' },
+      { type: 'link', text: 'hello', url: 'https://cdn/g.gif' }
+    ])
+  })
+
+  it('ignores an entry whose range runs past the end of the text', () => {
+    const text = 'hi'
+    const tags = new Map([['gifs', '0-5|abc|https://cdn/g.gif']])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'text', text }])
+  })
+
+  it('leaves a message with no gifs tag unchanged', () => {
+    const message = normalizeTwitchMessage('s', 'plain text', ircMessage())
+    expect(message.fragments).toEqual([{ type: 'text', text: 'plain text' }])
   })
 })

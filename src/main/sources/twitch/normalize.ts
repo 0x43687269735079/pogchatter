@@ -5,7 +5,8 @@ import {
   type ChatMessage as TwitchChatMessage,
   type ChatSubGiftInfo,
   type ChatSubInfo,
-  type ChatUser
+  type ChatUser,
+  type ParsedMessageTextPart
 } from '@twurple/chat'
 import type { Author, Badge, ChatMessage, Fragment, Highlight, ReplyContext } from '@shared/model'
 
@@ -18,6 +19,101 @@ export interface TwitchUserNotice {
   date: Date
   userInfo: ChatUser
   emoteOffsets: Map<string, string[]>
+  tags: Map<string, string>
+}
+
+/** One parsed `gifs` tag entry: a GIF's code-point range into the message text, and its URL. */
+interface GifTagEntry {
+  start: number
+  end: number
+  id: string
+  url: string
+}
+
+const GIF_ENTRY_BOUND = /^\d+$/
+
+/** Parse one `<start>-<end>|<gif_id>|<url>` entry, or `undefined` if it is malformed. */
+function parseGifEntry(entry: string): GifTagEntry | undefined {
+  const firstPipe = entry.indexOf('|')
+  const secondPipe = firstPipe === -1 ? -1 : entry.indexOf('|', firstPipe + 1)
+  if (firstPipe === -1 || secondPipe === -1) {
+    return undefined
+  }
+  const range = entry.slice(0, firstPipe)
+  const id = entry.slice(firstPipe + 1, secondPipe)
+  // The URL is everything after the second `|` — it may itself contain `|`, so it is never split on.
+  const url = entry.slice(secondPipe + 1)
+  const dash = range.indexOf('-')
+  if (dash === -1 || !url.startsWith('https://')) {
+    return undefined
+  }
+  const startText = range.slice(0, dash)
+  const endText = range.slice(dash + 1)
+  if (!GIF_ENTRY_BOUND.test(startText) || !GIF_ENTRY_BOUND.test(endText)) {
+    return undefined
+  }
+  const start = Number(startText)
+  const end = Number(endText)
+  return start <= end ? { start, end, id, url } : undefined
+}
+
+/**
+ * Parse the IRC `gifs` tag: a comma-separated list of `<start>-<end>|<gif_id>|<url>` entries with
+ * zero-based code-point positions into the message text (the same convention as the `emotes`
+ * tag). Malformed entries are dropped; the result is sorted by start with any entry overlapping
+ * an earlier kept one dropped too, so it is safe to splice in without further overlap checks.
+ */
+export function parseGifTag(value: string | undefined): GifTagEntry[] {
+  if (value === undefined || value === '') {
+    return []
+  }
+  const candidates = value
+    .split(',')
+    .map(parseGifEntry)
+    .filter((entry): entry is GifTagEntry => entry !== undefined)
+    .sort((a, b) => a.start - b.start)
+  const kept: GifTagEntry[] = []
+  for (const entry of candidates) {
+    const last = kept[kept.length - 1]
+    if (last === undefined || entry.start > last.end) {
+      kept.push(entry)
+    }
+  }
+  return kept
+}
+
+/**
+ * Split a text part around the GIF ranges that land fully inside it, into text / link / text.
+ * A range only partly inside the part (spanning into an adjacent emote or text part) is ignored,
+ * as if the message carried no GIF metadata for it.
+ */
+function spliceGifs(
+  part: ParsedMessageTextPart,
+  ranges: GifTagEntry[],
+  codePoints: string[]
+): Fragment[] {
+  const partEnd = part.position + part.length
+  const covering = ranges.filter((range) => range.start >= part.position && range.end < partEnd)
+  if (covering.length === 0) {
+    return [{ type: 'text', text: part.text }]
+  }
+  const fragments: Fragment[] = []
+  let cursor = part.position
+  for (const range of covering) {
+    if (range.start > cursor) {
+      fragments.push({ type: 'text', text: codePoints.slice(cursor, range.start).join('') })
+    }
+    fragments.push({
+      type: 'link',
+      text: codePoints.slice(range.start, range.end + 1).join(''),
+      url: range.url
+    })
+    cursor = range.end + 1
+  }
+  if (cursor < partEnd) {
+    fragments.push({ type: 'text', text: codePoints.slice(cursor, partEnd).join('') })
+  }
+  return fragments
 }
 
 /** Supplies cheermote prefixes for message parsing and resolves one cheer to its tier art. */
@@ -28,7 +124,7 @@ export interface CheermoteResolver {
 
 function toFragments(
   text: string,
-  msg: Pick<TwitchChatMessage, 'emoteOffsets'>,
+  msg: Pick<TwitchChatMessage, 'emoteOffsets' | 'tags'>,
   cheermotes?: CheermoteResolver
 ): Fragment[] {
   const cheermoteNames = cheermotes?.names() ?? []
@@ -37,6 +133,10 @@ function toFragments(
     msg.emoteOffsets,
     cheermoteNames.length > 0 ? cheermoteNames : undefined
   )
+  // Optional chaining defends against test doubles built before `tags` existed on this Pick;
+  // every real twurple message carries a `tags` Map (empty when the IRC line had none).
+  const gifRanges = parseGifTag(msg.tags?.get('gifs'))
+  const codePoints = gifRanges.length > 0 ? [...text] : []
   const fragments: Fragment[] = []
   for (const part of parts) {
     if (part.type === 'emote') {
@@ -62,6 +162,8 @@ function toFragments(
           { type: 'text', text: String(part.amount), verbatim: true }
         )
       }
+    } else if (gifRanges.length > 0) {
+      fragments.push(...spliceGifs(part, gifRanges, codePoints))
     } else {
       fragments.push({ type: 'text', text: part.text })
     }

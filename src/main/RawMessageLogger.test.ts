@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { RawMessageLogger } from '@main/RawMessageLogger'
+import { RawMessageLogger, rawLogBytes } from '@main/RawMessageLogger'
 
 // Real filesystem, under a fresh per-test tmp dir (as ConfigStore.test.ts does), so the byte-count
 // and flush-on-close behaviour is exercised against real I/O rather than a mocked fs.
@@ -130,5 +130,39 @@ describe('RawMessageLogger', () => {
     )
     expect(expectedBytes).toBeGreaterThan(0)
     expect(logger.status().bytes).toBe(expectedBytes)
+  })
+})
+
+describe('RawMessageLogger under pressure and at rollover', () => {
+  it('drops records while the stream is backed up rather than queueing them in memory', async () => {
+    const logger = new RawMessageLogger(dir, () => new Date(2026, 0, 15, 10, 0, 0))
+    // Larger than the write stream's high-water mark, so the first write reports backpressure.
+    logger.record('twitch', 'chan-a', 'x'.repeat(64 * 1024))
+    logger.record('twitch', 'chan-a', 'dropped while backed up')
+    await logger.close()
+    const lines = readLines(join(dir, 'twitch-2026-01-15.jsonl'))
+    expect(lines).toHaveLength(1)
+  })
+
+  it('waits for a stream ended by a date rollover before close() resolves', async () => {
+    let now = new Date(2026, 0, 15, 23, 59, 0)
+    const logger = new RawMessageLogger(dir, () => now)
+    logger.record('youtube', 'chan-a', { big: 'y'.repeat(64 * 1024) })
+    now = new Date(2026, 0, 16, 0, 0, 1)
+    logger.record('youtube', 'chan-a', { day: 2 })
+    await logger.close()
+    // Read immediately: the old day's tail must already be on disk.
+    const old = readLines(join(dir, 'youtube-2026-01-15.jsonl'))
+    expect(old).toHaveLength(1)
+    const raw = old[0]?.['raw'] as { big: string } | undefined
+    expect(raw?.big).toHaveLength(64 * 1024)
+  })
+
+  it('sizes retained files even when no logger is open', async () => {
+    const logger = new RawMessageLogger(dir, () => new Date(2026, 0, 15, 10, 0, 0))
+    logger.record('twitch', 'chan-a', 'kept after logging is turned off')
+    await logger.close()
+    expect(rawLogBytes(dir)).toBeGreaterThan(0)
+    expect(rawLogBytes(join(dir, 'nope'))).toBe(0)
   })
 })

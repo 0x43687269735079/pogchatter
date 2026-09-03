@@ -547,3 +547,21 @@ describe('SourceManager reconnectAll', () => {
     expect(source.connects).toBe(0) // the removed source must not be reconnected (a leaked connection)
   })
 })
+
+describe('SourceManager re-announces channels when a creator resolves', () => {
+  it('emits a channels event carrying the creator id once identity is known', async () => {
+    const events: ChatEvent[] = []
+    const manager = new SourceManager((event) => events.push(event))
+    const source = new ResolvingYouTubeSource('youtube:aaaaaaaaaaa')
+    await manager.add(source, 'yt:aaaaaaaaaaa')
+    const before = events.filter((event) => event.kind === 'channels').length
+
+    source.resolveCreator('UCmade-up', 'Fallen Shadow')
+
+    const after = events.filter(
+      (event): event is Extract<ChatEvent, { kind: 'channels' }> => event.kind === 'channels'
+    )
+    expect(after.length).toBeGreaterThan(before)
+    expect(after.at(-1)?.channels[0]?.creatorId).toBe('UCmade-up')
+  })
+})

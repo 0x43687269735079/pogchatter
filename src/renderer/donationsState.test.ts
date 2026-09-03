@@ -207,13 +207,16 @@ describe('donations state follows the base currency and removals', () => {
 })
 
 describe('streamerChips', () => {
-  it('builds one chip per streamer, newest donation first, labelled from an open channel', () => {
+  it('builds one chip per streamer, newest first, labelled by a Twitch column or else the key', () => {
     const donations = [
       donation('a1', 2_000, false, 'a'),
       donation('b1', 1_000, true, 'b'),
       donation('a2', 500, false, 'a')
     ]
-    const chips = streamerChips(donations, [channel({ streamerKey: 'a', label: '#a' })])
+    const chips = streamerChips(donations, [
+      channel({ id: 'twitch:a', platform: 'twitch', streamerKey: 'a', label: '#a' }),
+      channel({ id: 'youtube:aaaaaaaaaaa', streamerKey: 'b', label: 'MORNING STREAM !gifted' })
+    ])
     expect(chips).toEqual([
       { key: 'a', label: '#a', unread: 2 },
       { key: 'b', label: 'b', unread: 0 }
@@ -228,8 +231,8 @@ describe('streamerChips', () => {
 describe('visibleDonations', () => {
   const list = [donation('a1', 2_000, false, 'a'), donation('b1', 1_000, false, 'b')]
 
-  it("returns the same reference for 'all'", () => {
-    expect(visibleDonations(list, 'all')).toBe(list)
+  it('returns the same reference for "all" (undefined)', () => {
+    expect(visibleDonations(list, undefined)).toBe(list)
   })
 
   it('filters to just the selected streamer', () => {

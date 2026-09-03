@@ -109,7 +109,11 @@ export class YouTubeSource extends BaseChatSource {
     fetchFn: typeof fetch,
     emotes: EmoteEngine,
     auth: YouTubeAuthManager,
-    options?: { persistedStreamerKey?: string; rawSink?: (action: unknown) => void }
+    options?: {
+      persistedStreamerKey?: string
+      persistedCreatorId?: string
+      rawSink?: (action: unknown) => void
+    }
   ) {
     super()
     this.#target = normalizeTarget('youtube', target)
@@ -120,6 +124,11 @@ export class YouTubeSource extends BaseChatSource {
     this.#fixedVideo = VIDEO_ID_RE.test(this.#target)
     this.#persistedStreamerKey = options?.persistedStreamerKey
     this.#rawSink = options?.rawSink
+    // A creator id stored by an earlier run identifies this column offline; the name (only used
+    // for a fresh key) arrives once the video resolves.
+    if (options?.persistedCreatorId !== undefined) {
+      this.#creator = { channelId: options.persistedCreatorId, name: '' }
+    }
     this.id = channelId('youtube', target)
   }
 
@@ -158,7 +167,10 @@ export class YouTubeSource extends BaseChatSource {
    * key until the creator resolves (see {@link streamerKeyOf}).
    */
   streamerKey(): string {
-    return this.#persistedStreamerKey ?? streamerKeyOf('youtube', this.#target, this.#creator?.name)
+    return (
+      this.#persistedStreamerKey ??
+      streamerKeyOf('youtube', this.#target, this.#creator?.name, this.#creator?.channelId)
+    )
   }
 
   /** The video this source is currently reading, once resolved — so discovery can avoid re-adding it. */

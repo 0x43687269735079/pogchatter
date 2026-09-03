@@ -23,9 +23,9 @@ interface DonationsPanelProps {
   canMoveLeft: boolean
   canMoveRight: boolean
   inTab?: boolean
-  /** The streamer chip row's selection ('all' or a streamer key); App state, not part of DonationsState. */
-  selectedStreamer: string
-  onSelectStreamer: (key: string) => void
+  /** The streamer chip row's selection: a streamer key, or undefined for all; App state, not part of DonationsState. */
+  selectedStreamer: string | undefined
+  onSelectStreamer: (key: string | undefined) => void
   onActivate: (id: string) => void
   /** Open the donation's own chat column (inactive once its message has left the buffer). */
   onJump: (channelId: string) => void
@@ -67,11 +67,11 @@ export function DonationsPanel({
   const { donations, rates, baseCurrency, sessionStartedAt } = state
   const chips = useMemo(() => streamerChips(donations, channels), [donations, channels])
   // A selection whose streamer no longer has any donations (its chat closed mid-session, say)
-  // reverts to 'all' rather than silently scoping to an empty feed.
+  // reverts to "all" (undefined — never a key a streamer could be named) rather than scoping to nothing.
   const selected =
-    selectedStreamer === 'all' || chips.some((chip) => chip.key === selectedStreamer)
+    selectedStreamer !== undefined && chips.some((chip) => chip.key === selectedStreamer)
       ? selectedStreamer
-      : 'all'
+      : undefined
   const scoped = useMemo(() => visibleDonations(donations, selected), [donations, selected])
   const totals = useMemo(
     () => donationTotals(scoped, rates, baseCurrency, sessionStartedAt),
@@ -255,8 +255,8 @@ function StreamerChips({
 }: {
   chips: StreamerChip[]
   overflow: StreamerChip[]
-  selected: string
-  onSelect: (key: string) => void
+  selected: string | undefined
+  onSelect: (key: string | undefined) => void
 }): ReactElement {
   const overflowSelected = overflow.some((chip) => chip.key === selected)
   return (
@@ -264,9 +264,9 @@ function StreamerChips({
       <button
         type="button"
         className="pc-chip"
-        aria-pressed={selected === 'all'}
+        aria-pressed={selected === undefined}
         onClick={() => {
-          onSelect('all')
+          onSelect(undefined)
         }}
       >
         all

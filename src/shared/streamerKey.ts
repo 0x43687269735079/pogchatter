@@ -31,14 +31,22 @@ function normalise(value: string): string {
  *   The normalised key. On Twitch, the login; on YouTube, the creator name when known, else a
  *   handle's text, else the target itself — a video id is a poor identity, but a stable one.
  */
-export function streamerKeyOf(platform: Platform, target: string, creatorName?: string): string {
+export function streamerKeyOf(
+  platform: Platform,
+  target: string,
+  creatorName?: string,
+  creatorId?: string
+): string {
   if (platform === 'twitch') {
     return normalise(target)
   }
-  // A resolved creator name beats the target: two video ids from the same channel are one streamer,
-  // and nothing in a video id says so.
   if (creatorName !== undefined && normalise(creatorName) !== '') {
     return normalise(creatorName)
+  }
+  // A name outside [a-z0-9_] (most non-Latin channels) normalises to nothing; the creator's channel
+  // id still identifies them across every room, where the per-video target would split them.
+  if (creatorId !== undefined && normalise(creatorId) !== '') {
+    return normalise(creatorId)
   }
   return normalise(target.startsWith('@') ? target.slice(1) : target)
 }

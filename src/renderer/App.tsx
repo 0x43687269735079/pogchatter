@@ -118,7 +118,7 @@ export function App(): ReactElement {
   const [donations, setDonations] = useState<DonationsState>(EMPTY_DONATIONS)
   // The donations panel's streamer-chip selection ('all' or a streamer key); a view concern, not
   // part of the projected DonationsState.
-  const [selectedStreamer, setSelectedStreamer] = useState<string>('all')
+  const [selectedStreamer, setSelectedStreamer] = useState<string | undefined>(undefined)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
@@ -141,6 +141,10 @@ export function App(): ReactElement {
   const ytLoggedInRef = useRef(false)
   const ytUserLogoutRef = useRef(false)
   const [order, setOrder] = useState<string[]>([])
+  // The latest order for async callers: a discovery that resolves seconds later must insert into
+  // the order as it is *now*, not the one captured when the request started.
+  const orderRef = useRef<string[]>([])
+  orderRef.current = order
   const [widths, setWidths] = useState<Record<string, number>>({})
   const [activeIdState, setActiveId] = useState<string | undefined>(undefined)
   // Per-column unread level for the tabs layout (none/activity/alert); transient, never persisted.
@@ -489,7 +493,7 @@ export function App(): ReactElement {
     try {
       const result = await window.chat.addYouTubeStreams(target)
       if (result.ok) {
-        commitOrder(insertAfter(order, originColumnId, result.channelIds))
+        commitOrder(insertAfter(orderRef.current, originColumnId, result.channelIds))
         showColumnNote(originColumnId, `added ${result.added}/${result.total} streams`)
       } else {
         showColumnNote(originColumnId, result.error)

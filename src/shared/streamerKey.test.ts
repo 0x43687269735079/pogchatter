@@ -42,3 +42,17 @@ describe('legacyStreamerKey', () => {
     expect(legacyStreamerKey('')).toBe('')
   })
 })
+
+describe('streamerKeyOf for names outside the Latin alphabet', () => {
+  it('falls back to the creator channel id, never to the per-video target', () => {
+    // A Japanese channel name normalises to nothing; the video id would split one creator per room.
+    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'こんにちは', 'UCabc_DEF')).toBe('ucabc_def')
+    expect(streamerKeyOf('youtube', 'bbbbbbbbbbb', 'こんにちは', 'UCabc_DEF')).toBe('ucabc_def')
+  })
+
+  it('still prefers a Latin name over the id', () => {
+    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Fallen Shadow', 'UCabc_DEF')).toBe(
+      'fallenshadow'
+    )
+  })
+})

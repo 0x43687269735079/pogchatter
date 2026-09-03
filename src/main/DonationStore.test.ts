@@ -352,6 +352,16 @@ describe('DonationStore membership dedup', () => {
     expect(donations.list().map((d) => d.id)).toEqual(['a'])
   })
 
+  it('keeps a second purchase the same room announces inside the window', () => {
+    // A room announces each event once, so a repeat from the same room is a new purchase; only
+    // another room's copy of the same event is an echo to drop.
+    const donations = store()
+    donations.record(membership('first', 1_000), 'youtube:vid', context)
+    donations.record(membership('again', 10_000), 'youtube:vid', context)
+    donations.record(membership('echo', 11_000), 'youtube:other', context)
+    expect(donations.list().map((d) => d.id)).toEqual(['again', 'first'])
+  })
+
   it('collects a genuine second purchase once the window has passed', () => {
     const donations = store()
     donations.record(membership('first', 1_000), 'youtube:vid', context)
@@ -398,9 +408,10 @@ describe('DonationStore membership dedup', () => {
     expect(donations.list()).toHaveLength(600)
     const firstAgain = membership('repeat', 1_000, 'member-0')
     expect(donations.record(firstAgain, 'youtube:vid', context)).toBeDefined()
-    // A key still inside the bound is remembered: the most recent one still dedups.
+    // A key still inside the bound is remembered: another room's copy of the most recent one
+    // still dedups (the same room repeating it would be a new purchase).
     const lastAgain = membership('dup', 1_000, 'member-599')
-    expect(donations.record(lastAgain, 'youtube:vid', context)).toBeUndefined()
+    expect(donations.record(lastAgain, 'youtube:other', context)).toBeUndefined()
   })
 
   it('does not dedup at all until the creator is known', () => {

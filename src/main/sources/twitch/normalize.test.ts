@@ -358,6 +358,21 @@ describe('normalizeTwitchMessage gifs tag', () => {
     expect(message.fragments).toEqual([{ type: 'link', text, url }])
   })
 
+  it('positions the GIF by code points, so an emoji before it does not shift the range', () => {
+    // A supplementary-plane character is two UTF-16 units but one code point; the tag counts the
+    // latter (like the emotes tag), and so must the splice.
+    const placeholder = '[Y A Y Yes GIF by X]'
+    const text = `🙂 ${placeholder}`
+    const start = 2
+    const end = start + [...placeholder].length - 1
+    const tags = new Map([['gifs', `${start}-${end}|abc|https://cdn/x.gif`]])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([
+      { type: 'text', text: '🙂 ' },
+      { type: 'link', text: placeholder, url: 'https://cdn/x.gif' }
+    ])
+  })
+
   it('leaves the text unchanged when the range is not numeric', () => {
     const text = 'hello world'
     const tags = new Map([['gifs', 'abc|x|https://a']])

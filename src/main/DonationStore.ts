@@ -63,7 +63,8 @@ export class DonationStore {
    * Membership dedup key to the timestamp it was last seen at, newest last. In memory only: it
    * guards against two live rooms announcing one purchase, which cannot outlive the session.
    */
-  readonly #membershipSeen = new Map<string, number>()
+  /** Recent membership purchases by dedup key: when first seen, and which rooms have announced it. */
+  readonly #membershipSeen = new Map<string, { at: number; rooms: Set<string> }>()
   #timer: ReturnType<typeof setTimeout> | undefined
   /** Unsaved changes are pending; cleared only by a write that actually succeeded. */
   #dirty = false
@@ -99,7 +100,7 @@ export class DonationStore {
     if (donation === undefined) {
       return undefined
     }
-    if (this.#isRepeatMembership(donation, context.creatorId)) {
+    if (this.#isRepeatMembership(donation, channelId, context.creatorId)) {
       return undefined
     }
     // Kept in timestamp order rather than arrival order, so a donation that reaches us late but
@@ -204,7 +205,7 @@ export class DonationStore {
    * it. Everything that is not a YouTube membership event — money above all — falls straight
    * through, because two payments that happen to match are still two payments.
    */
-  #isRepeatMembership(donation: Donation, creatorId: string | undefined): boolean {
+  #isRepeatMembership(donation: Donation, room: string, creatorId: string | undefined): boolean {
     if (creatorId === undefined) {
       return false
     }
@@ -213,13 +214,16 @@ export class DonationStore {
       return false
     }
     const seen = this.#membershipSeen.get(key)
-    if (seen !== undefined && Math.abs(donation.timestamp - seen) < MEMBERSHIP_DEDUP_WINDOW_MS) {
+    const inWindow =
+      seen !== undefined && Math.abs(donation.timestamp - seen.at) < MEMBERSHIP_DEDUP_WINDOW_MS
+    // The same room announcing the same purchase again is not a fan-out echo — each room announces
+    // an event once — so it is a genuine second purchase; only another room's copy is a duplicate.
+    if (inWindow && !seen.rooms.has(room)) {
+      seen.rooms.add(room)
       return true
     }
-    // Re-inserted rather than updated in place, so Map order stays newest-last and eviction drops
-    // the key least recently seen rather than the one first inserted.
     this.#membershipSeen.delete(key)
-    this.#membershipSeen.set(key, donation.timestamp)
+    this.#membershipSeen.set(key, { at: donation.timestamp, rooms: new Set([room]) })
     while (this.#membershipSeen.size > MEMBERSHIP_DEDUP_MAX) {
       const oldest = this.#membershipSeen.keys().next()
       if (oldest.done === true) {

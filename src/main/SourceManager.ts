@@ -184,6 +184,9 @@ export class SourceManager {
     this.#identityResolved.add(source.id)
     const streamerKey = source.streamerKey?.() ?? legacyStreamerKey(source.id)
     this.#onIdentityResolved(source.id, { streamerKey, creatorId: creator.channelId })
+    // The renderer learns creatorId only through a channels event, and status changes don't send
+    // one — re-announce so a video-id column's tab menu stops waiting on "resolving…".
+    this.#onEvent({ kind: 'channels', channels: this.list() })
   }
 
   /** Video ids currently open across YouTube sources (a `@handle` column resolves to one too). */

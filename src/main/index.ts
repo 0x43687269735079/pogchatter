@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -35,7 +35,7 @@ import { closeDebugLog, debugLog, debugLogEnabled, initDebugLog } from '@main/de
 import { KeepAlive } from '@main/KeepAlive'
 import { migrateLegacyUserData } from '@main/migrateUserData'
 import { isOpenableUrl } from '@main/openExternal'
-import { RawMessageLogger } from '@main/RawMessageLogger'
+import { RawMessageLogger, rawLogBytes } from '@main/RawMessageLogger'
 import { SourceManager } from '@main/SourceManager'
 import { applySpelling } from '@main/spelling'
 import { AuthStore } from '@main/auth/AuthStore'
@@ -777,11 +777,16 @@ void app
           await shell.openExternal(url)
         }
       },
-      rawLogStatus: () => rawLogger?.status() ?? { enabled: false, bytes: 0 },
+      // Files written earlier still take space after logging is turned off; size the folder itself.
+      rawLogStatus: () => rawLogger?.status() ?? { enabled: false, bytes: rawLogBytes(rawDir()) },
       openRawLogDir: async () => {
+        // Only a live logger justifies creating the folder; otherwise open what exists (the raw
+        // folder if earlier runs left one, else the chat-log folder it lives under).
         const dir = rawDir()
-        mkdirSync(dir, { recursive: true })
-        await shell.openPath(dir)
+        if (rawLogger !== undefined) {
+          mkdirSync(dir, { recursive: true })
+        }
+        await shell.openPath(existsSync(dir) ? dir : effectiveLogDir())
       }
     })
     registerWindowControls(RENDERER_URL)
@@ -978,11 +983,14 @@ void app
         // A previously-resolved streamer key persisted onto this channel's config entry (e.g. from
         // an earlier run's creator resolution), so donations attribute correctly from the first
         // message instead of only after this run re-resolves the creator.
-        const persistedStreamerKey = config.channels().find((c) => c.id === id)?.streamerKey
+        const persisted = config.channels().find((c) => c.id === id)
+        const persistedStreamerKey = persisted?.streamerKey
+        const persistedCreatorId = persisted?.creatorId
         // Pass the reader factory, not an awaited instance: YouTubeSource acquires it
         // inside connect(), so creating a YouTube channel never blocks add()/restore.
         return new YouTubeSource(target, getYouTubeReader, pageFetch, emotes, ytAuth, {
           ...(persistedStreamerKey !== undefined ? { persistedStreamerKey } : {}),
+          ...(persistedCreatorId !== undefined ? { persistedCreatorId } : {}),
           rawSink: (action) => rawLogger?.record('youtube', id, action)
         })
       }

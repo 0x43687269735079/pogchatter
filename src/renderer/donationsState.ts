@@ -158,14 +158,18 @@ export function streamerChips(donations: Donation[], channels: ChannelInfo[]): S
     .sort((a, b) => (newest.get(b) ?? 0) - (newest.get(a) ?? 0))
     .map((key) => ({
       key,
-      label: channels.find((channel) => channel.streamerKey === key)?.label ?? key,
+      // A Twitch column is labelled by login; a YouTube column by stream title, which would mislabel
+      // the whole streamer — so only a Twitch label is used, else the key itself.
+      label:
+        channels.find((channel) => channel.streamerKey === key && channel.platform === 'twitch')
+          ?.label ?? key,
       unread: unread.get(key) ?? 0
     }))
 }
 
 /** The donations shown for a chip selection: everything for `'all'`, else just that streamer's. */
-export function visibleDonations(donations: Donation[], selected: string): Donation[] {
-  if (selected === 'all') {
+export function visibleDonations(donations: Donation[], selected: string | undefined): Donation[] {
+  if (selected === undefined) {
     return donations
   }
   return donations.filter((donation) => donation.streamerKey === selected)

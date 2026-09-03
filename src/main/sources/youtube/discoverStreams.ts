@@ -5,6 +5,8 @@ const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
 
 /** Maximum concurrent `getBasicInfo` lookups when resolving waiting entries' scheduled starts. */
 const SCHEDULED_START_LOOKUP_CONCURRENCY = 4
+/** A single stalled lookup must not hold every discovered room hostage; past this it is unscheduled. */
+const SCHEDULED_START_LOOKUP_TIMEOUT_MS = 5_000
 
 /** A live or waiting-room (scheduled/upcoming) stream discovered on a channel's Live tab. */
 export interface DiscoveredStream {
@@ -88,11 +90,18 @@ async function lookupScheduledStart(
   reader: Innertube,
   videoId: string
 ): Promise<number | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), SCHEDULED_START_LOOKUP_TIMEOUT_MS)
+    timer.unref()
+  })
   try {
-    const info = await reader.getBasicInfo(videoId)
-    return info.basic_info.start_timestamp?.getTime()
+    const info = await Promise.race([reader.getBasicInfo(videoId), deadline])
+    return info?.basic_info.start_timestamp?.getTime()
   } catch {
     return undefined
+  } finally {
+    clearTimeout(timer)
   }
 }
 

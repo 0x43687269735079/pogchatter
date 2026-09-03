@@ -16,6 +16,26 @@ function errorMessage(error: unknown): string {
 }
 
 /** Local (not UTC) calendar date of `date`, as `YYYY-MM-DD`. */
+/** Bytes of raw log files in `dir`, whether or not a logger is open on it — retained logs still count. */
+export function rawLogBytes(dir: string): number {
+  let bytes = 0
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.jsonl')) {
+        continue
+      }
+      try {
+        bytes += statSync(join(dir, name)).size
+      } catch {
+        // Removed between listing and stat.
+      }
+    }
+  } catch {
+    // No directory yet: nothing logged.
+  }
+  return bytes
+}
+
 function localDateKey(date: Date): string {
   const year = date.getFullYear()
   const month = `${date.getMonth() + 1}`.padStart(2, '0')
@@ -49,6 +69,10 @@ export class RawMessageLogger {
   #closed = false
   readonly #streams = new Map<Platform, OpenStream>()
   #bytesCache: { at: number; bytes: number } | undefined
+  /** Platforms whose stream reported backpressure; records are dropped until it drains. */
+  readonly #paused = new Set<Platform>()
+  /** Streams ended by a date rollover that have not flushed yet, so close() can wait for them. */
+  readonly #ending = new Set<Promise<void>>()
 
   constructor(dir: string, now: () => Date = () => new Date()) {
     this.#dir = dir
@@ -65,7 +89,7 @@ export class RawMessageLogger {
     raw: unknown,
     source?: 'live' | 'recent-messages'
   ): void {
-    if (this.#disabled || this.#closed) {
+    if (this.#disabled || this.#closed || this.#paused.has(platform)) {
       return
     }
     const stream = this.#ensureStream(platform)
@@ -80,7 +104,15 @@ export class RawMessageLogger {
       raw
     })
     try {
-      stream.write(`${line}\n`)
+      // A slow volume must not queue every line in memory: past the stream's high-water mark the
+      // platform is paused and lines are dropped until it drains. This is a diagnostic log; chat
+      // itself is unaffected.
+      if (!stream.write(`${line}\n`)) {
+        this.#paused.add(platform)
+        stream.once('drain', () => {
+          this.#paused.delete(platform)
+        })
+      }
     } catch (error) {
       this.#disable(errorMessage(error))
     }
@@ -109,10 +141,11 @@ export class RawMessageLogger {
     this.#closed = true
     const streams = [...this.#streams.values()]
     this.#streams.clear()
-    if (streams.length === 0) {
+    const pending = [...streams.map(({ stream }) => this.#endStream(stream)), ...this.#ending]
+    if (pending.length === 0) {
       return Promise.resolve()
     }
-    return Promise.all(streams.map(({ stream }) => this.#endStream(stream))).then(() => undefined)
+    return Promise.all(pending).then(() => undefined)
   }
 
   #endStream(stream: WriteStream): Promise<void> {
@@ -135,8 +168,11 @@ export class RawMessageLogger {
       if (existing.dateKey === dateKey) {
         return existing.stream
       }
-      existing.stream.end()
+      const ended = this.#endStream(existing.stream)
+      this.#ending.add(ended)
+      void ended.then(() => this.#ending.delete(ended))
       this.#streams.delete(platform)
+      this.#paused.delete(platform)
     }
     try {
       mkdirSync(this.#dir, { recursive: true })
@@ -179,21 +215,7 @@ export class RawMessageLogger {
     if (this.#bytesCache !== undefined && now - this.#bytesCache.at < BYTES_CACHE_MS) {
       return this.#bytesCache.bytes
     }
-    let bytes = 0
-    try {
-      for (const name of readdirSync(this.#dir)) {
-        if (!name.endsWith('.jsonl')) {
-          continue
-        }
-        try {
-          bytes += statSync(join(this.#dir, name)).size
-        } catch {
-          // Removed between the listing and the stat — skip it.
-        }
-      }
-    } catch {
-      // The directory doesn't exist yet, or isn't readable.
-    }
+    const bytes = rawLogBytes(this.#dir)
     this.#bytesCache = { at: now, bytes }
     return bytes
   }

@@ -1866,6 +1866,14 @@ body,
   background: var(--err);
   color: var(--bg);
 }
+.pc-ctx button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pc-ctx button:disabled:hover {
+  background: transparent;
+  color: var(--fg);
+}
 .pc-ctx-sep {
   height: 1px;
   margin: 3px 0;

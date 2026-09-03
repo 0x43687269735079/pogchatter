@@ -17,6 +17,8 @@ interface TabBarProps {
   onRemove: (id: string) => void
   /** Drag-to-reorder: move `id` to the dropped-on tab's index. */
   onReorder: (id: string, toIndex: number) => void
+  /** Right-click on a chat tab: opens the "add this streamer's other streams" menu. */
+  onTabContextMenu: (channel: ChannelInfo, x: number, y: number) => void
   /** The add-column control, rendered after the tabs. */
   trailing?: ReactNode | undefined
 }
@@ -80,6 +82,7 @@ export function TabBar({
   onSelect,
   onRemove,
   onReorder,
+  onTabContextMenu,
   trailing
 }: TabBarProps): ReactElement {
   const [dragId, setDragId] = useState<string | undefined>(undefined)
@@ -102,6 +105,14 @@ export function TabBar({
             onClick={() => {
               onSelect(info.id)
             }}
+            onContextMenu={
+              column.kind === 'channel'
+                ? (event) => {
+                    event.preventDefault()
+                    onTabContextMenu(column.channel, event.clientX, event.clientY)
+                  }
+                : undefined
+            }
             onDragStart={(event) => {
               event.dataTransfer.effectAllowed = 'move'
               setDragId(info.id)

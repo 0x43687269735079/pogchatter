@@ -25,6 +25,7 @@ import { AddChannelModal } from '@renderer/components/AddChannelModal'
 import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
+import { TabContextMenu, type TabContextMenuItem } from '@renderer/components/TabContextMenu'
 import { DonationThreadModal } from '@renderer/components/DonationThreadModal'
 import { DonationsPanel } from '@renderer/components/DonationsPanel'
 import {
@@ -57,6 +58,7 @@ import {
 import {
   DONATIONS_COLUMN_ID,
   FLAGGED_COLUMN_ID,
+  insertAfter,
   moveColumnBy,
   moveColumnTo,
   reconcileColumnOrder,
@@ -64,6 +66,7 @@ import {
 } from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
 import { isOnline } from '@renderer/status'
+import { streamsTargetFor } from '@renderer/tabMenu'
 import { clearUnread, foldUnread, type UnreadLevel } from '@renderer/unread'
 import { TabBar } from '@renderer/components/TabBar'
 import { THEME_PALETTES } from '@renderer/theme'
@@ -139,6 +142,14 @@ export function App(): ReactElement {
   const [activeIdState, setActiveId] = useState<string | undefined>(undefined)
   // Per-column unread level for the tabs layout (none/activity/alert); transient, never persisted.
   const [unread, setUnread] = useState<ReadonlyMap<string, UnreadLevel>>(new Map())
+  // The tab/header "add this streamer's other streams" context menu, if open.
+  const [tabMenu, setTabMenu] = useState<
+    { channel: ChannelInfo; anchor: { x: number; y: number } } | undefined
+  >(undefined)
+  // Streams targets with a request in flight, so the menu item disables rather than double-fires.
+  const [streamsInFlight, setStreamsInFlight] = useState<ReadonlySet<string>>(new Set())
+  // Transient add-streams result note, per origin column id (tab menu / header context menu).
+  const [columnNotes, setColumnNotes] = useState<Record<string, string>>({})
 
   // Total messages received; StatusBar samples it at 1 Hz for the msg/s rate, so the per-second
   // re-render stays scoped there instead of cascading through the whole column tree.
@@ -450,6 +461,67 @@ export function App(): ReactElement {
   /** Drag-to-reorder a tab to a target index (its position once removed). */
   function moveColumnToIndex(id: string, toIndex: number): void {
     commitOrder(moveColumnTo(order, id, toIndex))
+  }
+
+  // Show a transient note on a column's header (tab-menu add-streams feedback), auto-clearing after
+  // a few seconds — mirrors ChannelColumn's own streamsNote timing for the ⤓ button.
+  function showColumnNote(columnId: string, note: string): void {
+    setColumnNotes((prev) => ({ ...prev, [columnId]: note }))
+    setTimeout(() => {
+      setColumnNotes((prev) => {
+        if (prev[columnId] !== note) {
+          return prev // a newer note already replaced it
+        }
+        const next = { ...prev }
+        delete next[columnId]
+        return next
+      })
+    }, 5000)
+  }
+
+  // Run the tab/header menu's "add this streamer's other streams": adds the columns, inserts them
+  // right after the tab/column that opened the menu, and reports the result as a transient note.
+  async function addStreamsFromMenu(originColumnId: string, target: string): Promise<void> {
+    setStreamsInFlight((prev) => new Set(prev).add(target))
+    try {
+      const result = await window.chat.addYouTubeStreams(target)
+      if (result.ok) {
+        commitOrder(insertAfter(order, originColumnId, result.channelIds))
+        showColumnNote(originColumnId, `added ${result.added}/${result.total} streams`)
+      } else {
+        showColumnNote(originColumnId, result.error)
+      }
+    } finally {
+      setStreamsInFlight((prev) => {
+        const next = new Set(prev)
+        next.delete(target)
+        return next
+      })
+    }
+  }
+
+  /** Open the tab/header context menu for a chat column's channel (right-click on a tab or header). */
+  function openTabMenu(channel: ChannelInfo, x: number, y: number): void {
+    setTabMenu({ channel, anchor: { x, y } })
+  }
+
+  /** The tab/header menu's single item, resolved from the channel that opened it. */
+  function tabMenuItem(channel: ChannelInfo): TabContextMenuItem {
+    const resolved = streamsTargetFor(channel)
+    if (resolved.target === undefined) {
+      return { label: resolved.label, disabled: true, hint: resolved.reason, onSelect: () => {} }
+    }
+    const target = resolved.target
+    const busy = streamsInFlight.has(target)
+    return {
+      label: resolved.label,
+      disabled: busy,
+      hint: busy ? 'already adding…' : undefined,
+      onSelect: () => {
+        setTabMenu(undefined)
+        void addStreamsFromMenu(channel.id, target)
+      }
+    }
   }
 
   /** Select a tab, clear its unread indicator, and remember it across restarts (tabs reopen it). */
@@ -787,6 +859,8 @@ export function App(): ReactElement {
           onHeldAction={handleHeldAction}
           onScrollPause={reportScrollPause}
           monitoredKeys={monitoredKeys}
+          onHeaderContextMenu={openTabMenu}
+          menuNote={columnNotes[column.id]}
         />
       )
     }
@@ -949,6 +1023,7 @@ export function App(): ReactElement {
               onSelect={selectTab}
               onRemove={removeColumn}
               onReorder={moveColumnToIndex}
+              onTabContextMenu={openTabMenu}
               trailing={addColumn}
             />
             <div className="pc-body pc-body-tabs">
@@ -1147,6 +1222,15 @@ export function App(): ReactElement {
           onSubmit={(cookies) => window.chat.loginYouTube(cookies)}
           onClose={() => {
             setYouTubeModalOpen(false)
+          }}
+        />
+      ) : null}
+      {tabMenu !== undefined ? (
+        <TabContextMenu
+          anchor={tabMenu.anchor}
+          items={[tabMenuItem(tabMenu.channel)]}
+          onClose={() => {
+            setTabMenu(undefined)
           }}
         />
       ) : null}

@@ -28,6 +28,10 @@ export interface PersistedChannel {
   id: string
   /** Display label override (e.g. a discovered stream title), so columns keep their name across restarts. */
   label?: string
+  /** Cross-platform streamer identity key, once resolved (see `@shared/streamerKey`). */
+  streamerKey?: string
+  /** YouTube creator channel id, once resolved. */
+  creatorId?: string
 }
 
 interface Config {
@@ -47,6 +51,26 @@ function isPersistedChannel(value: unknown): value is PersistedChannel {
     typeof channel['id'] === 'string' &&
     (channel['label'] === undefined || typeof channel['label'] === 'string')
   )
+}
+
+/**
+ * Keep `streamerKey`/`creatorId` only when they're non-empty strings, dropping the key entirely
+ * otherwise — a stale or hand-edited config file can carry junk (wrong type, or an empty string),
+ * and `exactOptionalPropertyTypes` means "unset" must be the key's absence, not `''`.
+ */
+function sanitizePersistedChannel(channel: PersistedChannel): PersistedChannel {
+  const { platform, target, id, label, streamerKey, creatorId } = channel
+  const sanitized: PersistedChannel = { platform, target, id }
+  if (typeof label === 'string') {
+    sanitized.label = label
+  }
+  if (typeof streamerKey === 'string' && streamerKey !== '') {
+    sanitized.streamerKey = streamerKey
+  }
+  if (typeof creatorId === 'string' && creatorId !== '') {
+    sanitized.creatorId = creatorId
+  }
+  return sanitized
 }
 
 /**
@@ -367,6 +391,33 @@ export class ConfigStore {
     }
   }
 
+  /**
+   * Patch a persisted channel's resolved streamer identity (streamerKey/creatorId). A no-op for an
+   * unknown id, and saves only when the patch actually changes something.
+   */
+  updateChannel(id: string, patch: { streamerKey?: string; creatorId?: string }): void {
+    const index = this.#config.channels.findIndex((channel) => channel.id === id)
+    const current = this.#config.channels[index]
+    if (current === undefined) {
+      return
+    }
+    let changed = false
+    const next: PersistedChannel = { ...current }
+    if (patch.streamerKey !== undefined && patch.streamerKey !== current.streamerKey) {
+      next.streamerKey = patch.streamerKey
+      changed = true
+    }
+    if (patch.creatorId !== undefined && patch.creatorId !== current.creatorId) {
+      next.creatorId = patch.creatorId
+      changed = true
+    }
+    if (!changed) {
+      return
+    }
+    this.#config.channels[index] = next
+    this.#save()
+  }
+
   /** The persisted YouTube visitor_data, for a durable browser identity across restarts. */
   visitorData(): string | undefined {
     return this.#config.visitorData
@@ -399,7 +450,9 @@ export class ConfigStore {
       const parsed = JSON.parse(readFileSync(this.#path, 'utf8')) as Partial<Config>
       const config: Config = {
         channels: Array.isArray(parsed.channels)
-          ? recomputeChannelIds(parsed.channels.filter(isPersistedChannel))
+          ? recomputeChannelIds(
+              parsed.channels.filter(isPersistedChannel).map(sanitizePersistedChannel)
+            )
           : [],
         settings: { ...DEFAULT_SETTINGS, ...sanitizeSettings(parsed.settings) }
       }

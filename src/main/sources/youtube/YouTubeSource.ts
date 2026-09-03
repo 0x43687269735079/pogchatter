@@ -8,6 +8,7 @@ import type {
   UserModerationActivity,
   UserProfile
 } from '@shared/model'
+import { streamerKeyOf } from '@shared/streamerKey'
 import { BaseChatSource } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
@@ -68,11 +69,17 @@ export class YouTubeSource extends BaseChatSource {
   readonly #auth: YouTubeAuthManager
   /** Fixed video ids are terminal once ended; channel/handle targets keep looking for the next stream. */
   readonly #fixedVideo: boolean
+  /** Streamer key persisted from a prior resolve (`PersistedChannel.streamerKey`); overrides the derived one. */
+  readonly #persistedStreamerKey: string | undefined
+  /** Fed every raw InnerTube action, before normalisation, for the raw connector-payload logger. */
+  readonly #rawSink: ((action: unknown) => void) | undefined
   #yt: Innertube | undefined
   #reader: LiveChatReader | undefined
   #signaler: YouTubeSignaler | undefined
   #videoId: string | undefined
   #channelId: string | undefined
+  /** The creator channel this chat belongs to, once `basic_info` resolves both id and name. */
+  #creator: { channelId: string; name: string } | undefined
   /** Last stream title announced as the label, so a re-poll only re-emits it when it actually changes. */
   #title: string | undefined
   /** Initial chat continuation, kept so send eligibility can be re-probed after a login/identity change. */
@@ -101,7 +108,9 @@ export class YouTubeSource extends BaseChatSource {
     getReader: () => Promise<Innertube>,
     fetchFn: typeof fetch,
     emotes: EmoteEngine,
-    auth: YouTubeAuthManager
+    auth: YouTubeAuthManager,
+    persistedStreamerKey?: string,
+    rawSink?: (action: unknown) => void
   ) {
     super()
     this.#target = normalizeTarget('youtube', target)
@@ -110,6 +119,8 @@ export class YouTubeSource extends BaseChatSource {
     this.#emotes = emotes
     this.#auth = auth
     this.#fixedVideo = VIDEO_ID_RE.test(this.#target)
+    this.#persistedStreamerKey = persistedStreamerKey
+    this.#rawSink = rawSink
     this.id = channelId('youtube', target)
   }
 
@@ -135,6 +146,20 @@ export class YouTubeSource extends BaseChatSource {
     return this.#channelId === undefined
       ? undefined
       : { platform: 'youtube', channelId: this.#channelId }
+  }
+
+  /** The creator channel (id + name) this chat belongs to, once `basic_info` has resolved both. */
+  creator(): { channelId: string; name: string } | undefined {
+    return this.#creator
+  }
+
+  /**
+   * The cross-platform streamer key: the persisted key this source was constructed with, once
+   * known, else the key derived from the resolved creator name — falling back to a target-based
+   * key until the creator resolves (see {@link streamerKeyOf}).
+   */
+  streamerKey(): string {
+    return this.#persistedStreamerKey ?? streamerKeyOf('youtube', this.#target, this.#creator?.name)
   }
 
   /** The video this source is currently reading, once resolved — so discovery can avoid re-adding it. */
@@ -361,6 +386,9 @@ export class YouTubeSource extends BaseChatSource {
     if (this.#channelId !== undefined) {
       this.#emotes.ensureChannel('youtube', this.#channelId)
     }
+    if (this.#channelId !== undefined && basic.author !== undefined && basic.author !== '') {
+      this.#creator = { channelId: this.#channelId, name: basic.author }
+    }
 
     if (basic.is_live === true) {
       this.#setStreamStatus({ state: 'live' })
@@ -532,7 +560,8 @@ export class YouTubeSource extends BaseChatSource {
         if (!this.#isStale(generation)) {
           void this.#rebootstrap()
         }
-      }
+      },
+      ...(this.#rawSink !== undefined && { rawSink: this.#rawSink })
     })
     this.#reader = reader
     void this.#startReader(reader, continuation, isReplay, generation)

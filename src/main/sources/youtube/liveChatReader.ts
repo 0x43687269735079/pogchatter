@@ -189,6 +189,12 @@ export interface LiveChatHandlers {
    * share, `false` once a comparable unknown-free stretch passes. Never re-fired while unchanged.
    */
   onDegraded?: (degraded: boolean) => void
+  /**
+   * Fired once per raw action, in arrival order, before normalisation — including actions of an
+   * unrecognized shape. Feeds the raw connector-payload logger (see {@link RawMessageLogger}); a
+   * no-op sink costs nothing beyond the call.
+   */
+  rawSink?: (action: unknown) => void
 }
 
 /**
@@ -629,6 +635,7 @@ export class LiveChatReader {
     let batchKnown = 0
     let batchUnknown = 0
     for (const action of actions) {
+      this.#handlers.rawSink?.(action)
       if (this.#trackParseHealth(action, newUnknownTypes)) {
         batchKnown += 1
       } else {

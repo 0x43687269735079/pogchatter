@@ -1076,6 +1076,108 @@ describe('YouTubeSource user profile', () => {
   })
 })
 
+describe('YouTubeSource creator identity', () => {
+  it('resolves the creator channel + name from basic_info and derives the streamer key', async () => {
+    const yt = {
+      getInfo: vi.fn().mockResolvedValue({
+        basic_info: { is_live: true, channel_id: 'UCmade-up', author: 'Fallen Shadow' },
+        livechat: { continuation: 'c0', is_replay: false }
+      }),
+      getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
+      actions: { execute: vi.fn().mockResolvedValue(emptyChatResponse()) }
+    }
+    const source = new YouTubeSource(
+      'aaaaaaaaaaa',
+      () => Promise.resolve(yt as never),
+      idleFetch,
+      emotes,
+      auth
+    )
+
+    await source.connect()
+    expect(source.creator()).toEqual({ channelId: 'UCmade-up', name: 'Fallen Shadow' })
+    expect(source.streamerKey()).toBe('fallenshadow')
+
+    await source.disconnect()
+  })
+
+  it('reports the persisted streamer key even after the creator resolves', async () => {
+    const yt = {
+      getInfo: vi.fn().mockResolvedValue({
+        basic_info: { is_live: true, channel_id: 'UCmade-up', author: 'Fallen Shadow' },
+        livechat: { continuation: 'c0', is_replay: false }
+      }),
+      getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
+      actions: { execute: vi.fn().mockResolvedValue(emptyChatResponse()) }
+    }
+    const source = new YouTubeSource(
+      'aaaaaaaaaaa',
+      () => Promise.resolve(yt as never),
+      idleFetch,
+      emotes,
+      auth,
+      'other'
+    )
+
+    await source.connect()
+    expect(source.creator()).toEqual({ channelId: 'UCmade-up', name: 'Fallen Shadow' })
+    expect(source.streamerKey()).toBe('other')
+
+    await source.disconnect()
+  })
+
+  it('falls back to a target-based key before the creator resolves', () => {
+    const source = new YouTubeSource(
+      '@FallenShadow',
+      () => new Promise(() => undefined) as Promise<never>,
+      idleFetch,
+      emotes,
+      auth
+    )
+    expect(source.creator()).toBeUndefined()
+    expect(source.streamerKey()).toBe('fallenshadow')
+  })
+})
+
+describe('YouTubeSource raw action sink', () => {
+  it('forwards rawSink into the reader, receiving each raw action', async () => {
+    const yt = {
+      getInfo: vi.fn().mockResolvedValue(liveInfo()),
+      getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
+      actions: {
+        execute: vi.fn().mockResolvedValue({
+          data: {
+            continuationContents: {
+              liveChatContinuation: {
+                actions: [{ someUnknownAction: {} }],
+                continuations: [{ timedContinuationData: { continuation: 'c1', timeoutMs: 5000 } }]
+              }
+            }
+          }
+        })
+      }
+    }
+    const rawSink = vi.fn()
+    const source = new YouTubeSource(
+      'aaaaaaaaaaa',
+      () => Promise.resolve(yt as never),
+      idleFetch,
+      emotes,
+      auth,
+      undefined,
+      rawSink
+    )
+
+    await source.connect()
+    // The reader's first poll runs after an intervening bootstrap-fetch microtask, not
+    // synchronously within connect() — give it a tick.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(rawSink).toHaveBeenCalledWith({ someUnknownAction: {} })
+
+    await source.disconnect()
+  })
+})
+
 describe('YouTubeSource channel URL resolution', () => {
   it('fetches the /live page for a /channel URL', async () => {
     const fetchMock = vi.fn().mockResolvedValue({

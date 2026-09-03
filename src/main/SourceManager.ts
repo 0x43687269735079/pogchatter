@@ -10,6 +10,7 @@ import type {
   UserModerationActivity,
   UserProfile
 } from '@shared/model'
+import { legacyStreamerKey } from '@shared/streamerKey'
 import type { ChatSource } from '@main/sources/ChatSource'
 import { channelId } from '@main/sources/channelId'
 
@@ -27,15 +28,26 @@ export class SourceManager {
   readonly #onEvent: (event: ChatEvent) => void
   readonly #onDuplicate: (channelId: string) => void
   readonly #onScopeReleased: (scope: EmoteScope) => void
+  readonly #onIdentityResolved: (
+    sourceId: string,
+    identity: { streamerKey: string; creatorId?: string }
+  ) => void
+  /** Source ids that have already reported a resolved identity, so it fires only once each. */
+  readonly #identityResolved = new Set<string>()
 
   constructor(
     onEvent: (event: ChatEvent) => void,
     onDuplicate: (channelId: string) => void = () => {},
-    onScopeReleased: (scope: EmoteScope) => void = () => {}
+    onScopeReleased: (scope: EmoteScope) => void = () => {},
+    onIdentityResolved: (
+      sourceId: string,
+      identity: { streamerKey: string; creatorId?: string }
+    ) => void = () => {}
   ) {
     this.#onEvent = onEvent
     this.#onDuplicate = onDuplicate
     this.#onScopeReleased = onScopeReleased
+    this.#onIdentityResolved = onIdentityResolved
   }
 
   async add(source: ChatSource, label: string): Promise<void> {
@@ -51,6 +63,7 @@ export class SourceManager {
     }
     const onStatus = (status: SourceStatus): void => {
       this.#onEvent({ kind: 'status', channelId: source.id, status })
+      this.#reportIdentityIfResolved(source)
     }
     const onClear = (target: ClearTarget): void => {
       this.#onEvent({ kind: 'clear', channelId: source.id, target })
@@ -120,11 +133,15 @@ export class SourceManager {
         platform: source.platform,
         label: this.#labels.get(source.id) ?? source.id,
         status: source.status(),
-        streamerKey: placeholderStreamerKey(source.id)
+        streamerKey: source.streamerKey?.() ?? legacyStreamerKey(source.id)
       }
       const restriction = source.sendRestriction?.()
       if (restriction !== undefined) {
         info.sendRestriction = restriction
+      }
+      const creatorId = source.creator?.()?.channelId
+      if (creatorId !== undefined) {
+        info.creatorId = creatorId
       }
       return info
     })
@@ -137,6 +154,36 @@ export class SourceManager {
   /** The emote scope (platform + channel id) for a source, if it has resolved one. */
   emoteScope(sourceId: string): { platform: Platform; channelId: string } | undefined {
     return this.#sources.get(sourceId)?.emoteScope?.()
+  }
+
+  /** A registered source's cross-platform streamer key, or undefined if it isn't registered. */
+  streamerKeyOf(sourceId: string): string | undefined {
+    const source = this.#sources.get(sourceId)
+    return source === undefined
+      ? undefined
+      : (source.streamerKey?.() ?? legacyStreamerKey(source.id))
+  }
+
+  /** A YouTube source's resolved creator channel id, or undefined if not registered/resolved. */
+  creatorIdOf(sourceId: string): string | undefined {
+    return this.#sources.get(sourceId)?.creator?.()?.channelId
+  }
+
+  /**
+   * Report a source's resolved cross-platform identity to {@link #onIdentityResolved}, once, the
+   * first time its creator becomes known (YouTube only — other sources never expose `creator()`).
+   */
+  #reportIdentityIfResolved(source: ChatSource): void {
+    if (this.#identityResolved.has(source.id)) {
+      return
+    }
+    const creator = source.creator?.()
+    if (creator === undefined) {
+      return
+    }
+    this.#identityResolved.add(source.id)
+    const streamerKey = source.streamerKey?.() ?? legacyStreamerKey(source.id)
+    this.#onIdentityResolved(source.id, { streamerKey, creatorId: creator.channelId })
   }
 
   /** Video ids currently open across YouTube sources (a `@handle` column resolves to one too). */
@@ -191,6 +238,7 @@ export class SourceManager {
     this.#detachers.delete(sourceId)
     this.#sources.delete(sourceId)
     this.#labels.delete(sourceId)
+    this.#identityResolved.delete(sourceId)
     // Release the scope only when no remaining source shares it (two columns can — e.g.
     // two streams of one YouTube channel), so the survivors keep their emotes.
     if (scope !== undefined && !this.#scopeInUse(scope)) {
@@ -328,13 +376,6 @@ export class SourceManager {
     this.#detachers.clear()
     this.#sources.clear()
     this.#labels.clear()
+    this.#identityResolved.clear()
   }
-}
-
-/**
- * Temporary `streamerKey` derived from a source id: the part after the first `:` for `twitch:`
- * ids, else the whole id. Not a real cross-platform identity yet — a later task resolves one.
- */
-function placeholderStreamerKey(id: string): string {
-  return id.startsWith('twitch:') ? id.slice(id.indexOf(':') + 1) : id
 }

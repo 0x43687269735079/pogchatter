@@ -205,6 +205,60 @@ describe('ConfigStore channels', () => {
   })
 })
 
+describe('ConfigStore channel identity', () => {
+  it('updateChannel persists streamerKey and creatorId, and a fresh instance reloads them', () => {
+    const store = new ConfigStore()
+    store.addChannel({ platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa' })
+
+    store.updateChannel('youtube:aaaaaaaaaaa', {
+      streamerKey: 'fallenshadow',
+      creatorId: 'UCmade-up'
+    })
+
+    expect(new ConfigStore().channels()).toEqual([
+      {
+        platform: 'youtube',
+        target: 'aaaaaaaaaaa',
+        id: 'youtube:aaaaaaaaaaa',
+        streamerKey: 'fallenshadow',
+        creatorId: 'UCmade-up'
+      }
+    ])
+  })
+
+  it('ignores updateChannel for an unknown id', () => {
+    const store = new ConfigStore()
+    store.addChannel({ platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa' })
+
+    store.updateChannel('youtube:does-not-exist', { streamerKey: 'x' })
+
+    expect(new ConfigStore().channels()).toEqual([
+      { platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa' }
+    ])
+  })
+
+  it('drops an empty-string streamerKey found in the file on load', () => {
+    writeFileSync(
+      CONFIG,
+      JSON.stringify({
+        channels: [
+          {
+            platform: 'youtube',
+            target: 'aaaaaaaaaaa',
+            id: 'youtube:aaaaaaaaaaa',
+            streamerKey: '',
+            creatorId: 'UC1'
+          }
+        ],
+        settings: {}
+      })
+    )
+    expect(new ConfigStore().channels()).toEqual([
+      { platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa', creatorId: 'UC1' }
+    ])
+  })
+})
+
 describe('ConfigStore donation settings', () => {
   it('accepts an ISO code, normalises its case, and keeps empty as "follow the system"', () => {
     const store = new ConfigStore()

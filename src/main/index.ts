@@ -624,7 +624,10 @@ void app
       // stop tokenizing everywhere and the engine stops re-fetching/watching the channel.
       (scope) => {
         emoteEngine?.releaseChannel(scope.platform, scope.channelId)
-      }
+      },
+      // A source's cross-platform identity resolved (YouTube's creator channel). Not yet wired to
+      // persist it back onto the channel's config entry — a later task does that.
+      () => {}
     )
     manager = sourceManager
     // Detect OS sleep/resume (event + wall-clock watchdog) and reconnect both connectors immediately,

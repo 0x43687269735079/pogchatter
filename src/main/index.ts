@@ -1,4 +1,4 @@
-import { appendFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -7,10 +7,13 @@ import {
   net,
   powerMonitor,
   powerSaveBlocker,
-  safeStorage
+  safeStorage,
+  session,
+  shell
 } from 'electron'
 import { Innertube, Log } from 'youtubei.js'
 import {
+  type AppSettings,
   type AuthState,
   type ChatEvent,
   type ChatLogSettings,
@@ -31,7 +34,10 @@ import { ConfigStore } from '@main/ConfigStore'
 import { closeDebugLog, debugLog, debugLogEnabled, initDebugLog } from '@main/debugLog'
 import { KeepAlive } from '@main/KeepAlive'
 import { migrateLegacyUserData } from '@main/migrateUserData'
+import { isOpenableUrl } from '@main/openExternal'
+import { RawMessageLogger } from '@main/RawMessageLogger'
 import { SourceManager } from '@main/SourceManager'
+import { applySpelling } from '@main/spelling'
 import { AuthStore } from '@main/auth/AuthStore'
 import { EmoteEngine, type IndexChange } from '@main/emotes/EmoteEngine'
 import { retokenizeAgainst } from '@main/retokenize'
@@ -247,6 +253,12 @@ let rateService: RateService | undefined
 const sessionStartedAt = Date.now()
 let configStore: ConfigStore | undefined
 let authStore: AuthStore | undefined
+// The raw wire-level connector log, driven by Settings → raw logging. Read fresh (not captured)
+// by each source's rawSink closure, so toggling the setting takes effect without reconnecting.
+let rawLogger: RawMessageLogger | undefined
+// The directory `rawLogger` is currently open on — RawMessageLogger exposes no getter for it, so
+// applyRawLog tracks it alongside the instance to detect a directory change.
+let rawLoggerDir: string | undefined
 let authManager: TwitchAuthManager | undefined
 let youtubeAuth: YouTubeAuthManager | undefined
 let emoteEngine: EmoteEngine | undefined
@@ -346,6 +358,36 @@ function applyChatLog(settings: ChatLogSettings): void {
       console.log(`Chat logging → ${path}`)
     })
   }
+}
+
+/** The directory the raw wire-level log is written to: a `raw` subdirectory of the chat-log dir. */
+function rawDir(): string {
+  return join(effectiveLogDir(), 'raw')
+}
+
+/**
+ * (Re)open or close the raw wire-level log from settings. Follows the chat-log directory (raw
+ * logging is nested under it), so a `chatLog.directory` change moves it too even when `rawLog`
+ * itself didn't change.
+ */
+function applyRawLog(settings: AppSettings): void {
+  const dir = rawDir()
+  if (!settings.rawLog.enabled) {
+    void rawLogger?.close()
+    rawLogger = undefined
+    rawLoggerDir = undefined
+    return
+  }
+  if (rawLogger === undefined || rawLoggerDir !== dir) {
+    void rawLogger?.close()
+    rawLogger = new RawMessageLogger(dir)
+    rawLoggerDir = dir
+  }
+}
+
+/** Apply the spelling setting to the app's default session's spell-checker. */
+function applySpellingSetting(value: AppSettings['spelling']): void {
+  applySpelling(session.defaultSession, value)
 }
 
 /** Record an event to the chat log when logging is on (every open chat is logged). */
@@ -716,15 +758,24 @@ void app
       twitchLoginResult: () => twitchLoginCompletion,
       applyChatLog,
       applyKeepAwake,
+      applySpelling: applySpellingSetting,
+      applyRawLog,
       defaultLogDir,
       effectiveLogDir,
       rendererUrl: RENDERER_URL,
       appFilePath: APP_FILE_PATH,
       sendDebug: SEND_DEBUG,
-      // TODO: replace with real implementations (external-link opening, raw wire-level logging).
-      openExternal: async () => {},
-      rawLogStatus: () => ({ enabled: false, bytes: 0 }),
-      openRawLogDir: async () => {}
+      openExternal: async (url) => {
+        if (isOpenableUrl(url)) {
+          await shell.openExternal(url)
+        }
+      },
+      rawLogStatus: () => rawLogger?.status() ?? { enabled: false, bytes: 0 },
+      openRawLogDir: async () => {
+        const dir = rawDir()
+        mkdirSync(dir, { recursive: true })
+        await shell.openPath(dir)
+      }
     })
     registerWindowControls(RENDERER_URL)
     applyContentSecurityPolicy()
@@ -753,6 +804,8 @@ void app
     configStore = config
     applyChatLog(config.settings().chatLog)
     applyKeepAwake(config.settings().keepAwake)
+    applyRawLog(config.settings())
+    applySpellingSetting(config.settings().spelling)
     // Donations outlive the renderer's buffers, so their store opens with the app rather than with a
     // window. Rates refresh in the background on a daily timer; nothing waits on either.
     const userDataDir = app.getPath('userData')
@@ -913,23 +966,18 @@ void app
     }
 
     const makeSource = (platform: Platform, target: string): ChatSource => {
+      const id = channelId(platform, target)
       if (platform === 'youtube') {
         // A previously-resolved streamer key persisted onto this channel's config entry (e.g. from
         // an earlier run's creator resolution), so donations attribute correctly from the first
         // message instead of only after this run re-resolves the creator.
-        const persistedStreamerKey = config
-          .channels()
-          .find((c) => c.id === channelId(platform, target))?.streamerKey
+        const persistedStreamerKey = config.channels().find((c) => c.id === id)?.streamerKey
         // Pass the reader factory, not an awaited instance: YouTubeSource acquires it
         // inside connect(), so creating a YouTube channel never blocks add()/restore.
-        return new YouTubeSource(
-          target,
-          getYouTubeReader,
-          pageFetch,
-          emotes,
-          ytAuth,
-          persistedStreamerKey !== undefined ? { persistedStreamerKey } : undefined
-        )
+        return new YouTubeSource(target, getYouTubeReader, pageFetch, emotes, ytAuth, {
+          ...(persistedStreamerKey !== undefined ? { persistedStreamerKey } : {}),
+          rawSink: (action) => rawLogger?.record('youtube', id, action)
+        })
       }
       return new TwitchSource(
         target,
@@ -940,7 +988,10 @@ void app
           emotes: twitchEmotes,
           cheermotes: twitchCheermotes
         },
-        { twitchHistory: () => config.settings().twitchHistory }
+        {
+          twitchHistory: () => config.settings().twitchHistory,
+          rawSink: (line, source) => rawLogger?.record('twitch', id, line, source)
+        }
       )
     }
 
@@ -1087,11 +1138,12 @@ app.on('before-quit', (event) => {
   // close() resolves when the log's WriteStream has flushed; include it in the shutdown race
   // so tail writes reach disk before the forced app.exit below can terminate the process.
   const logFlushed = chatLogger?.close() ?? Promise.resolve()
+  const rawLogFlushed = rawLogger?.close() ?? Promise.resolve()
   const disposed = (manager?.disposeAll() ?? Promise.resolve()).catch((error: unknown) => {
     console.error('Error during shutdown:', error)
   })
   void Promise.race([
-    Promise.all([disposed, logFlushed]).then(
+    Promise.all([disposed, logFlushed, rawLogFlushed]).then(
       () => 'completed',
       () => 'failed'
     ),

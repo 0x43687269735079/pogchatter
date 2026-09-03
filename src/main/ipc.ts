@@ -77,6 +77,10 @@ export interface IpcDeps {
   applyChatLog(settings: ChatLogSettings): void
   /** Hold or release the macOS keep-awake power assertion per the setting. */
   applyKeepAwake(enabled: boolean): void
+  /** Apply the spelling setting to the app's default session's spell-checker. */
+  applySpelling(value: AppSettings['spelling']): void
+  /** (Re)open or close the raw wire-level log from settings. */
+  applyRawLog(settings: AppSettings): void
   /** The app's default chat-log directory, used when the user hasn't set one. */
   defaultLogDir(): string
   /** The directory logs are written to: the configured one, or the default. */
@@ -388,6 +392,12 @@ export function registerIpc(deps: IpcDeps): void {
       // Apply the new policy now (write or scrub the plaintext store) and tell the UI.
       deps.getAuthStore()?.refreshPersistence()
       deps.broadcastAuth()
+    }
+    if ('spelling' in patch) {
+      deps.applySpelling(merged.spelling)
+    }
+    if ('rawLog' in patch || 'chatLog' in patch) {
+      deps.applyRawLog(merged)
     }
     return merged
   })

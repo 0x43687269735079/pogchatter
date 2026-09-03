@@ -85,6 +85,8 @@ export function YouTubeLoginModal({
             value={text}
             placeholder="SAPISID=…; __Secure-3PAPISID=…; SID=…; LOGIN_INFO=…; …"
             aria-label="YouTube cookies"
+            spellCheck={false}
+            autoComplete="off"
             onChange={(event) => {
               setText(event.target.value)
             }}

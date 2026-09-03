@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { atName, clockHM } from '@renderer/format'
+import type { Fragment } from '@shared/model'
+import { atName, clockHM, plainText } from '@renderer/format'
 
 describe('atName', () => {
   it('adds @ to a bare name (Twitch display names)', () => {
@@ -8,6 +9,18 @@ describe('atName', () => {
 
   it('leaves an existing @ untouched (YouTube handles)', () => {
     expect(atName('@KozumiNezō')).toBe('@KozumiNezō')
+  })
+})
+
+describe('plainText', () => {
+  it('flattens a link fragment to its shown text, alongside emotes and plain text', () => {
+    const fragments: Fragment[] = [
+      { type: 'text', text: 'thanks ' },
+      { type: 'link', text: '[X GIF by Y]', url: 'https://example.test/g.gif' },
+      { type: 'text', text: ' ' },
+      { type: 'emote', code: 'Kappa', url: 'u', provider: '7tv' }
+    ]
+    expect(plainText(fragments)).toBe('thanks [X GIF by Y] Kappa')
   })
 })
 

@@ -26,6 +26,7 @@ type RenderNode =
   | { kind: 'mention'; text: string }
   | { kind: 'emoji'; text: string }
   | { kind: 'emote'; base: EmoteFragment; overlays: EmoteFragment[] }
+  | { kind: 'link'; text: string; url: string }
 
 // Handles span Unicode letters/digits plus `_ . -` (e.g. @KozumiNezō, @RandomRabbit.c, @Fiza-k5j).
 const MENTION_RE = /(@[\p{L}\p{N}_.-]+)/gu
@@ -60,6 +61,9 @@ function buildNodes(fragments: Frag[]): RenderNode[] {
       }
     } else if (fragment.type === 'mention') {
       nodes.push({ kind: 'mention', text: fragment.text })
+    } else if (fragment.type === 'link') {
+      // A link's own text isn't split for @mentions/emoji — it renders verbatim inside the anchor.
+      nodes.push({ kind: 'link', text: fragment.text, url: fragment.url })
     } else {
       for (const part of fragment.text.split(MENTION_RE)) {
         if (part === '') {
@@ -93,6 +97,23 @@ function renderFragments(fragments: Frag[]): ReactNode {
         <span key={index} className="pc-uni-emote">
           {node.text}
         </span>
+      )
+    }
+    if (node.kind === 'link') {
+      return (
+        <a
+          key={index}
+          className="pc-link"
+          href={node.url}
+          title={node.url}
+          rel="noreferrer"
+          onClick={(event) => {
+            event.preventDefault()
+            void window.chat.openExternal(node.url)
+          }}
+        >
+          {node.text}
+        </a>
       )
     }
     const dot = PROVIDER_DOT[node.base.provider]

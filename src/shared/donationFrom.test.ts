@@ -168,6 +168,17 @@ describe('donationFrom exclusions', () => {
     ]
     expect(donationFrom(emoteOnly, 'yt:v', 'sk')?.text).toBe('KappaPogChamp')
   })
+
+  it('carries a link fragment (Twitch GIF) as text plus its url', () => {
+    const withLink = message({ highlight: { kind: 'bits', amount: 100 }, platform: 'twitch' })
+    withLink.fragments = [
+      { type: 'text', text: 'thanks ' },
+      { type: 'link', text: '[X GIF by Y]', url: 'https://example.test/g.gif' }
+    ]
+    expect(donationFrom(withLink, 'tw:chan', 'sk')?.text).toBe(
+      'thanks [X GIF by Y] (https://example.test/g.gif)'
+    )
+  })
 })
 
 describe('donationFrom tips announced in chat', () => {

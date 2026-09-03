@@ -146,8 +146,12 @@ export function SettingsModal({
   const [rawLogStatus, setRawLogStatus] = useState<RawLogStatus | undefined>(undefined)
   useEffect(() => {
     void window.chat.defaultLogDirectory().then(setDefaultDir)
-    void window.chat.rawLogStatus().then(setRawLogStatus)
   }, [])
+  // Re-read after a toggle or a directory move: main re-opens or closes the log on the same settings
+  // write, and the size shown must follow it.
+  useEffect(() => {
+    void window.chat.rawLogStatus().then(setRawLogStatus)
+  }, [settings.rawLog.enabled, log.directory])
 
   function updateLog(patch: Partial<ChatLogSettings>): void {
     onChange({ chatLog: { ...log, ...patch } })
@@ -160,9 +164,8 @@ export function SettingsModal({
     }
   }
 
-  async function toggleRawLog(enabled: boolean): Promise<void> {
+  function toggleRawLog(enabled: boolean): void {
     onChange({ rawLog: { enabled } })
-    setRawLogStatus(await window.chat.rawLogStatus())
   }
 
   return (
@@ -312,7 +315,7 @@ export function SettingsModal({
           </span>
           <select
             className="pc-select"
-            value={settings.spelling}
+            value={isMac && settings.spelling !== 'off' ? 'en-US' : settings.spelling}
             aria-label="Spelling"
             onChange={(event) => {
               const value = event.target.value
@@ -321,13 +324,18 @@ export function SettingsModal({
               })
             }}
           >
-            <option value="en-US" disabled={isMac}>
-              English (US)
-            </option>
-            <option value="en-GB" disabled={isMac}>
-              English (UK)
-            </option>
-            <option value="off">Off</option>
+            {isMac ? (
+              <>
+                <option value="en-US">On — system language</option>
+                <option value="off">Off</option>
+              </>
+            ) : (
+              <>
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="off">Off</option>
+              </>
+            )}
           </select>
         </label>
 
@@ -555,14 +563,14 @@ export function SettingsModal({
               <span className="pc-setting-desc">
                 Writes every raw Twitch IRC line and YouTube chat action, verbatim, to a{' '}
                 <code>raw</code> folder inside the chat-log folder — one file per platform per day.
-                This stores full message content.
+                This stores full message content. Files are never deleted automatically.
               </span>
             </span>
             <input
               type="checkbox"
               className="pc-switch"
               checked={settings.rawLog.enabled}
-              onChange={(event) => void toggleRawLog(event.target.checked)}
+              onChange={(event) => toggleRawLog(event.target.checked)}
             />
           </label>
           <div className="pc-log-dir">

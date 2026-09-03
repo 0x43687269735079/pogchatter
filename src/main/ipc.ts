@@ -91,7 +91,7 @@ export interface IpcDeps {
   /** POGCHATTER_SEND_DEBUG: time the send round-trip (IPC receipt → platform send resolved). */
   sendDebug: boolean
   /** The raw wire-level log's current state (on/off, file size, why it's off if disabled). */
-  rawLogStatus(): RawLogStatus
+  rawLogStatus(): Promise<RawLogStatus>
   /** Reveal the raw log directory in the OS file manager. */
   openRawLogDir(): Promise<void>
 }
@@ -521,7 +521,7 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: false, error: error instanceof Error ? error.message : 'Failed to read file' }
     }
   })
-  handle('chat:rawLogStatus', (): RawLogStatus => deps.rawLogStatus())
+  handle('chat:rawLogStatus', (): Promise<RawLogStatus> => deps.rawLogStatus())
   handle('chat:openRawLogDir', () => deps.openRawLogDir())
 }
 

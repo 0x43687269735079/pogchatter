@@ -60,11 +60,11 @@ export class DonationStore {
   #donations: Donation[] = []
   readonly #ids = new Set<string>()
   /**
-   * Membership dedup key to the timestamp it was last seen at, newest last. In memory only: it
-   * guards against two live rooms announcing one purchase, which cannot outlive the session.
+   * Recent membership purchases by dedup key — each purchase an occurrence with when it was first seen
+   * and which rooms have announced it, newest last. Several are kept per key so a delayed echo of an
+   * earlier purchase cannot be pinned to a later one.
    */
-  /** Recent membership purchases by dedup key: when first seen, and which rooms have announced it. */
-  readonly #membershipSeen = new Map<string, { at: number; rooms: Set<string> }>()
+  readonly #membershipSeen = new Map<string, Array<{ at: number; rooms: Set<string> }>>()
   #timer: ReturnType<typeof setTimeout> | undefined
   /** Unsaved changes are pending; cleared only by a write that actually succeeded. */
   #dirty = false
@@ -213,17 +213,22 @@ export class DonationStore {
     if (key === undefined) {
       return false
     }
-    const seen = this.#membershipSeen.get(key)
-    const inWindow =
-      seen !== undefined && Math.abs(donation.timestamp - seen.at) < MEMBERSHIP_DEDUP_WINDOW_MS
-    // The same room announcing the same purchase again is not a fan-out echo — each room announces
-    // an event once — so it is a genuine second purchase; only another room's copy is a duplicate.
-    if (inWindow && !seen.rooms.has(room)) {
-      seen.rooms.add(room)
+    const recent = (this.#membershipSeen.get(key) ?? []).filter(
+      (occurrence) => Math.abs(donation.timestamp - occurrence.at) < MEMBERSHIP_DEDUP_WINDOW_MS
+    )
+    // A room announces each purchase once, so an echo can only come from a room that hasn't spoken
+    // for that purchase yet; among such purchases the nearest in time is the one being echoed.
+    const echoed = recent
+      .filter((occurrence) => !occurrence.rooms.has(room))
+      .sort((a, b) => Math.abs(donation.timestamp - a.at) - Math.abs(donation.timestamp - b.at))[0]
+    if (echoed !== undefined) {
+      echoed.rooms.add(room)
+      this.#membershipSeen.set(key, recent)
       return true
     }
+    recent.push({ at: donation.timestamp, rooms: new Set([room]) })
     this.#membershipSeen.delete(key)
-    this.#membershipSeen.set(key, { at: donation.timestamp, rooms: new Set([room]) })
+    this.#membershipSeen.set(key, recent)
     while (this.#membershipSeen.size > MEMBERSHIP_DEDUP_MAX) {
       const oldest = this.#membershipSeen.keys().next()
       if (oldest.done === true) {

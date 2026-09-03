@@ -30,6 +30,25 @@ interface GifTagEntry {
   url: string
 }
 
+/**
+ * Twitch serves chat GIFs from GIPHY, so that is the only host an image may be loaded from. The tag
+ * is trusted when it comes from Twitch's own server, but the recent-messages backlog is a third
+ * party's replay of it — an attacker-chosen host there would turn every viewer into a tracking-pixel
+ * fetch. Credentials in the URL are refused for the same reason.
+ */
+function isGiphyImageUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+    return false
+  }
+  return parsed.hostname === 'giphy.com' || parsed.hostname.endsWith('.giphy.com')
+}
+
 const GIF_ENTRY_BOUND = /^\d+$/
 
 /** Parse one `<start>-<end>|<gif_id>|<url>` entry, or `undefined` if it is malformed. */
@@ -44,7 +63,7 @@ function parseGifEntry(entry: string): GifTagEntry | undefined {
   // The URL is everything after the second `|` — it may itself contain `|`, so it is never split on.
   const url = entry.slice(secondPipe + 1)
   const dash = range.indexOf('-')
-  if (dash === -1 || !url.startsWith('https://')) {
+  if (dash === -1 || !isGiphyImageUrl(url)) {
     return undefined
   }
   const startText = range.slice(0, dash)

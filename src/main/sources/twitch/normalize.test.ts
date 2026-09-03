@@ -365,12 +365,35 @@ describe('normalizeTwitchMessage gifs tag', () => {
     const text = `🙂 ${placeholder}`
     const start = 2
     const end = start + [...placeholder].length - 1
-    const tags = new Map([['gifs', `${start}-${end}|abc|https://cdn/x.gif`]])
+    const tags = new Map([
+      ['gifs', `${start}-${end}|abc|https://media1.giphy.com/media/x/giphy.gif`]
+    ])
     const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
     expect(message.fragments).toEqual([
       { type: 'text', text: '🙂 ' },
-      { type: 'gif', text: placeholder, url: 'https://cdn/x.gif', id: 'abc' }
+      {
+        type: 'gif',
+        text: placeholder,
+        url: 'https://media1.giphy.com/media/x/giphy.gif',
+        id: 'abc'
+      }
     ])
+  })
+
+  it('refuses a GIF hosted anywhere but GIPHY, or carrying credentials', () => {
+    // The recent-messages backlog is a third party's replay of chat; a forged tag there must not
+    // make every viewer fetch an attacker's URL.
+    for (const url of [
+      'https://tracker.example/pixel.gif',
+      'https://giphy.com.evil.example/x.gif',
+      'https://user:pw@media1.giphy.com/media/x/giphy.gif',
+      'http://media1.giphy.com/media/x/giphy.gif'
+    ]) {
+      const text = 'gif'
+      const tags = new Map([['gifs', `0-2|abc|${url}`]])
+      const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+      expect(message.fragments, url).toEqual([{ type: 'text', text }])
+    }
   })
 
   it('leaves the text unchanged when the range is not numeric', () => {
@@ -389,7 +412,7 @@ describe('normalizeTwitchMessage gifs tag', () => {
 
   it('keeps the full URL when it contains pipes', () => {
     const text = 'gif here'
-    const url = 'https://cdn/x?a=1|b=2'
+    const url = 'https://media1.giphy.com/media/x/giphy.gif?a=1|b=2'
     const tags = new Map([['gifs', `0-2|abc|${url}`]])
     const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
     expect(message.fragments).toEqual([
@@ -400,7 +423,7 @@ describe('normalizeTwitchMessage gifs tag', () => {
 
   it('keeps a preceding emote fragment alongside the GIF', () => {
     const text = 'Kappa hello'
-    const tags = new Map([['gifs', '6-10|abc|https://cdn/g.gif']])
+    const tags = new Map([['gifs', '6-10|abc|https://media2.giphy.com/media/g/giphy.gif']])
     const msg = ircMessage({}, tags)
     ;(msg as { emoteOffsets: Map<string, string[]> }).emoteOffsets = new Map([['e1', ['0-4']]])
     const message = normalizeTwitchMessage('s', text, msg)
@@ -412,13 +435,13 @@ describe('normalizeTwitchMessage gifs tag', () => {
         provider: 'twitch'
       },
       { type: 'text', text: ' ' },
-      { type: 'gif', text: 'hello', url: 'https://cdn/g.gif', id: 'abc' }
+      { type: 'gif', text: 'hello', url: 'https://media2.giphy.com/media/g/giphy.gif', id: 'abc' }
     ])
   })
 
   it('ignores an entry whose range runs past the end of the text', () => {
     const text = 'hi'
-    const tags = new Map([['gifs', '0-5|abc|https://cdn/g.gif']])
+    const tags = new Map([['gifs', '0-5|abc|https://media2.giphy.com/media/g/giphy.gif']])
     const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
     expect(message.fragments).toEqual([{ type: 'text', text }])
   })

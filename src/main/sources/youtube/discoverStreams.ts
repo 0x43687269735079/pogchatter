@@ -77,10 +77,20 @@ async function resolveScheduledStarts(
   streams: DiscoveredStream[]
 ): Promise<void> {
   const waiting = streams.filter((stream) => stream.state === 'waiting')
+  // A lookup that hits its deadline is still running underneath (youtubei.js can't abort it), so
+  // after one stall no further lookups start — otherwise stalled requests would pile up past the
+  // concurrency limit. The rooms not yet looked up simply stay unscheduled.
+  let stalled = false
   await runWithConcurrencyLimit(waiting, SCHEDULED_START_LOOKUP_CONCURRENCY, async (stream) => {
-    const start = await lookupScheduledStart(reader, stream.videoId)
-    if (start !== undefined) {
-      stream.scheduledStart = start
+    if (stalled) {
+      return
+    }
+    const result = await lookupScheduledStart(reader, stream.videoId)
+    if (result.timedOut) {
+      stalled = true
+    }
+    if (result.start !== undefined) {
+      stream.scheduledStart = result.start
     }
   })
 }
@@ -89,17 +99,20 @@ async function resolveScheduledStarts(
 async function lookupScheduledStart(
   reader: Innertube,
   videoId: string
-): Promise<number | undefined> {
+): Promise<{ start: number | undefined; timedOut: boolean }> {
   let timer: ReturnType<typeof setTimeout> | undefined
-  const deadline = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => resolve(undefined), SCHEDULED_START_LOOKUP_TIMEOUT_MS)
+  const deadline = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), SCHEDULED_START_LOOKUP_TIMEOUT_MS)
     timer.unref()
   })
   try {
     const info = await Promise.race([reader.getBasicInfo(videoId), deadline])
-    return info?.basic_info.start_timestamp?.getTime()
+    if (info === 'timeout') {
+      return { start: undefined, timedOut: true }
+    }
+    return { start: info.basic_info.start_timestamp?.getTime(), timedOut: false }
   } catch {
-    return undefined
+    return { start: undefined, timedOut: false }
   } finally {
     clearTimeout(timer)
   }

@@ -1,4 +1,4 @@
-import { type ReactElement, useMemo } from 'react'
+import { type ReactElement, useEffect, useMemo } from 'react'
 import type { ChannelInfo, Platform } from '@shared/model'
 import type { Donation, DonationKind, DonationTotals, KindTotal } from '@shared/donations'
 import { convert, countryName, flagFor, formatMoney } from '@shared/currencyFormat'
@@ -73,6 +73,14 @@ export function DonationsPanel({
       ? selectedStreamer
       : undefined
   const scoped = useMemo(() => visibleDonations(donations, selected), [donations, selected])
+  // A selection whose streamer has no donations left is cleared in the parent too — otherwise the
+  // panel would show "all" while still holding the key, and silently snap back to that streamer the
+  // moment one of their donations arrived.
+  useEffect(() => {
+    if (selectedStreamer !== undefined && !chips.some((chip) => chip.key === selectedStreamer)) {
+      onSelectStreamer(undefined)
+    }
+  }, [chips, selectedStreamer, onSelectStreamer])
   const totals = useMemo(
     () => donationTotals(scoped, rates, baseCurrency, sessionStartedAt),
     [scoped, rates, baseCurrency, sessionStartedAt]

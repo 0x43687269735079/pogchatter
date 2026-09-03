@@ -33,7 +33,8 @@ export class SourceManager {
     identity: { streamerKey: string; creatorId?: string }
   ) => void
   /** Source ids that have already reported a resolved identity, so it fires only once each. */
-  readonly #identityResolved = new Set<string>()
+  /** The creator id last reported per source, so an owner change is reported again. */
+  readonly #identityReported = new Map<string, string>()
 
   constructor(
     onEvent: (event: ChatEvent) => void,
@@ -77,6 +78,7 @@ export class SourceManager {
     // Relabel the channel to the resolved stream title (a `@handle` column otherwise shows the bare
     // handle, which reads like a chatter in the monitor's origin tag), and re-announce the list.
     const onTitle = (title: string): void => {
+      this.#reportIdentityIfResolved(source)
       if (this.#labels.get(source.id) === title) {
         return
       }
@@ -174,14 +176,11 @@ export class SourceManager {
    * first time its creator becomes known (YouTube only — other sources never expose `creator()`).
    */
   #reportIdentityIfResolved(source: ChatSource): void {
-    if (this.#identityResolved.has(source.id)) {
-      return
-    }
     const creator = source.creator?.()
-    if (creator === undefined) {
+    if (creator === undefined || this.#identityReported.get(source.id) === creator.channelId) {
       return
     }
-    this.#identityResolved.add(source.id)
+    this.#identityReported.set(source.id, creator.channelId)
     const streamerKey = source.streamerKey?.() ?? legacyStreamerKey(source.id)
     this.#onIdentityResolved(source.id, { streamerKey, creatorId: creator.channelId })
     // The renderer learns creatorId only through a channels event, and status changes don't send
@@ -241,7 +240,7 @@ export class SourceManager {
     this.#detachers.delete(sourceId)
     this.#sources.delete(sourceId)
     this.#labels.delete(sourceId)
-    this.#identityResolved.delete(sourceId)
+    this.#identityReported.delete(sourceId)
     // Release the scope only when no remaining source shares it (two columns can — e.g.
     // two streams of one YouTube channel), so the survivors keep their emotes.
     if (scope !== undefined && !this.#scopeInUse(scope)) {
@@ -379,6 +378,6 @@ export class SourceManager {
     this.#detachers.clear()
     this.#sources.clear()
     this.#labels.clear()
-    this.#identityResolved.clear()
+    this.#identityReported.clear()
   }
 }

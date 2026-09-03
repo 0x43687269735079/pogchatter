@@ -258,6 +258,9 @@ let rawLogger: RawMessageLogger | undefined
 // The directory `rawLogger` is currently open on — RawMessageLogger exposes no getter for it, so
 // applyRawLog tracks it alongside the instance to detect a directory change.
 let rawLoggerDir: string | undefined
+// The last close in flight: a status read right after disabling must wait for the tail to flush,
+// or the size it reports is short.
+let rawLoggerClosing: Promise<void> = Promise.resolve()
 let authManager: TwitchAuthManager | undefined
 let youtubeAuth: YouTubeAuthManager | undefined
 let emoteEngine: EmoteEngine | undefined
@@ -372,13 +375,13 @@ function rawDir(): string {
 function applyRawLog(settings: AppSettings): void {
   const dir = rawDir()
   if (!settings.rawLog.enabled) {
-    void rawLogger?.close()
+    rawLoggerClosing = rawLogger?.close() ?? Promise.resolve()
     rawLogger = undefined
     rawLoggerDir = undefined
     return
   }
   if (rawLogger === undefined || rawLoggerDir !== dir) {
-    void rawLogger?.close()
+    rawLoggerClosing = rawLogger?.close() ?? Promise.resolve()
     rawLogger = new RawMessageLogger(dir)
     rawLoggerDir = dir
   }
@@ -772,7 +775,10 @@ void app
       appFilePath: APP_FILE_PATH,
       sendDebug: SEND_DEBUG,
       // Files written earlier still take space after logging is turned off; size the folder itself.
-      rawLogStatus: () => rawLogger?.status() ?? { enabled: false, bytes: rawLogBytes(rawDir()) },
+      rawLogStatus: async () => {
+        await rawLoggerClosing
+        return rawLogger?.status() ?? { enabled: false, bytes: rawLogBytes(rawDir()) }
+      },
       openRawLogDir: async () => {
         // Only a live logger justifies creating the folder; otherwise open what exists (the raw
         // folder if earlier runs left one, else the chat-log folder it lives under).

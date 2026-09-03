@@ -71,6 +71,7 @@ export class YouTubeSource extends BaseChatSource {
   readonly #fixedVideo: boolean
   /** Streamer key persisted from a prior resolve (`PersistedChannel.streamerKey`); overrides the derived one. */
   readonly #persistedStreamerKey: string | undefined
+  readonly #persistedCreatorId: string | undefined
   /** Fed every raw InnerTube action, before normalisation, for the raw connector-payload logger. */
   readonly #rawSink: ((action: unknown) => void) | undefined
   #yt: Innertube | undefined
@@ -123,6 +124,7 @@ export class YouTubeSource extends BaseChatSource {
     this.#auth = auth
     this.#fixedVideo = VIDEO_ID_RE.test(this.#target)
     this.#persistedStreamerKey = options?.persistedStreamerKey
+    this.#persistedCreatorId = options?.persistedCreatorId
     this.#rawSink = options?.rawSink
     // A creator id stored by an earlier run identifies this column offline; the name (only used
     // for a fresh key) arrives once the video resolves.
@@ -167,10 +169,17 @@ export class YouTubeSource extends BaseChatSource {
    * key until the creator resolves (see {@link streamerKeyOf}).
    */
   streamerKey(): string {
-    return (
-      this.#persistedStreamerKey ??
-      streamerKeyOf('youtube', this.#target, this.#creator?.name, this.#creator?.channelId)
-    )
+    // A stored key stands only while the creator it was stored for is still the one behind this
+    // column: a handle can change hands, and the new owner's income must not file under the old.
+    const persistedStillApplies =
+      this.#persistedStreamerKey !== undefined &&
+      (this.#creator === undefined ||
+        this.#persistedCreatorId === undefined ||
+        this.#creator.channelId === this.#persistedCreatorId)
+    if (persistedStillApplies) {
+      return this.#persistedStreamerKey as string
+    }
+    return streamerKeyOf('youtube', this.#target, this.#creator?.name, this.#creator?.channelId)
   }
 
   /** The video this source is currently reading, once resolved — so discovery can avoid re-adding it. */

@@ -1126,6 +1126,30 @@ describe('YouTubeSource creator identity', () => {
     await source.disconnect()
   })
 
+  it('drops a stored key once the handle resolves to a different creator', async () => {
+    // A handle can change hands; the new owner's income must not file under the old key.
+    const yt = {
+      getInfo: vi.fn().mockResolvedValue({
+        basic_info: { is_live: true, channel_id: 'UCnew-owner', author: 'New Owner' },
+        livechat: { continuation: 'c0', is_replay: false }
+      }),
+      getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
+      actions: { execute: vi.fn().mockResolvedValue(emptyChatResponse()) }
+    }
+    const source = new YouTubeSource(
+      'aaaaaaaaaaa',
+      () => Promise.resolve(yt as never),
+      idleFetch,
+      emotes,
+      auth,
+      { persistedStreamerKey: 'oldowner', persistedCreatorId: 'UCold-owner' }
+    )
+    expect(source.streamerKey()).toBe('oldowner') // trusted until the video says otherwise
+    await source.connect()
+    expect(source.streamerKey()).toBe('newowner')
+    await source.disconnect()
+  })
+
   it('falls back to a target-based key before the creator resolves', () => {
     const source = new YouTubeSource(
       '@FallenShadow',

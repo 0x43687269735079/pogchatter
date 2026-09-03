@@ -362,6 +362,18 @@ describe('DonationStore membership dedup', () => {
     expect(donations.list().map((d) => d.id)).toEqual(['again', 'first'])
   })
 
+  it('pins a delayed echo to the purchase it echoes, not to a later one', () => {
+    // Two purchases from room A within the window; the first's echoes from B and C arrive late, then
+    // the second's echo from B. Only two purchases happened.
+    const donations = store()
+    donations.record(membership('p1', 1_000), 'youtube:a', context)
+    donations.record(membership('p2', 10_000), 'youtube:a', context)
+    donations.record(membership('p1-b', 2_000), 'youtube:b', context)
+    donations.record(membership('p1-c', 3_000), 'youtube:c', context)
+    donations.record(membership('p2-b', 11_000), 'youtube:b', context)
+    expect(donations.list().map((d) => d.id)).toEqual(['p2', 'p1'])
+  })
+
   it('collects a genuine second purchase once the window has passed', () => {
     const donations = store()
     donations.record(membership('first', 1_000), 'youtube:vid', context)

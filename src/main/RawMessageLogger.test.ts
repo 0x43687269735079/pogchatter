@@ -166,3 +166,13 @@ describe('RawMessageLogger under pressure and at rollover', () => {
     expect(rawLogBytes(join(dir, 'nope'))).toBe(0)
   })
 })
+
+describe('RawMessageLogger file permissions', () => {
+  it.skipIf(process.platform === 'win32')('keeps the log readable by this user only', async () => {
+    const logger = new RawMessageLogger(dir, () => new Date(2026, 0, 15, 10, 0, 0))
+    logger.record('twitch', 'chan-a', 'private')
+    await logger.close()
+    const { statSync } = await import('node:fs')
+    expect(statSync(join(dir, 'twitch-2026-01-15.jsonl')).mode & 0o777).toBe(0o600)
+  })
+})

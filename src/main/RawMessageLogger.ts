@@ -175,9 +175,10 @@ export class RawMessageLogger {
       this.#paused.delete(platform)
     }
     try {
-      mkdirSync(this.#dir, { recursive: true })
+      // Full message content: readable by this user only, whatever the umask says.
+      mkdirSync(this.#dir, { recursive: true, mode: 0o700 })
       const path = join(this.#dir, `${platform}-${dateKey}.jsonl`)
-      const stream = createWriteStream(path, { flags: 'a' })
+      const stream = createWriteStream(path, { flags: 'a', mode: 0o600 })
       // The fd opens (and writes flush) asynchronously: without a listener, an 'error' event
       // (disk full, removed volume, revoked permissions) is an uncaught exception that would
       // take down the whole main process.

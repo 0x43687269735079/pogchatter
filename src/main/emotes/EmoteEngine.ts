@@ -193,6 +193,8 @@ export class EmoteEngine {
   #userScope: EmoteScope | undefined
   /** Pending failure retries per scope key ('global', 'user', or `platform:id`). */
   readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Re-check timers for scopes every provider 404d: the source never re-asks for an unchanged room. */
+  readonly #recheckTimers = new Map<string, ReturnType<typeof setTimeout>>()
   readonly #retryAttempts = new Map<string, number>()
   /** 7TV emote-set id → the scopes it backs: 'global', 'user', or a `platform:id` channel key. */
   readonly #sevenTvScopes = new Map<string, Set<string>>()
@@ -317,6 +319,30 @@ export class EmoteEngine {
   }
 
   /** Whether a loaded scope every provider 404'd has been cached long enough to try again. */
+  /**
+   * A scope every provider 404d is worth asking about again later (the channel may add a 7TV set),
+   * but a Twitch source only calls ensureChannel when its room id first resolves — so the engine
+   * owns the timer. Cleared on release and dispose; never holds the process open.
+   */
+  #scheduleNotFoundRecheck(key: string, scope: EmoteScope, notFound: boolean): void {
+    const existing = this.#recheckTimers.get(key)
+    if (existing !== undefined) {
+      clearTimeout(existing)
+      this.#recheckTimers.delete(key)
+    }
+    if (!notFound || this.#disposed) {
+      return
+    }
+    const timer = setTimeout(() => {
+      this.#recheckTimers.delete(key)
+      if (!this.#disposed && this.#channelScopes.has(key)) {
+        this.ensureChannel(scope.platform, scope.channelId)
+      }
+    }, NOT_FOUND_RECHECK_MS)
+    timer.unref()
+    this.#recheckTimers.set(key, timer)
+  }
+
   #dueForRecheck(key: string): boolean {
     const state = this.#scopeState.get(key)
     if (state === undefined || !state.notFound) {
@@ -336,6 +362,7 @@ export class EmoteEngine {
     this.#channelLists.delete(key)
     this.#scopeState.delete(key)
     this.#clearRetry(key)
+    this.#clearRecheck(key)
     this.#unbindSevenTvScope(key)
     if (this.#channels.delete(key)) {
       this.#rebuildShared()
@@ -362,6 +389,7 @@ export class EmoteEngine {
     this.#watchSevenTvSet(load.sevenTvSetId, key)
     const notFound = isNotFound(load)
     this.#scopeState.set(key, { loadedAt: this.#now(), notFound })
+    this.#scheduleNotFoundRecheck(key, scope, notFound)
     logScopeLoad(key, load, notFound)
     this.#notifyIndexChanged(scope)
     this.#settleRetry(key, load.complete, () => this.#loadChannel(key, scope))
@@ -424,6 +452,14 @@ export class EmoteEngine {
         void run()
       }, delay)
     )
+  }
+
+  #clearRecheck(key: string): void {
+    const timer = this.#recheckTimers.get(key)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+    }
+    this.#recheckTimers.delete(key)
   }
 
   #clearRetry(key: string): void {
@@ -495,6 +531,10 @@ export class EmoteEngine {
   dispose(): void {
     this.#disposed = true
     this.#clearAllRetries()
+    for (const timer of this.#recheckTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.#recheckTimers.clear()
     if (this.#sharedNotifyTimer !== undefined) {
       clearTimeout(this.#sharedNotifyTimer)
       this.#sharedNotifyTimer = undefined
@@ -592,16 +632,19 @@ export class EmoteEngine {
   /** Set the Twitch global + user emote catalog (Helix), or clear it on logout. */
   setTwitchGlobal(emotes: ResolvedEmote[]): void {
     this.#twitchGlobal = buildIndex([emotes])
+    this.#notifySharedChanged()
   }
 
   /** Set a Twitch channel's native emotes (Helix), keyed by room id. */
   setTwitchChannel(roomId: string, emotes: ResolvedEmote[]): void {
     this.#twitchChannels.set(roomId, buildIndex([emotes]))
+    this.#notifyIndexChanged({ platform: 'twitch', channelId: roomId })
   }
 
   clearTwitch(): void {
     this.#twitchGlobal = new Map()
     this.#twitchChannels.clear()
+    this.#notifySharedChanged()
   }
 
   /**

@@ -109,8 +109,8 @@ Everything the app talks to, so you can judge it for yourself:
 - **Spelling dictionaries** — on Windows and Linux the built-in spell-checker downloads its
   Hunspell dictionary once from Chromium's CDN (a Google host). macOS uses the system checker and
   downloads nothing. Turn spelling off in Settings to avoid it.
-- **Twitch GIFs** — a GIF message is shown inline, loaded from GIPHY's CDN (`media*.giphy.com`) the
-  same way twitch.tv loads it. GIPHY refuses these URLs as a page you open directly, so there is no
+- **Twitch GIFs** — a GIF message is shown inline, loaded from GIPHY's CDN (`*.giphy.com`, the only
+  host accepted) the same way twitch.tv loads it. GIPHY refuses these URLs as a page you open directly, so there is no
   "open in browser" for them.
 
 Nothing else is contacted. The optional **raw message log** (Settings → Advanced) writes every

@@ -565,3 +565,22 @@ describe('SourceManager re-announces channels when a creator resolves', () => {
     expect(after.at(-1)?.channels[0]?.creatorId).toBe('UCmade-up')
   })
 })
+
+describe('SourceManager reports an identity change', () => {
+  it('reports again when a handle resolves to a different creator than before', async () => {
+    const resolved: string[] = []
+    const manager = new SourceManager(
+      () => {},
+      () => {},
+      () => {},
+      (_sourceId, identity) => resolved.push(identity.creatorId ?? '')
+    )
+    const source = new ResolvingYouTubeSource('youtube:@handle')
+    await manager.add(source, 'yt:@handle')
+    source.resolveCreator('UCold', 'Old Owner')
+    source.end() // a further status change with the same creator: no repeat
+    source.resolveCreator('UCnew', 'New Owner') // same status as before, so nothing emits yet
+    source.end() // the next status change carries the new owner
+    expect(resolved).toEqual(['UCold', 'UCnew'])
+  })
+})

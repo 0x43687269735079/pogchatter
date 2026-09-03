@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Innertube } from 'youtubei.js'
 import type { DiscoveredStream } from '@main/sources/youtube/discoverStreams'
 import {
@@ -223,5 +223,33 @@ describe('sortForOpening', () => {
     const sorted = sortForOpening(input)
     expect(sorted).not.toBe(input)
     expect(input.map((s) => s.videoId)).toEqual(['ccccccccccc', 'aaaaaaaaaaa'])
+  })
+})
+
+describe('discoverChannelStreams under a stalled scheduled-start lookup', () => {
+  it('stops starting lookups once one stalls, and still returns the rooms', async () => {
+    vi.useFakeTimers()
+    try {
+      const rooms = Array.from({ length: 8 }, (_, index) => ({
+        ...(upcoming as Record<string, unknown>),
+        content_id: `${String.fromCharCode(100 + index)}aaaaaaaaaa`
+      }))
+      const calls: string[] = []
+      const reader = fakeReader({
+        browseId: 'UC123',
+        lockups: rooms,
+        getBasicInfoCalls: calls,
+        basicInfo: () => new Promise(() => undefined)
+      })
+      const pending = discoverChannelStreams(reader, '@stalled')
+      await vi.advanceTimersByTimeAsync(5_100)
+      const streams = await pending
+      expect(streams).toHaveLength(8)
+      expect(streams.every((stream) => stream.scheduledStart === undefined)).toBe(true)
+      // The concurrency limit holds: after the first batch stalls, no further lookups begin.
+      expect(calls.length).toBeLessThanOrEqual(4)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -49,6 +49,26 @@ export function moveColumnTo(order: string[], id: string, toIndex: number): stri
 }
 
 /**
+ * Insert `ids` immediately after `anchorId`, preserving their given order. Any of `ids` already
+ * present in `order` are relocated (removed from their old spot first); `anchorId` itself is
+ * never moved, even if it's listed in `ids`. When `anchorId` is absent from `order`, `ids` are
+ * appended at the end instead. Returns the input array unchanged (same reference) when nothing
+ * would change (empty `ids`, or they're already in exactly that position), so the caller can skip
+ * persisting a no-op.
+ */
+export function insertAfter(order: string[], anchorId: string, ids: string[]): string[] {
+  const toInsert = ids.filter((id) => id !== anchorId)
+  if (toInsert.length === 0) {
+    return order
+  }
+  const base = order.filter((id) => !toInsert.includes(id))
+  const anchorIndex = base.indexOf(anchorId)
+  const at = anchorIndex === -1 ? base.length : anchorIndex + 1
+  const next = [...base.slice(0, at), ...toInsert, ...base.slice(at)]
+  return next.length === order.length && next.every((id, i) => id === order[i]) ? order : next
+}
+
+/**
  * Default left-to-right priority for a column that hasn't been explicitly placed: the flagged
  * (moderation) view leads, monitor views come second, chat columns follow.
  */

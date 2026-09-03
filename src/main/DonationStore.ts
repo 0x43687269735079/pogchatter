@@ -8,9 +8,32 @@ import {
   DONATION_RETENTION
 } from '@shared/donations'
 import { donationFrom } from '@shared/donationFrom'
+import { membershipDedupKey } from '@shared/membershipKey'
+import { legacyStreamerKey } from '@shared/streamerKey'
 
 /** How long to batch writes, so a gift-sub storm doesn't rewrite the file once per event. */
 const WRITE_DEBOUNCE_MS = 1000
+
+/**
+ * How far apart two announcements of the same membership can be and still be one purchase. Wide
+ * enough for the lag between a creator's rooms, far short of the gap before someone could plausibly
+ * buy the same thing again.
+ */
+const MEMBERSHIP_DEDUP_WINDOW_MS = 60_000
+
+/**
+ * How many membership keys to remember. It only has to span the window, so this is a safety bound
+ * against a gift storm growing the map without limit rather than a tuning knob.
+ */
+const MEMBERSHIP_DEDUP_MAX = 512
+
+/** What the caller knows about the chat a message arrived on that the message itself doesn't say. */
+export interface DonationContext {
+  /** Who the money went to — see `@shared/streamerKey`. */
+  streamerKey: string
+  /** The YouTube creator channel id, when resolved; enables cross-room membership dedup. */
+  creatorId?: string
+}
 
 export interface DonationStoreDeps {
   /** Directory to keep `donations.json` in (Electron's userData in production). */
@@ -36,6 +59,11 @@ export class DonationStore {
   /** Oldest first, so ageing out is a shift and appending is a push. */
   #donations: Donation[] = []
   readonly #ids = new Set<string>()
+  /**
+   * Membership dedup key to the timestamp it was last seen at, newest last. In memory only: it
+   * guards against two live rooms announcing one purchase, which cannot outlive the session.
+   */
+  readonly #membershipSeen = new Map<string, number>()
   #timer: ReturnType<typeof setTimeout> | undefined
   /** Unsaved changes are pending; cleared only by a write that actually succeeded. */
   #dirty = false
@@ -53,15 +81,25 @@ export class DonationStore {
 
   /**
    * Collect `message` if it is a paid event. Returns the stored donation, or `undefined` when the
-   * message doesn't qualify or its id was already recorded — so a platform re-send or a reconnect
-   * replay never produces a second entry.
+   * message doesn't qualify or was already recorded — so a platform re-send or a reconnect replay
+   * never produces a second entry.
+   *
+   * Args:
+   *   message: The chat message to judge.
+   *   channelId: The source it arrived on.
+   *   context: Who the money went to, and the YouTube creator id when known. With a creator id, a
+   *     membership announced in two of that creator's rooms is recorded once — the ids differ, so
+   *     nothing else can see it as one purchase.
    */
-  record(message: ChatMessage, channelId: string): Donation | undefined {
+  record(message: ChatMessage, channelId: string, context: DonationContext): Donation | undefined {
     if (this.#ids.has(message.id)) {
       return undefined
     }
-    const donation = donationFrom(message, channelId)
+    const donation = donationFrom(message, channelId, context.streamerKey)
     if (donation === undefined) {
+      return undefined
+    }
+    if (this.#isRepeatMembership(donation, context.creatorId)) {
       return undefined
     }
     // Kept in timestamp order rather than arrival order, so a donation that reaches us late but
@@ -157,6 +195,39 @@ export class DonationStore {
     if (this.#dirty) {
       this.#persist()
     }
+  }
+
+  /**
+   * True when this donation is another room's announcement of a membership already collected.
+   *
+   * Recording is the side effect: a first sighting is remembered here so the second one recognises
+   * it. Everything that is not a YouTube membership event — money above all — falls straight
+   * through, because two payments that happen to match are still two payments.
+   */
+  #isRepeatMembership(donation: Donation, creatorId: string | undefined): boolean {
+    if (creatorId === undefined) {
+      return false
+    }
+    const key = membershipDedupKey(donation, creatorId)
+    if (key === undefined) {
+      return false
+    }
+    const seen = this.#membershipSeen.get(key)
+    if (seen !== undefined && Math.abs(donation.timestamp - seen) < MEMBERSHIP_DEDUP_WINDOW_MS) {
+      return true
+    }
+    // Re-inserted rather than updated in place, so Map order stays newest-last and eviction drops
+    // the key least recently seen rather than the one first inserted.
+    this.#membershipSeen.delete(key)
+    this.#membershipSeen.set(key, donation.timestamp)
+    while (this.#membershipSeen.size > MEMBERSHIP_DEDUP_MAX) {
+      const oldest = this.#membershipSeen.keys().next()
+      if (oldest.done === true) {
+        break
+      }
+      this.#membershipSeen.delete(oldest.value)
+    }
+    return false
   }
 
   #schedulePersist(): void {
@@ -276,6 +347,8 @@ function sanitizeDonation(value: unknown): Donation | undefined {
   if (donationValue === undefined) {
     return undefined
   }
+  const rawKey = input['streamerKey']
+  const storedKey = typeof rawKey === 'string' ? rawKey : undefined
   const donation: Donation = {
     id,
     channelId,
@@ -289,7 +362,11 @@ function sanitizeDonation(value: unknown): Donation | undefined {
     value: donationValue,
     text: typeof input['text'] === 'string' ? input['text'] : '',
     read: input['read'] === true,
-    streamerKey: typeof input['streamerKey'] === 'string' ? input['streamerKey'] : channelId
+    // Records written before donations carried a streamer key keep working: the key is rebuilt from
+    // the channel id they do carry, so they group with later ones instead of standing alone. An
+    // empty key is no identity either, so it is rebuilt the same way.
+    streamerKey:
+      storedKey !== undefined && storedKey !== '' ? storedKey : legacyStreamerKey(channelId)
   }
   if (input['removed'] === true) {
     donation.removed = true

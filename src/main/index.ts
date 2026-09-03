@@ -25,6 +25,7 @@ import { ChatLogger } from '@main/ChatLogger'
 import { DonationStore } from '@main/DonationStore'
 import { RateService } from '@main/RateService'
 import { localeCurrency } from '@shared/currencyFormat'
+import { legacyStreamerKey } from '@shared/streamerKey'
 import { EventBacklog } from '@main/EventBacklog'
 import { ConfigStore } from '@main/ConfigStore'
 import { closeDebugLog, debugLog, debugLogEnabled, initDebugLog } from '@main/debugLog'
@@ -284,7 +285,10 @@ function collectDonation(event: ChatEvent): void {
   if (event.kind !== 'message') {
     return
   }
-  const donation = donationStore.record(event.message, event.channelId)
+  // Derived from the channel id until the source's own resolved identity is wired through here.
+  const donation = donationStore.record(event.message, event.channelId, {
+    streamerKey: legacyStreamerKey(event.channelId)
+  })
   if (donation === undefined) {
     return
   }

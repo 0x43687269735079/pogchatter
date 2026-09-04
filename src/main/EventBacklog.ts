@@ -10,13 +10,24 @@ import type { ChatEvent, ChatMessage, ClearTarget } from '@shared/model'
  */
 export class EventBacklog {
   readonly #byChannel = new Map<string, ChatMessage[]>()
+  readonly #capacity: () => number
+
+  /**
+   * Args:
+   *   capacity: How many messages to keep per channel — the renderer's buffer size, so a catalogue
+   *     change can re-tokenise every row the renderer still shows, not only the newest few.
+   */
+  constructor(capacity: () => number = () => BACKLOG_MESSAGES_PER_CHANNEL) {
+    this.#capacity = capacity
+  }
 
   record(event: ChatEvent): void {
     if (event.kind === 'message') {
       const list = this.#byChannel.get(event.channelId) ?? []
       list.push(event.message)
-      if (list.length > BACKLOG_MESSAGES_PER_CHANNEL) {
-        list.splice(0, list.length - BACKLOG_MESSAGES_PER_CHANNEL)
+      const capacity = this.#capacity()
+      if (list.length > capacity) {
+        list.splice(0, list.length - capacity)
       }
       this.#byChannel.set(event.channelId, list)
     } else if (event.kind === 'replace') {

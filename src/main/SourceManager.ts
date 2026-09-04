@@ -175,6 +175,15 @@ export class SourceManager {
    * Report a source's resolved cross-platform identity to {@link #onIdentityResolved}, once, the
    * first time its creator becomes known (YouTube only — other sources never expose `creator()`).
    */
+  /** The streamer key a source reports today, for columns added on its behalf. */
+  streamerKeyFor(sourceId: string): string | undefined {
+    const source = this.#sources.get(sourceId)
+    if (source === undefined) {
+      return undefined
+    }
+    return source.streamerKey?.() ?? legacyStreamerKey(source.id)
+  }
+
   #reportIdentityIfResolved(source: ChatSource): void {
     const creator = source.creator?.()
     if (creator === undefined || this.#identityReported.get(source.id) === creator.channelId) {

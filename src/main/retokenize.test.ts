@@ -133,6 +133,17 @@ describe('retokenizeAgainst and emotes already matched', () => {
     expect(changed.map((m) => m.fragments)).toEqual([[{ type: 'text', text: 'X' }]])
   })
 
+  it('leaves adjacent text runs alone when nothing needs re-tokenising', () => {
+    // YouTube keeps one text fragment per run (a link splits the text around it); merging them
+    // would make an unchanged message compare unequal and be re-pushed on every catalogue change.
+    const runs = message('m1', [
+      { type: 'text', text: 'see ' },
+      { type: 'text', text: 'https://example.test/x' },
+      { type: 'text', text: ' now' }
+    ])
+    expect(retokenizeAgainst([runs], tokenizerFor('X'))).toEqual([])
+  })
+
   it("leaves a native emote from the platform's own tag as it is", () => {
     // Native emotes are not derived from any catalogue, so a catalogue change cannot revise them.
     const native: Fragment = {

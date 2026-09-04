@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { legacyStreamerKey, streamerKeyOf } from '@shared/streamerKey'
+import { legacyStreamerKey, normaliseStreamerKey, streamerKeyOf } from '@shared/streamerKey'
 
 describe('streamerKeyOf', () => {
   it('resolves one streamer to one key however the platform names them', () => {
@@ -21,7 +21,7 @@ describe('streamerKeyOf', () => {
   it('strips the punctuation and casing the two platforms disagree about', () => {
     expect(streamerKeyOf('youtube', 'vid', 'Fallen-Shadow!! 🎮')).toBe('fallenshadow')
     // Underscores survive: they are part of a Twitch login, not decoration.
-    expect(streamerKeyOf('twitch', 'Some_One')).toBe('some_one')
+    expect(streamerKeyOf('twitch', 'Some_One')).toBe('someone')
   })
 
   it('ignores a creator name on Twitch, where the login is already the identity', () => {
@@ -31,7 +31,7 @@ describe('streamerKeyOf', () => {
 
 describe('legacyStreamerKey', () => {
   it('derives the key from an id that names the streamer', () => {
-    expect(legacyStreamerKey('twitch:Some_One')).toBe('some_one')
+    expect(legacyStreamerKey('twitch:Some_One')).toBe('someone')
     expect(legacyStreamerKey('youtube:@FallenShadow')).toBe('fallenshadow')
   })
 
@@ -46,13 +46,37 @@ describe('legacyStreamerKey', () => {
 describe('streamerKeyOf for names outside the Latin alphabet', () => {
   it('falls back to the creator channel id, never to the per-video target', () => {
     // A Japanese channel name normalises to nothing; the video id would split one creator per room.
-    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'こんにちは', 'UCabc_DEF')).toBe('ucabc_def')
-    expect(streamerKeyOf('youtube', 'bbbbbbbbbbb', 'こんにちは', 'UCabc_DEF')).toBe('ucabc_def')
+    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'こんにちは', 'UCabc_DEF')).toBe('ucabcdef')
+    expect(streamerKeyOf('youtube', 'bbbbbbbbbbb', 'こんにちは', 'UCabc_DEF')).toBe('ucabcdef')
   })
 
   it('still prefers a Latin name over the id', () => {
     expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Fallen Shadow', 'UCabc_DEF')).toBe(
       'fallenshadow'
     )
+  })
+})
+
+describe('streamerKeyOf across platforms', () => {
+  it('matches a Twitch login with underscores to the same name spaced out on YouTube', () => {
+    expect(streamerKeyOf('twitch', 'some_streamer')).toBe(
+      streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Some Streamer', 'UCabc')
+    )
+  })
+})
+
+describe('normaliseStreamerKey', () => {
+  it('brings a stored key with underscores up to date and leaves an opaque id alone', () => {
+    expect(normaliseStreamerKey('some_one')).toBe('someone')
+    expect(normaliseStreamerKey('someone')).toBe('someone')
+    expect(normaliseStreamerKey('youtube:aaaaaaaaaaa')).toBe('youtube:aaaaaaaaaaa')
+  })
+})
+
+describe('streamerKeyOf for a handle column', () => {
+  it('keys a @handle column by the handle, not by whatever the creator calls themselves', () => {
+    // The handle is the username a Twitch tab shares; the display name may be anything.
+    expect(streamerKeyOf('youtube', '@some_streamer', 'Shondo', 'UCabc')).toBe('somestreamer')
+    expect(streamerKeyOf('youtube', '@some_streamer')).toBe('somestreamer')
   })
 })

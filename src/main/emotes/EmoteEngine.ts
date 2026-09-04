@@ -171,6 +171,11 @@ export class EmoteEngine {
   #global: EmoteIndex = new Map()
   readonly #channels = new Map<string, EmoteIndex>()
   readonly #pending = new Map<string, Promise<void>>()
+  /**
+   * Per-scope load generation: a load applies only if no newer load of the same scope began while
+   * it was in flight, so a refresh that finished first is not overwritten by the older request.
+   */
+  readonly #loadGeneration = new Map<string, number>()
   /** This account's own 7TV/BTTV/FFZ emotes (from its Twitch identity). */
   #userEmotes: EmoteIndex = new Map()
   /** Merged pool of every added channel's third-party emotes + #userEmotes; applied everywhere. */
@@ -279,6 +284,7 @@ export class EmoteEngine {
 
   /** Load global third-party emotes; failed providers keep retrying in the background. */
   async loadGlobals(): Promise<void> {
+    const generation = this.#beginLoad('global')
     const enabled = this.#providers()
     const load = await settleProviders(
       [
@@ -288,8 +294,8 @@ export class EmoteEngine {
       ],
       this.#globalLists
     )
-    if (this.#disposed) {
-      return
+    if (this.#disposed || !this.#isCurrentLoad('global', generation)) {
+      return // a newer load of the globals began while this one was in flight
     }
     this.#globalLists = load.lists
     this.#global = this.#indexLists(load.lists)
@@ -379,6 +385,8 @@ export class EmoteEngine {
     this.#scopeState.delete(key)
     this.#clearRetry(key)
     this.#clearRecheck(key)
+    // The load generation is kept: a scope re-ensured while its load is still in flight must let
+    // that load land, and a stale counter costs nothing.
     this.#unbindSevenTvScope(key)
     if (this.#channels.delete(key)) {
       this.#rebuildShared()
@@ -387,6 +395,7 @@ export class EmoteEngine {
 
   /** Fetch one channel scope and apply whatever succeeded; retries until every provider answers. */
   async #loadChannel(key: string, scope: EmoteScope): Promise<void> {
+    const generation = this.#beginLoad(key)
     const enabled = this.#providers()
     const load = await settleProviders(
       [
@@ -396,8 +405,8 @@ export class EmoteEngine {
       ],
       this.#channelLists.get(key)
     )
-    if (this.#disposed || !this.#channelScopes.has(key)) {
-      return // released while the fetch was in flight
+    if (this.#disposed || !this.#channelScopes.has(key) || !this.#isCurrentLoad(key, generation)) {
+      return // released, or superseded by a newer load, while the fetch was in flight
     }
     this.#channelLists.set(key, load.lists)
     this.#channels.set(key, this.#indexLists(load.lists))
@@ -419,6 +428,7 @@ export class EmoteEngine {
   }
 
   async #loadUser(scope: EmoteScope): Promise<void> {
+    const generation = this.#beginLoad('user')
     const enabled = this.#providers()
     const load = await settleProviders(
       [
@@ -428,8 +438,8 @@ export class EmoteEngine {
       ],
       this.#userLists
     )
-    if (this.#disposed || this.#userScope !== scope) {
-      return // logged out or switched identity while the fetch was in flight
+    if (this.#disposed || this.#userScope !== scope || !this.#isCurrentLoad('user', generation)) {
+      return // logged out, switched identity, or superseded by a newer load while in flight
     }
     this.#unbindSevenTvScope('user')
     this.#userLists = load.lists
@@ -468,6 +478,17 @@ export class EmoteEngine {
         void run()
       }, delay)
     )
+  }
+
+  /** Start a new generation for a scope's load; the returned number identifies this load. */
+  #beginLoad(key: string): number {
+    const generation = (this.#loadGeneration.get(key) ?? 0) + 1
+    this.#loadGeneration.set(key, generation)
+    return generation
+  }
+
+  #isCurrentLoad(key: string, generation: number): boolean {
+    return this.#loadGeneration.get(key) === generation
   }
 
   #clearRecheck(key: string): void {

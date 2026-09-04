@@ -750,3 +750,37 @@ describe('EmoteEngine debug logging', () => {
     }
   })
 })
+
+describe('EmoteEngine overlapping loads', () => {
+  beforeEach(() => {
+    vi.mocked(fetchFfzChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvChannel).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+    vi.mocked(fetchFfzGlobal).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvGlobal).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvGlobal).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+  })
+
+  it('keeps the newer catalogue when an older load finishes after a refresh', async () => {
+    // The initial request stalls; a refresh (provider toggle, manual reload) completes first with
+    // the channel's emotes. When the stalled request finally settles empty, it must not win.
+    let settleInitial: (emotes: ResolvedEmote[]) => void = () => {}
+    vi.mocked(fetchBttvChannel)
+      .mockReturnValueOnce(
+        new Promise<ResolvedEmote[]>((resolve) => {
+          settleInitial = resolve
+        })
+      )
+      .mockResolvedValueOnce([bttvEmote('chanJAM')])
+    const engine = new EmoteEngine()
+    engine.ensureChannel('twitch', '123')
+    await flushMicrotasks()
+    await engine.refreshEmotes()
+    const tokenized = (): string | undefined =>
+      engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')[0]?.type
+    expect(tokenized()).toBe('emote')
+    settleInitial([])
+    await flushMicrotasks()
+    expect(tokenized()).toBe('emote')
+  })
+})

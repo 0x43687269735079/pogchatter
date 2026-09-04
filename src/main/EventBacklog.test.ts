@@ -43,6 +43,16 @@ describe('EventBacklog', () => {
     ])
   })
 
+  it('keeps as many messages as the configured buffer', () => {
+    // The renderer shows `bufferSize` rows; a catalogue change must be able to re-tokenise them all.
+    const backlog = new EventBacklog(() => 5)
+    for (let i = 0; i < 8; i += 1) {
+      backlog.record(messageEvent(`m${i}`))
+    }
+    const ids = snapshotMessages(backlog).map((entry) => entry.id)
+    expect(ids).toEqual(['m3', 'm4', 'm5', 'm6', 'm7'])
+  })
+
   it('caps each channel at the ring size, dropping the oldest', () => {
     const backlog = new EventBacklog()
     for (let i = 0; i < BACKLOG_MESSAGES_PER_CHANNEL + 50; i += 1) {

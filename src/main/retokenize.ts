@@ -26,32 +26,18 @@ function isThirdPartyEmote(fragment: Fragment): fragment is Fragment & { type: '
 }
 
 /**
- * Third-party emote fragments revert to their code, merged into the surrounding text, so that a
+ * Third-party emote fragments revert to their code, each as a text fragment of its own, so that a
  * catalogue arriving later can override an earlier match (a channel's own 7TV emote outranks a
- * global one of the same name) and an emote a provider no longer serves reverts to text. A native
- * emote comes from the platform's own message tag, not from any catalogue, so it stays — as does
- * verbatim text, which was never tokenised.
+ * global one of the same name) and an emote a provider no longer serves reverts to text. A code was
+ * matched as one whitespace-delimited word, so tokenising it alone gives the same answer as
+ * tokenising the sentence. Everything else — native emotes, which come from the platform's own
+ * message tag; verbatim text; the existing text runs and their boundaries — is left exactly as it
+ * is, so a message that needs no change compares equal afterwards and is not re-pushed.
  */
 function withThirdPartyEmotesAsText(fragments: readonly Fragment[]): Fragment[] {
-  const out: Fragment[] = []
-  for (const fragment of fragments) {
-    const text = isThirdPartyEmote(fragment)
-      ? fragment.code
-      : fragment.type === 'text' && fragment.verbatim !== true
-        ? fragment.text
-        : undefined
-    if (text === undefined) {
-      out.push(fragment)
-      continue
-    }
-    const last = out[out.length - 1]
-    if (last?.type === 'text' && last.verbatim !== true) {
-      out[out.length - 1] = { type: 'text', text: last.text + text }
-      continue
-    }
-    out.push({ type: 'text', text })
-  }
-  return out
+  return fragments.map((fragment) =>
+    isThirdPartyEmote(fragment) ? { type: 'text', text: fragment.code } : fragment
+  )
 }
 
 function sameFragments(a: readonly Fragment[], b: readonly Fragment[]): boolean {

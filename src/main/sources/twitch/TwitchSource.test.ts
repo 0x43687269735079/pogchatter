@@ -523,7 +523,7 @@ describe('TwitchSource anonymous gift-sub upgrade', () => {
 
 describe('TwitchSource.streamerKey', () => {
   it('normalises the target login', () => {
-    expect(makeSource(makeAuth(), { login: 'Some_Login' }).streamerKey()).toBe('some_login')
+    expect(makeSource(makeAuth(), { login: 'Some_Login' }).streamerKey()).toBe('somelogin')
   })
 
   it('keeps the key the column was already stored under', () => {

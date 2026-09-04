@@ -12,9 +12,20 @@ import type { Platform } from '@shared/model'
  * YouTube display name for the same person, so they are stripped rather than trusted.
  */
 
-/** Reduce a name to the characters both platforms agree on: lower-case, `[a-z0-9_]` only. */
+/**
+ * Reduce a name to the characters both platforms agree on: lower-case, `[a-z0-9]` only. Underscores
+ * go too: a Twitch login `some_streamer` and the YouTube name "Some Streamer" are one person.
+ */
 function normalise(value: string): string {
-  return value.toLowerCase().replaceAll(/[^a-z0-9_]/gu, '')
+  return value.toLowerCase().replaceAll(/[^a-z0-9]/gu, '')
+}
+
+/**
+ * Bring a stored key up to the current normalisation. Keys were once allowed to keep underscores;
+ * an opaque legacy id (`youtube:<video>`) is not a key at all and is returned untouched.
+ */
+export function normaliseStreamerKey(key: string): string {
+  return /^[a-z0-9_]+$/u.test(key) ? key.replaceAll('_', '') : key
 }
 
 /**
@@ -28,8 +39,9 @@ function normalise(value: string): string {
  *     Twitch, where the login is already the identity.
  *
  * Returns:
- *   The normalised key. On Twitch, the login; on YouTube, the creator name when known, else a
- *   handle's text, else the target itself — a video id is a poor identity, but a stable one.
+ *   The normalised key. On Twitch, the login; on YouTube, a handle's text when the target is a
+ *   handle, else the creator name when known, else the target itself — a video id is a poor
+ *   identity, but a stable one.
  */
 export function streamerKeyOf(
   platform: Platform,
@@ -39,6 +51,11 @@ export function streamerKeyOf(
 ): string {
   if (platform === 'twitch') {
     return normalise(target)
+  }
+  // A handle is the username itself — the same thing a Twitch login is — and it is known before a
+  // single message arrives, so it outranks the creator's display name, which can be anything.
+  if (target.startsWith('@') && normalise(target.slice(1)) !== '') {
+    return normalise(target.slice(1))
   }
   if (creatorName !== undefined && normalise(creatorName) !== '') {
     return normalise(creatorName)

@@ -226,9 +226,12 @@ body,
 .pc-logo .blk {
   color: var(--accent);
 }
+/* The version beside the wordmark: small and quiet, but always there for a bug report. */
 .pc-ver {
+  margin-left: 6px;
   font-size: var(--fs-ui);
   color: var(--dimmer);
+  -webkit-app-region: drag;
 }
 .pc-tb-spacer {
   flex: 1;
@@ -995,6 +998,8 @@ body,
   display: inline-block;
   vertical-align: middle;
   margin: 0 2px;
+  /* Against the row body, not the image: an inline-block would otherwise size to the image. */
+  max-width: calc(100% - 4px);
   padding: 0;
   border: 0;
   background: none;
@@ -1006,8 +1011,9 @@ body,
   cursor: zoom-out;
   vertical-align: top;
 }
-/* A tile row centres the time and avatar on the name's line too, so the whole row lines up. */
-.pc-msg:has(.pc-gif-toggle:not(.open)) {
+/* A tile row centres the time and avatar on the name's line too, so the whole row lines up — unless
+   any GIF in it is expanded, when the row is tall and keeps its usual top alignment. */
+.pc-msg:has(.pc-gif-toggle):not(:has(.pc-gif-toggle.open)) {
   align-items: center;
 }
 .pc-gif-toggle:focus-visible {

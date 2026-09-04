@@ -110,6 +110,9 @@ export function Titlebar({
         <span className="pc-logo">
           pog<span className="blk">chatter</span>
         </span>
+        <span className="pc-ver" title="pogchatter version">
+          v{__APP_VERSION__}
+        </span>
       </span>
       <span className="pc-tb-spacer" />
       <TwitchChip twitch={auth.twitch} onLogin={onTwitchLogin} onLogout={onTwitchLogout} />

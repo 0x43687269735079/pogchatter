@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
+
+/** The version shown beside the wordmark, baked in at build time from package.json. */
+const appVersion = (
+  JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version: string }
+).version
 
 const alias = {
   '@build': resolve('build'),
@@ -39,6 +45,7 @@ export default defineConfig({
     root: 'src/renderer',
     resolve: { alias },
     plugins: [react()],
+    define: { __APP_VERSION__: JSON.stringify(appVersion) },
     build: {
       rollupOptions: { input: { index: resolve('src/renderer/index.html') } }
     }

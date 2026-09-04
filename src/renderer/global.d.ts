@@ -5,6 +5,8 @@ declare global {
     chat: ChatApi
     win: WindowControlsApi
   }
+  /** package.json's version, defined by electron.vite.config.ts at build time. */
+  const __APP_VERSION__: string
 }
 
 export {}

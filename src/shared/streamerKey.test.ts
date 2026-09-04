@@ -80,3 +80,14 @@ describe('streamerKeyOf for a handle column', () => {
     expect(streamerKeyOf('youtube', '@some_streamer')).toBe('somestreamer')
   })
 })
+
+describe('streamerKeyOf for a column opened by video', () => {
+  it('keys by the resolved handle over the display name, so it meets the Twitch login', () => {
+    expect(
+      streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Nitya ch. Phase Connect', 'UCabc', '@Nitya_Nil')
+    ).toBe('nityanil')
+    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Nitya ch. Phase Connect', 'UCabc')).toBe(
+      'nityachphaseconnect'
+    )
+  })
+})

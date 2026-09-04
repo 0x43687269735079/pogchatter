@@ -186,11 +186,17 @@ export class SourceManager {
 
   #reportIdentityIfResolved(source: ChatSource): void {
     const creator = source.creator?.()
-    if (creator === undefined || this.#identityReported.get(source.id) === creator.channelId) {
+    if (creator === undefined) {
       return
     }
-    this.#identityReported.set(source.id, creator.channelId)
     const streamerKey = source.streamerKey?.() ?? legacyStreamerKey(source.id)
+    // Creator and key together: the same creator can gain a better key (the handle resolving after
+    // a name-derived key was stored), and that must reach the config too.
+    const mark = `${creator.channelId} ${streamerKey}`
+    if (this.#identityReported.get(source.id) === mark) {
+      return
+    }
+    this.#identityReported.set(source.id, mark)
     this.#onIdentityResolved(source.id, { streamerKey, creatorId: creator.channelId })
     // The renderer learns creatorId only through a channels event, and status changes don't send
     // one — re-announce so a video-id column's tab menu stops waiting on "resolving…".

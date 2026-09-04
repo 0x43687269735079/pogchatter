@@ -80,7 +80,7 @@ export class YouTubeSource extends BaseChatSource {
   #videoId: string | undefined
   #channelId: string | undefined
   /** The creator channel this chat belongs to, once `basic_info` resolves both id and name. */
-  #creator: { channelId: string; name: string } | undefined
+  #creator: { channelId: string; name: string; handle?: string } | undefined
   /** Last stream title announced as the label, so a re-poll only re-emits it when it actually changes. */
   #title: string | undefined
   /** Initial chat continuation, kept so send eligibility can be re-probed after a login/identity change. */
@@ -159,7 +159,7 @@ export class YouTubeSource extends BaseChatSource {
   }
 
   /** The creator channel (id + name) this chat belongs to, once `basic_info` has resolved both. */
-  creator(): { channelId: string; name: string } | undefined {
+  creator(): { channelId: string; name: string; handle?: string } | undefined {
     return this.#creator
   }
 
@@ -169,17 +169,37 @@ export class YouTubeSource extends BaseChatSource {
    * key until the creator resolves (see {@link streamerKeyOf}).
    */
   streamerKey(): string {
+    const creator = this.#creator
+    const derived = streamerKeyOf(
+      'youtube',
+      this.#target,
+      creator?.name,
+      creator?.channelId,
+      creator?.handle
+    )
+    const persisted = this.#persistedStreamerKey
+    if (persisted === undefined) {
+      return derived
+    }
     // A stored key stands only while the creator it was stored for is still the one behind this
     // column: a handle can change hands, and the new owner's income must not file under the old.
-    const persistedStillApplies =
-      this.#persistedStreamerKey !== undefined &&
-      (this.#creator === undefined ||
-        this.#persistedCreatorId === undefined ||
-        this.#creator.channelId === this.#persistedCreatorId)
-    if (persistedStillApplies) {
-      return this.#persistedStreamerKey as string
+    const sameCreator =
+      creator === undefined ||
+      this.#persistedCreatorId === undefined ||
+      creator.channelId === this.#persistedCreatorId
+    if (!sameCreator) {
+      return derived
     }
-    return streamerKeyOf('youtube', this.#target, this.#creator?.name, this.#creator?.channelId)
+    // A key stored from the display name alone gives way once the handle is known: the handle is
+    // the username, and the name was only ever a stand-in for it. A key stored by association (a
+    // column added from another tab's menu) is not name-derived, so it stands.
+    const nameDerived =
+      creator !== undefined &&
+      persisted === streamerKeyOf('youtube', this.#target, creator.name, creator.channelId)
+    if (nameDerived && creator.handle !== undefined && derived !== persisted) {
+      return derived
+    }
+    return persisted
   }
 
   /** The video this source is currently reading, once resolved — so discovery can avoid re-adding it. */
@@ -407,7 +427,14 @@ export class YouTubeSource extends BaseChatSource {
       this.#emotes.ensureChannel('youtube', this.#channelId)
     }
     if (this.#channelId !== undefined && basic.author !== undefined && basic.author !== '') {
-      this.#creator = { channelId: this.#channelId, name: basic.author }
+      // The owner link on the watch page carries the channel's canonical URL, which for a channel
+      // with a handle is `/@handle` — the username itself, without a second request.
+      const handle = handleFromChannelUrl(info.secondary_info?.owner?.author?.url)
+      this.#creator = {
+        channelId: this.#channelId,
+        name: basic.author,
+        ...(handle !== undefined ? { handle } : {})
+      }
     }
 
     if (basic.is_live === true) {
@@ -909,6 +936,24 @@ function readHeader(header: unknown): ChannelHeaderFields {
     audience: c4.audience ?? page.audience,
     avatars: [...c4.avatars, ...page.avatars]
   }
+}
+
+/**
+ * The `@handle` in a channel's canonical URL (`https://www.youtube.com/@handle`), or undefined for
+ * a channel without one (`/channel/UC…`, a legacy `/c/` or `/user/` URL) or no URL at all.
+ */
+function handleFromChannelUrl(url: string | undefined): string | undefined {
+  if (url === undefined) {
+    return undefined
+  }
+  let path: string
+  try {
+    path = decodeURIComponent(new URL(url, 'https://www.youtube.com').pathname)
+  } catch {
+    return undefined
+  }
+  const handle = path.split('/').find((segment) => segment.startsWith('@'))
+  return handle !== undefined && handle.length > 1 ? handle : undefined
 }
 
 /** The classic C4TabbedHeader: author, subscriber count, and handle live directly on the node. */

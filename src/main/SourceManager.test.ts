@@ -583,4 +583,21 @@ describe('SourceManager reports an identity change', () => {
     source.end() // the next status change carries the new owner
     expect(resolved).toEqual(['UCold', 'UCnew'])
   })
+
+  it('reports again when the same creator resolves to a better key', async () => {
+    const keys: string[] = []
+    const manager = new SourceManager(
+      () => {},
+      () => {},
+      () => {},
+      (_sourceId, identity) => keys.push(identity.streamerKey)
+    )
+    const source = new ResolvingYouTubeSource('youtube:aaaaaaaaaaa')
+    await manager.add(source, 'yt:video')
+    source.resolveCreator('UC1', 'Display Name')
+    source.end()
+    source.resolveCreator('UC1', 'handle') // the fake keys by name; a real source by handle
+    source.end()
+    expect(keys).toEqual(['display name', 'handle'])
+  })
 })

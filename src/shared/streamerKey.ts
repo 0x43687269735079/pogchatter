@@ -37,25 +37,31 @@ export function normaliseStreamerKey(key: string): string {
  *     channel id.
  *   creatorName: The YouTube creator's channel name, once the connector has resolved it. Ignored on
  *     Twitch, where the login is already the identity.
+ *   creatorId: The YouTube creator's channel id, once resolved.
+ *   handle: The creator's `@handle`, once resolved from the video (with or without the `@`).
  *
  * Returns:
- *   The normalised key. On Twitch, the login; on YouTube, a handle's text when the target is a
- *   handle, else the creator name when known, else the target itself — a video id is a poor
- *   identity, but a stable one.
+ *   The normalised key. On Twitch, the login; on YouTube, the handle — the target's when the target
+ *   is a handle, else the resolved one — then the creator name when known, else the target itself:
+ *   a video id is a poor identity, but a stable one.
  */
 export function streamerKeyOf(
   platform: Platform,
   target: string,
   creatorName?: string,
-  creatorId?: string
+  creatorId?: string,
+  handle?: string
 ): string {
   if (platform === 'twitch') {
     return normalise(target)
   }
-  // A handle is the username itself — the same thing a Twitch login is — and it is known before a
-  // single message arrives, so it outranks the creator's display name, which can be anything.
+  // A handle is the username itself — the same thing a Twitch login is — so it outranks the
+  // creator's display name, which can be anything ("Nitya ch. Phase Connect" for @Nitya_Nil).
   if (target.startsWith('@') && normalise(target.slice(1)) !== '') {
     return normalise(target.slice(1))
+  }
+  if (handle !== undefined && normalise(handle) !== '') {
+    return normalise(handle)
   }
   if (creatorName !== undefined && normalise(creatorName) !== '') {
     return normalise(creatorName)

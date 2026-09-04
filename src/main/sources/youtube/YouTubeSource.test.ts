@@ -1150,6 +1150,67 @@ describe('YouTubeSource creator identity', () => {
     await source.disconnect()
   })
 
+  it("keys a column opened by video by the channel's handle, not its display name", async () => {
+    // @Nitya_Nil displays as "Nitya ch. Phase Connect"; the handle is the username a Twitch tab
+    // would share, so it is the key.
+    const yt = {
+      getInfo: vi.fn().mockResolvedValue({
+        basic_info: { is_live: true, channel_id: 'UCnitya', author: 'Nitya ch. Phase Connect' },
+        secondary_info: { owner: { author: { url: 'https://www.youtube.com/@Nitya_Nil' } } },
+        livechat: { continuation: 'c0', is_replay: false }
+      }),
+      getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
+      actions: { execute: vi.fn().mockResolvedValue(emptyChatResponse()) }
+    }
+    const source = new YouTubeSource(
+      'aaaaaaaaaaa',
+      () => Promise.resolve(yt as never),
+      idleFetch,
+      emotes,
+      auth
+    )
+    await source.connect()
+    expect(source.streamerKey()).toBe('nityanil')
+    expect(source.creator()?.handle).toBe('@Nitya_Nil')
+    await source.disconnect()
+  })
+
+  it('lets the handle replace a stored name-derived key, but keeps a key stored by association', async () => {
+    const ytFor = () => ({
+      getInfo: vi.fn().mockResolvedValue({
+        basic_info: { is_live: true, channel_id: 'UCnitya', author: 'Nitya ch. Phase Connect' },
+        secondary_info: { owner: { author: { url: 'https://www.youtube.com/@Nitya_Nil' } } },
+        livechat: { continuation: 'c0', is_replay: false }
+      }),
+      getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
+      actions: { execute: vi.fn().mockResolvedValue(emptyChatResponse()) }
+    })
+    // Stored by an earlier run from the display name alone: the handle is the better identity.
+    const fromName = new YouTubeSource(
+      'aaaaaaaaaaa',
+      () => Promise.resolve(ytFor() as never),
+      idleFetch,
+      emotes,
+      auth,
+      { persistedStreamerKey: 'nityachphaseconnect', persistedCreatorId: 'UCnitya' }
+    )
+    await fromName.connect()
+    expect(fromName.streamerKey()).toBe('nityanil')
+    await fromName.disconnect()
+    // Stored because the user added this room from a Twitch tab's menu: their say-so stands.
+    const associated = new YouTubeSource(
+      'bbbbbbbbbbb',
+      () => Promise.resolve(ytFor() as never),
+      idleFetch,
+      emotes,
+      auth,
+      { persistedStreamerKey: 'sometwitchlogin', persistedCreatorId: 'UCnitya' }
+    )
+    await associated.connect()
+    expect(associated.streamerKey()).toBe('sometwitchlogin')
+    await associated.disconnect()
+  })
+
   it('falls back to a target-based key before the creator resolves', () => {
     const source = new YouTubeSource(
       '@FallenShadow',

@@ -989,14 +989,34 @@ body,
   line-height: 1;
   vertical-align: -0.16em;
 }
-/* A Twitch chat GIF: capped like twitch.tv's own rendering so one message can't take the column. */
+/* A Twitch chat GIF sits inline after the colon as a tile of one fixed size, so the author's name
+   centres beside it and a run of GIFs reads evenly; a click expands it to the GIF's own size. */
+.pc-gif-toggle {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: zoom-in;
+}
+.pc-gif-toggle.open {
+  cursor: zoom-out;
+}
+.pc-gif-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+}
 .pc-gif {
   display: block;
-  max-height: 128px;
-  max-width: 100%;
-  height: auto;
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+}
+.pc-gif-toggle.open .pc-gif {
   width: auto;
-  margin: 2px 0;
+  height: auto;
+  max-width: 100%;
 }
 /* The GIF's name, shown when its image could not be loaded. */
 .pc-gif-name {

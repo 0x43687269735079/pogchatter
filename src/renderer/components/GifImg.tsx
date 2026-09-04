@@ -8,8 +8,9 @@ interface GifImgProps {
 }
 
 /**
- * A Twitch chat GIF, rendered the way twitch.tv renders it: an inline image loaded straight from the
- * URL the platform supplied.
+ * A Twitch chat GIF: an inline image loaded straight from the URL the platform supplied, shown as a
+ * small tile of one fixed size so a row of GIFs reads evenly, and expanded to the GIF's own size on
+ * click (click again to shrink it back).
  *
  * It has to be an image and not a link: GIPHY's CDN answers a direct browser navigation to these
  * URLs with 403 but serves them as an image subresource, so "open in browser" can never work. When
@@ -18,6 +19,7 @@ interface GifImgProps {
  */
 export function GifImg({ text, url }: GifImgProps): ReactElement {
   const [broken, setBroken] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   if (broken) {
     return (
       <span className="pc-gif-name" title={url}>
@@ -26,16 +28,26 @@ export function GifImg({ text, url }: GifImgProps): ReactElement {
     )
   }
   return (
-    <img
-      className="pc-gif"
-      src={url}
-      alt={text}
-      title={text}
-      loading="lazy"
-      decoding="async"
-      onError={() => {
-        setBroken(true)
+    <button
+      type="button"
+      className={expanded ? 'pc-gif-toggle open' : 'pc-gif-toggle'}
+      title={expanded ? `${text} — click to shrink` : `${text} — click to expand`}
+      aria-expanded={expanded}
+      onClick={(event) => {
+        event.stopPropagation()
+        setExpanded((value) => !value)
       }}
-    />
+    >
+      <img
+        className="pc-gif"
+        src={url}
+        alt={text}
+        loading="lazy"
+        decoding="async"
+        onError={() => {
+          setBroken(true)
+        }}
+      />
+    </button>
   )
 }

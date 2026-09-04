@@ -53,12 +53,22 @@ export interface DonationStoreDeps {
  * Bounded to {@link DONATION_RETENTION}, written atomically (tmp + rename) like `ConfigStore`, and
  * tolerant of a corrupt file — losing donations is bad, but refusing to start is worse.
  */
+/** How many suppressed echo message ids are remembered, so a replayed echo is not recorded. */
+const SUPPRESSED_ECHO_MAX = 500
+
 export class DonationStore {
   readonly #path: string
   readonly #writeFile: (path: string, contents: string) => void
   /** Oldest first, so ageing out is a shift and appending is a push. */
   #donations: Donation[] = []
   readonly #ids = new Set<string>()
+  /**
+   * Message ids of membership echoes that were suppressed, oldest first. A suppressed echo is not
+   * in {@link #ids}, and the YouTube reader can deliver an action twice across a continuation
+   * overlap — without this, the replay would no longer look like an echo (its room has spoken) and
+   * would be recorded as a second purchase.
+   */
+  readonly #suppressed = new Set<string>()
   /**
    * Recent membership purchases by dedup key — each purchase an occurrence with when it was first seen
    * and which rooms have announced it, newest last. Several are kept per key so a delayed echo of an
@@ -93,7 +103,7 @@ export class DonationStore {
    *     nothing else can see it as one purchase.
    */
   record(message: ChatMessage, channelId: string, context: DonationContext): Donation | undefined {
-    if (this.#ids.has(message.id)) {
+    if (this.#ids.has(message.id) || this.#suppressed.has(message.id)) {
       return undefined
     }
     const donation = donationFrom(message, channelId, context.streamerKey)
@@ -101,6 +111,14 @@ export class DonationStore {
       return undefined
     }
     if (this.#isRepeatMembership(donation, channelId, context.creatorId)) {
+      this.#suppressed.add(message.id)
+      while (this.#suppressed.size > SUPPRESSED_ECHO_MAX) {
+        const oldest = this.#suppressed.values().next()
+        if (oldest.done === true) {
+          break
+        }
+        this.#suppressed.delete(oldest.value)
+      }
       return undefined
     }
     // Kept in timestamp order rather than arrival order, so a donation that reaches us late but

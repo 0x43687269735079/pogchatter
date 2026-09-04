@@ -258,8 +258,9 @@ let rawLogger: RawMessageLogger | undefined
 // The directory `rawLogger` is currently open on — RawMessageLogger exposes no getter for it, so
 // applyRawLog tracks it alongside the instance to detect a directory change.
 let rawLoggerDir: string | undefined
-// The last close in flight: a status read right after disabling must wait for the tail to flush,
-// or the size it reports is short.
+// Every close so far, chained: a status read right after disabling must wait for the tail to flush
+// (or the size it reports is short), and shutdown must wait for all of them — a quick off/on would
+// otherwise orphan the previous file's tail.
 let rawLoggerClosing: Promise<void> = Promise.resolve()
 let authManager: TwitchAuthManager | undefined
 let youtubeAuth: YouTubeAuthManager | undefined
@@ -375,16 +376,22 @@ function rawDir(): string {
 function applyRawLog(settings: AppSettings): void {
   const dir = rawDir()
   if (!settings.rawLog.enabled) {
-    rawLoggerClosing = rawLogger?.close() ?? Promise.resolve()
-    rawLogger = undefined
-    rawLoggerDir = undefined
+    closeRawLog()
     return
   }
   if (rawLogger === undefined || rawLoggerDir !== dir) {
-    rawLoggerClosing = rawLogger?.close() ?? Promise.resolve()
+    closeRawLog()
     rawLogger = new RawMessageLogger(dir)
     rawLoggerDir = dir
   }
+}
+
+/** Close the current raw log, keeping every earlier close in the chain readers wait on. */
+function closeRawLog(): void {
+  const closing = rawLogger?.close() ?? Promise.resolve()
+  rawLoggerClosing = Promise.all([rawLoggerClosing, closing]).then(() => undefined)
+  rawLogger = undefined
+  rawLoggerDir = undefined
 }
 
 /** Apply the spelling setting to the app's default session's spell-checker. */
@@ -1153,7 +1160,7 @@ app.on('before-quit', (event) => {
   // close() resolves when the log's WriteStream has flushed; include it in the shutdown race
   // so tail writes reach disk before the forced app.exit below can terminate the process.
   const logFlushed = chatLogger?.close() ?? Promise.resolve()
-  const rawLogFlushed = rawLogger?.close() ?? Promise.resolve()
+  const rawLogFlushed = Promise.all([rawLoggerClosing, rawLogger?.close() ?? Promise.resolve()])
   const disposed = (manager?.disposeAll() ?? Promise.resolve()).catch((error: unknown) => {
     console.error('Error during shutdown:', error)
   })

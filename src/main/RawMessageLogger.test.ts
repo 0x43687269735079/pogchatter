@@ -1,4 +1,14 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -134,28 +144,41 @@ describe('RawMessageLogger', () => {
 })
 
 describe('RawMessageLogger under pressure and at rollover', () => {
-  it('drops records while the stream is backed up rather than queueing them in memory', async () => {
+  it('drops records while the stream is backed up, and records how many were dropped', async () => {
     const logger = new RawMessageLogger(dir, () => new Date(2026, 0, 15, 10, 0, 0))
     // Larger than the write stream's high-water mark, so the first write reports backpressure.
     logger.record('twitch', 'chan-a', 'x'.repeat(64 * 1024))
     logger.record('twitch', 'chan-a', 'dropped while backed up')
+    logger.record('twitch', 'chan-a', 'also dropped')
     await logger.close()
     const lines = readLines(join(dir, 'twitch-2026-01-15.jsonl'))
-    expect(lines).toHaveLength(1)
+    // The gap is not silent: a marker line says how many records it swallowed.
+    expect(lines).toHaveLength(2)
+    expect(lines[1]?.['dropped']).toBe(2)
+    expect(lines[1]?.['platform']).toBe('twitch')
   })
 
   it('waits for a stream ended by a date rollover before close() resolves', async () => {
     let now = new Date(2026, 0, 15, 23, 59, 0)
     const logger = new RawMessageLogger(dir, () => now)
     logger.record('youtube', 'chan-a', { big: 'y'.repeat(64 * 1024) })
+    // Let the big write drain (its size lands on disk, then the completion callback runs in the
+    // poll phase; setImmediate sits after it), so the next record rolls the day over instead of
+    // being dropped as backed-up.
+    const oldPath = join(dir, 'youtube-2026-01-15.jsonl')
+    await vi.waitFor(() => {
+      expect(statSync(oldPath).size).toBeGreaterThan(64 * 1024)
+    })
+    await new Promise((resolve) => setImmediate(resolve))
     now = new Date(2026, 0, 16, 0, 0, 1)
     logger.record('youtube', 'chan-a', { day: 2 })
     await logger.close()
-    // Read immediately: the old day's tail must already be on disk.
-    const old = readLines(join(dir, 'youtube-2026-01-15.jsonl'))
+    // Read immediately: the old day's tail must already be on disk, and the new day has its line.
+    const old = readLines(oldPath)
     expect(old).toHaveLength(1)
     const raw = old[0]?.['raw'] as { big: string } | undefined
     expect(raw?.big).toHaveLength(64 * 1024)
+    expect(readLines(join(dir, 'youtube-2026-01-16.jsonl'))).toHaveLength(1)
   })
 
   it('sizes retained files even when no logger is open', async () => {
@@ -172,7 +195,36 @@ describe('RawMessageLogger file permissions', () => {
     const logger = new RawMessageLogger(dir, () => new Date(2026, 0, 15, 10, 0, 0))
     logger.record('twitch', 'chan-a', 'private')
     await logger.close()
-    const { statSync } = await import('node:fs')
     expect(statSync(join(dir, 'twitch-2026-01-15.jsonl')).mode & 0o777).toBe(0o600)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'tightens the modes of a folder and file left by an earlier run',
+    async () => {
+      const raw = join(dir, 'raw')
+      mkdirSync(raw, { mode: 0o755 })
+      const path = join(raw, 'twitch-2026-01-15.jsonl')
+      writeFileSync(path, '', { mode: 0o644 })
+      const logger = new RawMessageLogger(raw, () => new Date(2026, 0, 15, 10, 0, 0))
+      logger.record('twitch', 'chan-a', 'private')
+      await logger.close()
+      expect(statSync(raw).mode & 0o777).toBe(0o700)
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses to write through a symlink planted where the day file goes',
+    async () => {
+      const elsewhere = join(dir, 'elsewhere.txt')
+      writeFileSync(elsewhere, '')
+      symlinkSync(elsewhere, join(dir, 'twitch-2026-01-15.jsonl'))
+      const logger = new RawMessageLogger(dir, () => new Date(2026, 0, 15, 10, 0, 0))
+      logger.record('twitch', 'chan-a', 'private')
+      await logger.close()
+      expect(readFileSync(elsewhere, 'utf8')).toBe('')
+      expect(logger.status().enabled).toBe(false)
+      expect(logger.status().disabledReason).toBeDefined()
+    }
+  )
 })

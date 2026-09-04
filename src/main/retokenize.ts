@@ -18,6 +18,42 @@ function sameFragment(a: Fragment, b: Fragment): boolean {
   return b.type === 'text' && a.text === b.text
 }
 
+function isThirdPartyEmote(fragment: Fragment): fragment is Fragment & { type: 'emote' } {
+  return (
+    fragment.type === 'emote' &&
+    (fragment.provider === '7tv' || fragment.provider === 'bttv' || fragment.provider === 'ffz')
+  )
+}
+
+/**
+ * Third-party emote fragments revert to their code, merged into the surrounding text, so that a
+ * catalogue arriving later can override an earlier match (a channel's own 7TV emote outranks a
+ * global one of the same name) and an emote a provider no longer serves reverts to text. A native
+ * emote comes from the platform's own message tag, not from any catalogue, so it stays — as does
+ * verbatim text, which was never tokenised.
+ */
+function withThirdPartyEmotesAsText(fragments: readonly Fragment[]): Fragment[] {
+  const out: Fragment[] = []
+  for (const fragment of fragments) {
+    const text = isThirdPartyEmote(fragment)
+      ? fragment.code
+      : fragment.type === 'text' && fragment.verbatim !== true
+        ? fragment.text
+        : undefined
+    if (text === undefined) {
+      out.push(fragment)
+      continue
+    }
+    const last = out[out.length - 1]
+    if (last?.type === 'text' && last.verbatim !== true) {
+      out[out.length - 1] = { type: 'text', text: last.text + text }
+      continue
+    }
+    out.push({ type: 'text', text })
+  }
+  return out
+}
+
 function sameFragments(a: readonly Fragment[], b: readonly Fragment[]): boolean {
   if (a.length !== b.length) {
     return false
@@ -46,7 +82,7 @@ export function retokenizeAgainst(
 ): ChatMessage[] {
   const changed: ChatMessage[] = []
   for (const message of messages) {
-    const fragments = tokenize([...message.fragments])
+    const fragments = tokenize(withThirdPartyEmotesAsText(message.fragments))
     if (!sameFragments(message.fragments, fragments)) {
       changed.push({ ...message, fragments })
     }

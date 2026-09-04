@@ -374,6 +374,17 @@ describe('DonationStore membership dedup', () => {
     expect(donations.list().map((d) => d.id)).toEqual(['p2', 'p1'])
   })
 
+  it('keeps a suppressed echo suppressed when its message is delivered again', () => {
+    // The YouTube reader can deliver an action twice across a continuation overlap. By then the
+    // echo's room has already "spoken" for the purchase, so without remembering the message id the
+    // replay would be recorded as a second purchase.
+    const donations = store()
+    donations.record(membership('p1', 1_000), 'youtube:a', context)
+    donations.record(membership('p1-b', 1_500), 'youtube:b', context)
+    donations.record(membership('p1-b', 1_500), 'youtube:b', context)
+    expect(donations.list().map((d) => d.id)).toEqual(['p1'])
+  })
+
   it('collects a genuine second purchase once the window has passed', () => {
     const donations = store()
     donations.record(membership('first', 1_000), 'youtube:vid', context)

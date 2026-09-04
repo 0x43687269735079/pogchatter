@@ -364,6 +364,18 @@ describe('EmoteEngine bootstrap failure retry', () => {
     await vi.advanceTimersByTimeAsync(60_000 + 1)
     expect(fetchSevenTvChannel).toHaveBeenCalledTimes(2)
   })
+
+  it('re-checks when the timer fires a millisecond before the wall clock agrees', async () => {
+    // Node timers run on a monotonic clock and can fire before Date.now() shows the full delay; the
+    // timer must not defer to a wall-clock due check that would swallow it with nothing left to fire.
+    let now = 1_000_000
+    const engine = new EmoteEngine(undefined, undefined, () => now)
+    engine.ensureChannel('twitch', '123')
+    await vi.advanceTimersByTimeAsync(1)
+    now += 5 * 60_000 - 1
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    expect(fetchSevenTvChannel).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('EmoteEngine releaseChannel', () => {

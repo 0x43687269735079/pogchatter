@@ -103,3 +103,44 @@ describe('retokenizeAgainst', () => {
     expect(retokenizeAgainst([], tokenizerFor('catJAM'))).toEqual([])
   })
 })
+
+describe('retokenizeAgainst and emotes already matched', () => {
+  const stale: Fragment = {
+    type: 'emote',
+    code: 'X',
+    url: 'https://emotes.example/global/X.webp',
+    provider: '7tv'
+  }
+
+  it('revises a third-party emote when a catalogue that outranks the earlier match arrives', () => {
+    // A global 7TV emote matched first; the channel's own set, which takes precedence, then loads
+    // with an emote of the same name. The row must show the channel's, as new messages do.
+    const changed = retokenizeAgainst(
+      [message('m1', [{ type: 'text', text: 'hello ' }, stale, { type: 'text', text: ' world' }])],
+      tokenizerFor('X')
+    )
+    expect(changed.map((m) => m.fragments)).toEqual([
+      [
+        { type: 'text', text: 'hello ' },
+        { type: 'emote', code: 'X', url: 'https://emotes.example/X.webp', provider: '7tv' },
+        { type: 'text', text: ' world' }
+      ]
+    ])
+  })
+
+  it('reverts a third-party emote a provider no longer serves to its text', () => {
+    const changed = retokenizeAgainst([message('m1', [stale])], tokenizerFor('Y'))
+    expect(changed.map((m) => m.fragments)).toEqual([[{ type: 'text', text: 'X' }]])
+  })
+
+  it("leaves a native emote from the platform's own tag as it is", () => {
+    // Native emotes are not derived from any catalogue, so a catalogue change cannot revise them.
+    const native: Fragment = {
+      type: 'emote',
+      code: 'X',
+      url: 'https://static-cdn.example/X/2.0',
+      provider: 'twitch'
+    }
+    expect(retokenizeAgainst([message('m1', [native])], tokenizerFor('X'))).toEqual([])
+  })
+})

@@ -312,8 +312,23 @@ export class EmoteEngine {
     if (this.#channels.has(key) && !this.#dueForRecheck(key)) {
       return
     }
-    const task = this.#loadChannel(key, { platform, channelId }).finally(() => {
-      this.#pending.delete(key)
+    this.#startChannelLoad(key, { platform, channelId })
+  }
+
+  /**
+   * Start a channel load unless one is already in flight. The not-found re-check timer calls this
+   * directly: a timer that fired is proof enough that the interval passed, whereas the wall-clock
+   * check in ensureChannel can lag it by a millisecond — which would consume the timer and re-check
+   * nothing, with no timer left to try again.
+   */
+  #startChannelLoad(key: string, scope: EmoteScope): void {
+    if (this.#disposed || this.#pending.has(key) || !this.#channelScopes.has(key)) {
+      return
+    }
+    const task = this.#loadChannel(key, scope).finally(() => {
+      if (this.#pending.get(key) === task) {
+        this.#pending.delete(key)
+      }
     })
     this.#pending.set(key, task)
   }
@@ -324,7 +339,7 @@ export class EmoteEngine {
    * but a Twitch source only calls ensureChannel when its room id first resolves — so the engine
    * owns the timer. Cleared on release and dispose; never holds the process open.
    */
-  #scheduleNotFoundRecheck(key: string, scope: EmoteScope, notFound: boolean): void {
+  #scheduleNotFoundRecheck(key: string, notFound: boolean): void {
     const existing = this.#recheckTimers.get(key)
     if (existing !== undefined) {
       clearTimeout(existing)
@@ -335,8 +350,9 @@ export class EmoteEngine {
     }
     const timer = setTimeout(() => {
       this.#recheckTimers.delete(key)
-      if (!this.#disposed && this.#channelScopes.has(key)) {
-        this.ensureChannel(scope.platform, scope.channelId)
+      const registered = this.#channelScopes.get(key)
+      if (registered !== undefined) {
+        this.#startChannelLoad(key, registered)
       }
     }, NOT_FOUND_RECHECK_MS)
     timer.unref()
@@ -389,7 +405,7 @@ export class EmoteEngine {
     this.#watchSevenTvSet(load.sevenTvSetId, key)
     const notFound = isNotFound(load)
     this.#scopeState.set(key, { loadedAt: this.#now(), notFound })
-    this.#scheduleNotFoundRecheck(key, scope, notFound)
+    this.#scheduleNotFoundRecheck(key, notFound)
     logScopeLoad(key, load, notFound)
     this.#notifyIndexChanged(scope)
     this.#settleRetry(key, load.complete, () => this.#loadChannel(key, scope))

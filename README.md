@@ -115,7 +115,9 @@ Everything the app talks to, so you can judge it for yourself:
 
 Nothing else is contacted. The optional **raw message log** (Settings → Advanced) writes every
 inbound Twitch and YouTube message verbatim to a `raw` folder inside the chat-log folder — it stores
-full message content, and it is off by default.
+full message content, and it is off by default. The folder and its files are readable by your user
+only. If the disk can't keep up, lines are dropped rather than queued, and a `{"dropped": N}` line
+records the gap.
 
 ## Disclaimer
 

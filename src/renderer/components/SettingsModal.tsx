@@ -563,7 +563,8 @@ export function SettingsModal({
               <span className="pc-setting-desc">
                 Writes every raw Twitch IRC line and YouTube chat action, verbatim, to a{' '}
                 <code>raw</code> folder inside the chat-log folder — one file per platform per day.
-                This stores full message content. Files are never deleted automatically.
+                This stores full message content. Files are never deleted automatically. If the disk
+                can&apos;t keep up, lines are dropped and the gap is noted in the file.
               </span>
             </span>
             <input

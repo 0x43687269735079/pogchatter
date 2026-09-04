@@ -1,4 +1,16 @@
-import { createWriteStream, mkdirSync, readdirSync, statSync, type WriteStream } from 'node:fs'
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  createWriteStream,
+  fchmodSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  statSync,
+  type WriteStream
+} from 'node:fs'
 import { join } from 'node:path'
 import type { Platform, RawLogStatus } from '@shared/model'
 
@@ -9,6 +21,36 @@ const BYTES_CACHE_MS = 5000
 interface OpenStream {
   stream: WriteStream
   dateKey: string
+}
+
+/**
+ * Open a day file for appending, readable by this user only. A `mode` at creation is not enough: a
+ * folder or file left by an earlier run keeps the mode it was created with, so both are tightened
+ * explicitly, and a symlink planted where the file goes is refused rather than followed — the log
+ * holds full chat content and must not be redirected. Windows has no POSIX modes; there the open is
+ * plain.
+ */
+function openPrivateAppend(dir: string, path: string): number {
+  const posix = process.platform !== 'win32'
+  if (posix) {
+    chmodSync(dir, 0o700)
+  }
+  const noFollow = posix ? constants.O_NOFOLLOW : 0
+  const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | noFollow
+  const fd = openSync(path, flags, 0o600)
+  if (!posix) {
+    return fd
+  }
+  try {
+    if (!fstatSync(fd).isFile()) {
+      throw new Error(`${path} is not a regular file`)
+    }
+    fchmodSync(fd, 0o600)
+  } catch (error) {
+    closeSync(fd)
+    throw error
+  }
+  return fd
 }
 
 function errorMessage(error: unknown): string {
@@ -71,6 +113,8 @@ export class RawMessageLogger {
   #bytesCache: { at: number; bytes: number } | undefined
   /** Platforms whose stream reported backpressure; records are dropped until it drains. */
   readonly #paused = new Set<Platform>()
+  /** Records dropped per platform since its last written line, reported once the stream drains. */
+  readonly #dropped = new Map<Platform, number>()
   /** Streams ended by a date rollover that have not flushed yet, so close() can wait for them. */
   readonly #ending = new Set<Promise<void>>()
 
@@ -89,13 +133,18 @@ export class RawMessageLogger {
     raw: unknown,
     source?: 'live' | 'recent-messages'
   ): void {
-    if (this.#disabled || this.#closed || this.#paused.has(platform)) {
+    if (this.#disabled || this.#closed) {
+      return
+    }
+    if (this.#paused.has(platform)) {
+      this.#dropped.set(platform, (this.#dropped.get(platform) ?? 0) + 1)
       return
     }
     const stream = this.#ensureStream(platform)
     if (stream === undefined) {
       return
     }
+    this.#noteDropped(platform, stream)
     const line = JSON.stringify({
       at: this.#now().toISOString(),
       platform,
@@ -139,6 +188,9 @@ export class RawMessageLogger {
    */
   close(): Promise<void> {
     this.#closed = true
+    for (const [platform, { stream }] of this.#streams) {
+      this.#noteDropped(platform, stream)
+    }
     const streams = [...this.#streams.values()]
     this.#streams.clear()
     const pending = [...streams.map(({ stream }) => this.#endStream(stream)), ...this.#ending]
@@ -146,6 +198,23 @@ export class RawMessageLogger {
       return Promise.resolve()
     }
     return Promise.all(pending).then(() => undefined)
+  }
+
+  /**
+   * A silent gap is worse than a line saying there is one: the first line written after a platform's
+   * stream was backed up records how many of its records were dropped meanwhile.
+   */
+  #noteDropped(platform: Platform, stream: WriteStream): void {
+    const dropped = this.#dropped.get(platform)
+    if (dropped === undefined) {
+      return
+    }
+    this.#dropped.delete(platform)
+    try {
+      stream.write(`${JSON.stringify({ at: this.#now().toISOString(), platform, dropped })}\n`)
+    } catch (error) {
+      this.#disable(errorMessage(error))
+    }
   }
 
   #endStream(stream: WriteStream): Promise<void> {
@@ -178,7 +247,7 @@ export class RawMessageLogger {
       // Full message content: readable by this user only, whatever the umask says.
       mkdirSync(this.#dir, { recursive: true, mode: 0o700 })
       const path = join(this.#dir, `${platform}-${dateKey}.jsonl`)
-      const stream = createWriteStream(path, { flags: 'a', mode: 0o600 })
+      const stream = createWriteStream(path, { fd: openPrivateAppend(this.#dir, path) })
       // The fd opens (and writes flush) asynchronously: without a listener, an 'error' event
       // (disk full, removed volume, revoked permissions) is an uncaught exception that would
       // take down the whole main process.

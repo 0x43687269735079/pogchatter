@@ -424,6 +424,23 @@ export function SettingsModal({
               />
             </label>
           ))}
+          <label className="pc-setting">
+            <span className="pc-setting-meta">
+              <span className="pc-setting-name">Twitch GIFs</span>
+              <span className="pc-setting-desc">
+                Show GIF messages as images. Off shows each GIF’s name as text instead, and nothing
+                is fetched from GIPHY.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="pc-switch"
+              checked={settings.embedGifs}
+              onChange={(event) => {
+                onChange({ embedGifs: event.target.checked })
+              }}
+            />
+          </label>
           <p className="pc-setting-note">
             If some emotes didn’t load, reload them from every source (7TV/BTTV/FFZ, Twitch,
             YouTube).

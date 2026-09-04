@@ -606,6 +606,11 @@ export interface AppSettings {
   spelling: 'en-US' | 'en-GB' | 'off'
   /** Raw wire-level connector logging, for troubleshooting (see {@link RawLogSettings}). */
   rawLog: RawLogSettings
+  /**
+   * Show Twitch chat GIFs as images. Off shows each GIF's name as text instead, and nothing is
+   * fetched from GIPHY. On by default.
+   */
+  embedGifs: boolean
 }
 
 /**
@@ -661,7 +666,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   keepAwake: true,
   twitchHistory: true,
   spelling: 'en-US',
-  rawLog: { enabled: false }
+  rawLog: { enabled: false },
+  embedGifs: true
 }
 
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */

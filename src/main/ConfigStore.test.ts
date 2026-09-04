@@ -46,7 +46,8 @@ const DEFAULTS = {
   keepAwake: true,
   twitchHistory: true,
   spelling: 'en-US',
-  rawLog: { enabled: false }
+  rawLog: { enabled: false },
+  embedGifs: true
 }
 
 describe('ConfigStore settings', () => {
@@ -285,6 +286,14 @@ describe('ConfigStore spelling and raw-log settings', () => {
   it('sanitizes raw-log settings, coercing types', () => {
     const result = new ConfigStore().setSettings({ rawLog: { enabled: 'yes' } } as never)
     expect(result.rawLog).toEqual({ enabled: false })
+  })
+
+  it('embeds GIFs unless told otherwise, and only by a boolean', () => {
+    writeFileSync(CONFIG, JSON.stringify({ channels: [], settings: {} }))
+    const store = new ConfigStore()
+    expect(store.settings().embedGifs).toBe(true)
+    expect(store.setSettings({ embedGifs: 'no' } as never).embedGifs).toBe(true)
+    expect(store.setSettings({ embedGifs: false }).embedGifs).toBe(false)
   })
 
   it('defaults spelling and raw-log when the settings file omits them', () => {

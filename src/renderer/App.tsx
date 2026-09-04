@@ -21,6 +21,7 @@ import {
   type Platform,
   type SendResult
 } from '@shared/model'
+import { type RenderPrefs, RenderPrefsContext } from '@renderer/renderPrefs'
 import { AddChannelModal } from '@renderer/components/AddChannelModal'
 import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
@@ -374,6 +375,10 @@ export function App(): ReactElement {
   flaggedVisibleRef.current = flaggedVisible
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
+  const renderPrefs = useMemo<RenderPrefs>(
+    () => ({ embedGifs: settings.embedGifs }),
+    [settings.embedGifs]
+  )
 
   const monitorIds = useMemo(
     () => new Set(settings.monitors.map((monitor) => monitor.id)),
@@ -988,271 +993,273 @@ export function App(): ReactElement {
       : undefined
 
   return (
-    <div
-      className={`pc-app theme-${theme}`}
-      style={{ '--chat-fs': `${settings.fontSize}px` } as CSSProperties}
-    >
-      <Titlebar
-        auth={auth}
-        onAdd={() => {
-          setAddOpen(true)
-        }}
-        onSearch={() => {
-          setSearchOpen(true)
-        }}
-        onSettings={() => {
-          setSettingsOpen(true)
-        }}
-        onTwitchLogin={() => {
-          void handleTwitchLogin()
-        }}
-        onTwitchLogout={() => {
-          void window.chat.logoutTwitch()
-        }}
-        onYouTubeLogin={() => {
-          setYouTubeModalOpen(true)
-        }}
-        onYouTubeLogout={() => {
-          ytUserLogoutRef.current = true
-          void window.chat.logoutYouTube()
-        }}
-        onYouTubePickChannel={() => {
-          setChannelModalOpen(true)
-        }}
-      />
-      <div className="pc-screen">
-        {settings.layout === 'tabs' ? (
-          <>
-            <TabBar
-              columns={orderedColumns}
-              channels={channels}
-              activeId={activeId}
-              unread={unread}
-              donationsUnread={unreadCount(donations)}
-              onSelect={selectTab}
-              onRemove={removeColumn}
-              onReorder={moveColumnToIndex}
-              onTabContextMenu={openTabMenu}
-              trailing={addColumn}
-            />
-            <div className="pc-body pc-body-tabs">
-              {activeColumn !== undefined ? renderColumn(activeColumn, 0, true) : null}
-            </div>
-          </>
-        ) : (
-          <div className="pc-body">
-            {orderedColumns.map((column, index) => renderColumn(column, index, false))}
-            {addColumn}
-          </div>
-        )}
-      </div>
-      <StatusBar
-        channelCount={channels.length}
-        twitchOnline={twitchOnline}
-        youtubeOnline={youtubeOnline}
-        messageCountRef={messageCountRef}
-        user={auth.twitch.userName ?? 'guest'}
-      />
-      {prompt !== undefined ? (
-        <TwitchLoginModal
-          userCode={prompt.userCode}
-          verificationUri={prompt.verificationUri}
-          credentialStorage={auth.credentialStorage}
-          linuxKeyringBackend={auth.linuxKeyringBackend}
-          error={prompt.error}
-          onRetry={() => {
+    <RenderPrefsContext.Provider value={renderPrefs}>
+      <div
+        className={`pc-app theme-${theme}`}
+        style={{ '--chat-fs': `${settings.fontSize}px` } as CSSProperties}
+      >
+        <Titlebar
+          auth={auth}
+          onAdd={() => {
+            setAddOpen(true)
+          }}
+          onSearch={() => {
+            setSearchOpen(true)
+          }}
+          onSettings={() => {
+            setSettingsOpen(true)
+          }}
+          onTwitchLogin={() => {
             void handleTwitchLogin()
           }}
-          onClose={() => {
-            setPrompt(undefined)
+          onTwitchLogout={() => {
+            void window.chat.logoutTwitch()
+          }}
+          onYouTubeLogin={() => {
+            setYouTubeModalOpen(true)
+          }}
+          onYouTubeLogout={() => {
+            ytUserLogoutRef.current = true
+            void window.chat.logoutYouTube()
+          }}
+          onYouTubePickChannel={() => {
+            setChannelModalOpen(true)
           }}
         />
-      ) : null}
-      {authError !== undefined ? (
-        <ModalShell
-          onClose={() => {
-            setAuthError(undefined)
-          }}
-        >
-          <div className="mh">
-            <span className="tag tw">TW</span>
-            twitch login failed
-          </div>
-          <div className="mb">
-            <div className="pc-modal-err">{authError}</div>
-          </div>
-          <div className="mf">
-            <button
-              type="button"
-              className="pc-mbtn"
-              onClick={() => {
-                setAuthError(undefined)
-              }}
-            >
-              close
-            </button>
-          </div>
-        </ModalShell>
-      ) : null}
-      {addOpen ? (
-        <AddChannelModal
-          onClose={() => {
-            setAddOpen(false)
-          }}
-          onAdd={(platform, target) => window.chat.addChannel(platform, target)}
-          onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
-          onCompose={() => {
-            setAddOpen(false)
-            setComposerOpen(true)
-          }}
-        />
-      ) : null}
-      {composerOpen ? (
-        <MonitorComposer
-          channels={orderedChannels}
-          onCreate={createMonitor}
-          onClose={() => {
-            setComposerOpen(false)
-          }}
-        />
-      ) : null}
-      {userActivity !== undefined ? (
-        <UserActivityModal
-          author={userActivity.author}
-          channelId={userActivity.channelId}
-          channelLabel={
-            channels.find((channel) => channel.id === userActivity.channelId)?.label ??
-            userActivity.channelId
-          }
-          messages={(messages[userActivity.channelId] ?? []).filter(
-            (message) => message.author.id === userActivity.author.id
+        <div className="pc-screen">
+          {settings.layout === 'tabs' ? (
+            <>
+              <TabBar
+                columns={orderedColumns}
+                channels={channels}
+                activeId={activeId}
+                unread={unread}
+                donationsUnread={unreadCount(donations)}
+                onSelect={selectTab}
+                onRemove={removeColumn}
+                onReorder={moveColumnToIndex}
+                onTabContextMenu={openTabMenu}
+                trailing={addColumn}
+              />
+              <div className="pc-body pc-body-tabs">
+                {activeColumn !== undefined ? renderColumn(activeColumn, 0, true) : null}
+              </div>
+            </>
+          ) : (
+            <div className="pc-body">
+              {orderedColumns.map((column, index) => renderColumn(column, index, false))}
+              {addColumn}
+            </div>
           )}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          monitored={monitoredKeys.has(`${userActivity.platform}:${userActivity.author.id}`)}
-          onToggleMonitor={() => {
-            toggleMonitoredUser(
-              userActivity.platform,
-              userActivity.author.id,
-              userActivity.author.name
-            )
-          }}
-          onJump={(channelId) => {
-            jumpToChannel(channelId)
-            setUserActivity(undefined)
-          }}
-          onClose={() => {
-            setUserActivity(undefined)
-          }}
+        </div>
+        <StatusBar
+          channelCount={channels.length}
+          twitchOnline={twitchOnline}
+          youtubeOnline={youtubeOnline}
+          messageCountRef={messageCountRef}
+          user={auth.twitch.userName ?? 'guest'}
         />
-      ) : null}
-      {donationThread !== undefined ? (
-        <DonationThreadModal
-          channelId={donationThread.channelId}
-          threadToken={donationThread.threadToken}
-          parentAuthor={donationThread.parentAuthor}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          onJump={(channelId) => {
-            jumpToChannel(channelId)
-            setDonationThread(undefined)
-          }}
-          onClose={() => {
-            setDonationThread(undefined)
-          }}
-        />
-      ) : null}
-      {threadView !== undefined && thread !== undefined ? (
-        <ThreadModal
-          channelId={threadView.channelId}
-          messages={thread.messages}
-          rootId={threadView.rootId}
-          rootAuthor={thread.rootAuthor}
-          rootBuffered={thread.rootBuffered}
-          replyToId={threadView.replyToId}
-          canSend={threadChannel !== undefined && canSendTo(threadChannel, auth)}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          onSelectReplyTarget={(messageId) => {
-            setThreadView((current) => {
-              if (current === undefined) {
-                return current
-              }
-              // Clearing the pick drops the key entirely, so the composer falls back to the default
-              // (newest reply) rather than carrying an explicit `undefined`.
-              const { replyToId: _cleared, ...rest } = current
-              return messageId === undefined ? rest : { ...rest, replyToId: messageId }
-            })
-          }}
-          onJump={(channelId) => {
-            jumpToChannel(channelId)
-            setThreadView(undefined)
-          }}
-          onClose={() => {
-            setThreadView(undefined)
-          }}
-        />
-      ) : null}
-      {searchOpen ? (
-        <SearchModal
-          channels={channels}
-          messagesByChannel={messages}
-          cap={settings.bufferSize}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          onJump={jumpToChannel}
-          onUserActivity={openUserActivity}
-          onDonationReplies={openDonationThread}
-          onClose={() => {
-            setSearchOpen(false)
-          }}
-        />
-      ) : null}
-      {settingsOpen ? (
-        <SettingsModal
-          settings={settings}
-          credentialStorage={auth.credentialStorage}
-          linuxKeyringBackend={auth.linuxKeyringBackend}
-          onChange={updateSettings}
-          onHighlightsChange={updateHighlights}
-          onModerationChange={updateModerationRules}
-          onModerationAlert={setModerationAlert}
-          onPrebanChange={updatePrebanRules}
-          onPrebanToggle={setPrebanToggles}
-          onClose={() => {
-            setSettingsOpen(false)
-          }}
-        />
-      ) : null}
-      {youtubeModalOpen ? (
-        <YouTubeLoginModal
-          credentialStorage={auth.credentialStorage}
-          linuxKeyringBackend={auth.linuxKeyringBackend}
-          onSubmit={(cookies) => window.chat.loginYouTube(cookies)}
-          onClose={() => {
-            setYouTubeModalOpen(false)
-          }}
-        />
-      ) : null}
-      {tabMenu !== undefined ? (
-        <TabContextMenu
-          anchor={tabMenu.anchor}
-          items={[tabMenuItem(tabMenu.channel)]}
-          onClose={() => {
-            setTabMenu(undefined)
-          }}
-        />
-      ) : null}
-      {channelModalOpen && auth.youtube.loggedIn ? (
-        <YouTubeChannelModal
-          channels={auth.youtube.channels}
-          selectedChannelId={auth.youtube.selectedChannelId}
-          onSelect={(channelId) => window.chat.selectYouTubeChannel(channelId)}
-          onClose={() => {
-            setChannelModalOpen(false)
-          }}
-        />
-      ) : null}
-    </div>
+        {prompt !== undefined ? (
+          <TwitchLoginModal
+            userCode={prompt.userCode}
+            verificationUri={prompt.verificationUri}
+            credentialStorage={auth.credentialStorage}
+            linuxKeyringBackend={auth.linuxKeyringBackend}
+            error={prompt.error}
+            onRetry={() => {
+              void handleTwitchLogin()
+            }}
+            onClose={() => {
+              setPrompt(undefined)
+            }}
+          />
+        ) : null}
+        {authError !== undefined ? (
+          <ModalShell
+            onClose={() => {
+              setAuthError(undefined)
+            }}
+          >
+            <div className="mh">
+              <span className="tag tw">TW</span>
+              twitch login failed
+            </div>
+            <div className="mb">
+              <div className="pc-modal-err">{authError}</div>
+            </div>
+            <div className="mf">
+              <button
+                type="button"
+                className="pc-mbtn"
+                onClick={() => {
+                  setAuthError(undefined)
+                }}
+              >
+                close
+              </button>
+            </div>
+          </ModalShell>
+        ) : null}
+        {addOpen ? (
+          <AddChannelModal
+            onClose={() => {
+              setAddOpen(false)
+            }}
+            onAdd={(platform, target) => window.chat.addChannel(platform, target)}
+            onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
+            onCompose={() => {
+              setAddOpen(false)
+              setComposerOpen(true)
+            }}
+          />
+        ) : null}
+        {composerOpen ? (
+          <MonitorComposer
+            channels={orderedChannels}
+            onCreate={createMonitor}
+            onClose={() => {
+              setComposerOpen(false)
+            }}
+          />
+        ) : null}
+        {userActivity !== undefined ? (
+          <UserActivityModal
+            author={userActivity.author}
+            channelId={userActivity.channelId}
+            channelLabel={
+              channels.find((channel) => channel.id === userActivity.channelId)?.label ??
+              userActivity.channelId
+            }
+            messages={(messages[userActivity.channelId] ?? []).filter(
+              (message) => message.author.id === userActivity.author.id
+            )}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            monitored={monitoredKeys.has(`${userActivity.platform}:${userActivity.author.id}`)}
+            onToggleMonitor={() => {
+              toggleMonitoredUser(
+                userActivity.platform,
+                userActivity.author.id,
+                userActivity.author.name
+              )
+            }}
+            onJump={(channelId) => {
+              jumpToChannel(channelId)
+              setUserActivity(undefined)
+            }}
+            onClose={() => {
+              setUserActivity(undefined)
+            }}
+          />
+        ) : null}
+        {donationThread !== undefined ? (
+          <DonationThreadModal
+            channelId={donationThread.channelId}
+            threadToken={donationThread.threadToken}
+            parentAuthor={donationThread.parentAuthor}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            onJump={(channelId) => {
+              jumpToChannel(channelId)
+              setDonationThread(undefined)
+            }}
+            onClose={() => {
+              setDonationThread(undefined)
+            }}
+          />
+        ) : null}
+        {threadView !== undefined && thread !== undefined ? (
+          <ThreadModal
+            channelId={threadView.channelId}
+            messages={thread.messages}
+            rootId={threadView.rootId}
+            rootAuthor={thread.rootAuthor}
+            rootBuffered={thread.rootBuffered}
+            replyToId={threadView.replyToId}
+            canSend={threadChannel !== undefined && canSendTo(threadChannel, auth)}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            onSelectReplyTarget={(messageId) => {
+              setThreadView((current) => {
+                if (current === undefined) {
+                  return current
+                }
+                // Clearing the pick drops the key entirely, so the composer falls back to the default
+                // (newest reply) rather than carrying an explicit `undefined`.
+                const { replyToId: _cleared, ...rest } = current
+                return messageId === undefined ? rest : { ...rest, replyToId: messageId }
+              })
+            }}
+            onJump={(channelId) => {
+              jumpToChannel(channelId)
+              setThreadView(undefined)
+            }}
+            onClose={() => {
+              setThreadView(undefined)
+            }}
+          />
+        ) : null}
+        {searchOpen ? (
+          <SearchModal
+            channels={channels}
+            messagesByChannel={messages}
+            cap={settings.bufferSize}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            onJump={jumpToChannel}
+            onUserActivity={openUserActivity}
+            onDonationReplies={openDonationThread}
+            onClose={() => {
+              setSearchOpen(false)
+            }}
+          />
+        ) : null}
+        {settingsOpen ? (
+          <SettingsModal
+            settings={settings}
+            credentialStorage={auth.credentialStorage}
+            linuxKeyringBackend={auth.linuxKeyringBackend}
+            onChange={updateSettings}
+            onHighlightsChange={updateHighlights}
+            onModerationChange={updateModerationRules}
+            onModerationAlert={setModerationAlert}
+            onPrebanChange={updatePrebanRules}
+            onPrebanToggle={setPrebanToggles}
+            onClose={() => {
+              setSettingsOpen(false)
+            }}
+          />
+        ) : null}
+        {youtubeModalOpen ? (
+          <YouTubeLoginModal
+            credentialStorage={auth.credentialStorage}
+            linuxKeyringBackend={auth.linuxKeyringBackend}
+            onSubmit={(cookies) => window.chat.loginYouTube(cookies)}
+            onClose={() => {
+              setYouTubeModalOpen(false)
+            }}
+          />
+        ) : null}
+        {tabMenu !== undefined ? (
+          <TabContextMenu
+            anchor={tabMenu.anchor}
+            items={[tabMenuItem(tabMenu.channel)]}
+            onClose={() => {
+              setTabMenu(undefined)
+            }}
+          />
+        ) : null}
+        {channelModalOpen && auth.youtube.loggedIn ? (
+          <YouTubeChannelModal
+            channels={auth.youtube.channels}
+            selectedChannelId={auth.youtube.selectedChannelId}
+            onSelect={(channelId) => window.chat.selectYouTubeChannel(channelId)}
+            onClose={() => {
+              setChannelModalOpen(false)
+            }}
+          />
+        ) : null}
+      </div>
+    </RenderPrefsContext.Provider>
   )
 }

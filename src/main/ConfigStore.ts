@@ -352,6 +352,9 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (rawLog !== undefined) {
     settings.rawLog = rawLog
   }
+  if (typeof input['embedGifs'] === 'boolean') {
+    settings.embedGifs = input['embedGifs']
+  }
   return settings
 }
 

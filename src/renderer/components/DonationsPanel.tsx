@@ -23,6 +23,8 @@ interface DonationsPanelProps {
   canMoveLeft: boolean
   canMoveRight: boolean
   inTab?: boolean
+  /** Streamer keys being counted (Settings → donationStreamers), so the row shows who is tracked. */
+  countedStreamers: readonly string[]
   /** The streamer chip row's selection: a streamer key, or undefined for all; App state, not part of DonationsState. */
   selectedStreamer: string | undefined
   onSelectStreamer: (key: string | undefined) => void
@@ -57,6 +59,7 @@ export function DonationsPanel({
   canMoveLeft,
   canMoveRight,
   inTab = false,
+  countedStreamers,
   selectedStreamer,
   onSelectStreamer,
   onActivate,
@@ -70,7 +73,10 @@ export function DonationsPanel({
   const { donations, rates, baseCurrency, sessionStartedAt } = state
   // Clearing is two clicks, never one: the collection is the point of the panel.
   const [confirmClear, setConfirmClear] = useState(false)
-  const chips = useMemo(() => streamerChips(donations, channels), [donations, channels])
+  const chips = useMemo(
+    () => streamerChips(donations, channels, countedStreamers),
+    [donations, channels, countedStreamers]
+  )
   // A selection whose streamer no longer has any donations (its chat closed mid-session, say)
   // reverts to "all" (undefined — never a key a streamer could be named) rather than scoping to nothing.
   const selected =
@@ -181,7 +187,7 @@ export function DonationsPanel({
           )}
         </span>
       </header>
-      {chips.length > 1 ? (
+      {chips.length > 0 ? (
         <StreamerChips
           chips={visibleChips}
           overflow={overflowChips}
@@ -204,8 +210,12 @@ export function DonationsPanel({
       <div className="pc-stream">
         {scoped.length === 0 ? (
           <div className="pc-empty">
-            no donations yet — right-click a tab and choose “Count … donations”; that streamer’s
-            Super Chats, members, cheers, subs and tips then land here
+            {countedStreamers.length === 0
+              ? 'nobody is being counted yet — right-click a tab and choose “Count … donations”; that streamer’s Super Chats, members, cheers, subs and tips then land here'
+              : `no donations yet — counting ${chips
+                  .filter((chip) => chip.counted)
+                  .map((chip) => chip.label)
+                  .join(', ')}`}
           </div>
         ) : (
           <Feed
@@ -294,10 +304,11 @@ function Totals({ totals, base }: { totals: DonationTotals; base: string }): Rea
 }
 
 /**
- * The streamer selector: an "all" chip plus one chip per streamer represented in the feed, with
- * any beyond the first few folded into a `<select>` so the row can't grow past the column's width.
- * The selected chip is marked with `aria-pressed` and distinguished visually by weight/outline, not
- * colour alone — same rule the read/unread state already follows below.
+ * The streamer selector: an "all" chip plus one chip per streamer the panel knows about, with any
+ * beyond the first few folded into a `<select>` so the row can't grow past the column's width.
+ * A filled dot marks a streamer being counted and a hollow one a streamer who only has earlier
+ * donations — a shape, so it reads without colour. The selected chip is marked with `aria-pressed`
+ * and distinguished by weight/outline, the same rule the read/unread state follows below.
  */
 function StreamerChips({
   chips,
@@ -329,11 +340,16 @@ function StreamerChips({
           type="button"
           className="pc-chip"
           aria-pressed={selected === chip.key}
+          title={
+            chip.counted
+              ? `Counting ${chip.label}'s donations`
+              : `Not counting ${chip.label} now — earlier donations only`
+          }
           onClick={() => {
             onSelect(chip.key)
           }}
         >
-          {chip.label} · {chip.unread}
+          {chip.counted ? '●' : '○'} {chip.label} · {chip.unread}
         </button>
       ))}
       {overflow.length > 0 ? (
@@ -350,7 +366,7 @@ function StreamerChips({
           <option value="">more…</option>
           {overflow.map((chip) => (
             <option key={chip.key} value={chip.key}>
-              {chip.label} · {chip.unread}
+              {chip.counted ? '●' : '○'} {chip.label} · {chip.unread}
             </option>
           ))}
         </select>

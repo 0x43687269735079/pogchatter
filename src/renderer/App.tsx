@@ -960,6 +960,7 @@ export function App(): ReactElement {
           canMoveLeft={canMoveLeft}
           canMoveRight={canMoveRight}
           inTab={inTab}
+          countedStreamers={settings.donationStreamers}
           selectedStreamer={selectedStreamer}
           onSelectStreamer={setSelectedStreamer}
           onActivate={setActiveId}

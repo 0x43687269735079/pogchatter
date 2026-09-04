@@ -218,13 +218,27 @@ describe('streamerChips', () => {
       channel({ id: 'youtube:aaaaaaaaaaa', streamerKey: 'b', label: 'MORNING STREAM !gifted' })
     ])
     expect(chips).toEqual([
-      { key: 'a', label: '#a', unread: 2 },
-      { key: 'b', label: 'b', unread: 0 }
+      { key: 'a', label: '#a', unread: 2, counted: false },
+      { key: 'b', label: 'b', unread: 0, counted: false }
     ])
   })
 
-  it('returns an empty list for no donations', () => {
+  it('returns an empty list for no donations and nobody counted', () => {
     expect(streamerChips([], [])).toEqual([])
+  })
+
+  it('shows a counted streamer before their first donation, and marks who is counted', () => {
+    // The row is how the user sees who is being tracked; waiting for a paid event to reveal it
+    // would leave the panel looking untracked right after the opt-in.
+    const chips = streamerChips(
+      [donation('a1', 2_000, false, 'a')],
+      [channel({ id: 'twitch:c', platform: 'twitch', streamerKey: 'c', label: '#c' })],
+      ['c', 'a']
+    )
+    expect(chips).toEqual([
+      { key: 'a', label: 'a', unread: 1, counted: true },
+      { key: 'c', label: '#c', unread: 0, counted: true }
+    ])
   })
 })
 

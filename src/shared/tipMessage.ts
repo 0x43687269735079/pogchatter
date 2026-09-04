@@ -35,7 +35,7 @@ import { parseAmount } from '@shared/currencyParse'
 const TIP_BOT_LOGIN = 'streamelements'
 
 /**
- * `kota3684 just tipped £100.00!` — the donor (any words before "just tipped"), then the amount up
+ * `pebble_42 just tipped £100.00!` — the donor (any words before "just tipped"), then the amount up
  * to the exclamation mark.
  *
  * Everything after is the streamer's own wording and is not matched against: only the lead-in is

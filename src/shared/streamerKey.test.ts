@@ -6,9 +6,9 @@ describe('streamerKeyOf', () => {
     // The point of the key: a Twitch login, a YouTube channel with its creator name resolved, and
     // the same creator's handle all have to land on the same string, or the same person's donations
     // arrive as three different streamers.
-    expect(streamerKeyOf('twitch', 'FallenShadow')).toBe('fallenshadow')
-    expect(streamerKeyOf('youtube', 'abc123', 'Fallen Shadow')).toBe('fallenshadow')
-    expect(streamerKeyOf('youtube', '@FallenShadow')).toBe('fallenshadow')
+    expect(streamerKeyOf('twitch', 'MossFlower')).toBe('mossflower')
+    expect(streamerKeyOf('youtube', 'abc123', 'Moss Flower')).toBe('mossflower')
+    expect(streamerKeyOf('youtube', '@MossFlower')).toBe('mossflower')
   })
 
   it('falls back to the target when the creator name is empty', () => {
@@ -19,26 +19,26 @@ describe('streamerKeyOf', () => {
   })
 
   it('strips the punctuation and casing the two platforms disagree about', () => {
-    expect(streamerKeyOf('youtube', 'vid', 'Fallen-Shadow!! 🎮')).toBe('fallenshadow')
+    expect(streamerKeyOf('youtube', 'vid', 'Moss-Flower!! 🎮')).toBe('mossflower')
     // Underscores survive: they are part of a Twitch login, not decoration.
     expect(streamerKeyOf('twitch', 'Some_One')).toBe('someone')
   })
 
   it('ignores a creator name on Twitch, where the login is already the identity', () => {
-    expect(streamerKeyOf('twitch', 'FallenShadow', 'Someone Else')).toBe('fallenshadow')
+    expect(streamerKeyOf('twitch', 'MossFlower', 'Someone Else')).toBe('mossflower')
   })
 })
 
 describe('legacyStreamerKey', () => {
   it('derives the key from an id that names the streamer', () => {
     expect(legacyStreamerKey('twitch:Some_One')).toBe('someone')
-    expect(legacyStreamerKey('youtube:@FallenShadow')).toBe('fallenshadow')
+    expect(legacyStreamerKey('youtube:@MossFlower')).toBe('mossflower')
   })
 
   it('keeps an id that names no streamer opaque', () => {
     // A video id says nothing about who the streamer is. Normalising it would strip the case and
     // punctuation that make it unique, so a pre-key donation keeps its channel id verbatim.
-    expect(legacyStreamerKey('youtube:dQw4w9WgXcQ')).toBe('youtube:dQw4w9WgXcQ')
+    expect(legacyStreamerKey('youtube:ddddddddddd')).toBe('youtube:ddddddddddd')
     expect(legacyStreamerKey('')).toBe('')
   })
 })
@@ -51,9 +51,7 @@ describe('streamerKeyOf for names outside the Latin alphabet', () => {
   })
 
   it('still prefers a Latin name over the id', () => {
-    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Fallen Shadow', 'UCabc_DEF')).toBe(
-      'fallenshadow'
-    )
+    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Moss Flower', 'UCabc_DEF')).toBe('mossflower')
   })
 })
 
@@ -76,7 +74,7 @@ describe('normaliseStreamerKey', () => {
 describe('streamerKeyOf for a handle column', () => {
   it('keys a @handle column by the handle, not by whatever the creator calls themselves', () => {
     // The handle is the username a Twitch tab shares; the display name may be anything.
-    expect(streamerKeyOf('youtube', '@some_streamer', 'Shondo', 'UCabc')).toBe('somestreamer')
+    expect(streamerKeyOf('youtube', '@some_streamer', 'Fernsong', 'UCabc')).toBe('somestreamer')
     expect(streamerKeyOf('youtube', '@some_streamer')).toBe('somestreamer')
   })
 })
@@ -84,10 +82,16 @@ describe('streamerKeyOf for a handle column', () => {
 describe('streamerKeyOf for a column opened by video', () => {
   it('keys by the resolved handle over the display name, so it meets the Twitch login', () => {
     expect(
-      streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Nitya ch. Phase Connect', 'UCabc', '@Nitya_Nil')
-    ).toBe('nityanil')
-    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Nitya ch. Phase Connect', 'UCabc')).toBe(
-      'nityachphaseconnect'
+      streamerKeyOf(
+        'youtube',
+        'aaaaaaaaaaa',
+        'Tidal Fern ch. Reef Collective',
+        'UCabc',
+        '@Tidal_Fern'
+      )
+    ).toBe('tidalfern')
+    expect(streamerKeyOf('youtube', 'aaaaaaaaaaa', 'Tidal Fern ch. Reef Collective', 'UCabc')).toBe(
+      'tidalfernchreefcollective'
     )
   })
 })

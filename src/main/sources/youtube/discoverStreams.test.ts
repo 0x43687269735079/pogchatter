@@ -88,7 +88,7 @@ function fakeReader(over: {
 describe('discoverChannelStreams', () => {
   it('resolves a handle and returns its live + upcoming streams', async () => {
     const reader = fakeReader({ browseId: 'UC123', lockups: [live, upcoming, vod] })
-    const streams = await discoverChannelStreams(reader, '@lofigirl')
+    const streams = await discoverChannelStreams(reader, '@pixelgardener')
     expect(streams.map((s) => s.videoId)).toEqual(['aaaaaaaaaaa', 'bbbbbbbbbbb'])
   })
 
@@ -99,13 +99,13 @@ describe('discoverChannelStreams', () => {
 
   it('returns [] when the channel has no streams tab (a genuine zero-streams result)', async () => {
     const reader = fakeReader({ browseId: 'UC123', hasStreams: false })
-    expect(await discoverChannelStreams(reader, '@lofigirl')).toEqual([])
+    expect(await discoverChannelStreams(reader, '@pixelgardener')).toEqual([])
   })
 
   it('throws when the URL does not resolve to a channel (parse drift / bad target)', async () => {
     const reader = fakeReader({ browseId: undefined })
-    await expect(discoverChannelStreams(reader, '@lofigirl')).rejects.toThrow(
-      'YouTube did not resolve "@lofigirl" to a channel'
+    await expect(discoverChannelStreams(reader, '@pixelgardener')).rejects.toThrow(
+      'YouTube did not resolve "@pixelgardener" to a channel'
     )
   })
 
@@ -113,7 +113,7 @@ describe('discoverChannelStreams', () => {
     const reader = {
       resolveURL: () => Promise.reject(new Error('network down'))
     } as unknown as Innertube
-    await expect(discoverChannelStreams(reader, '@lofigirl')).rejects.toThrow('network down')
+    await expect(discoverChannelStreams(reader, '@pixelgardener')).rejects.toThrow('network down')
   })
 
   it('propagates a channel or Live-tab fetch failure instead of reporting no streams', async () => {
@@ -121,7 +121,9 @@ describe('discoverChannelStreams', () => {
       resolveURL: () => Promise.resolve({ payload: { browseId: 'UC123' } }),
       getChannel: () => Promise.reject(new Error('429 rate limited'))
     } as unknown as Innertube
-    await expect(discoverChannelStreams(reader, '@lofigirl')).rejects.toThrow('429 rate limited')
+    await expect(discoverChannelStreams(reader, '@pixelgardener')).rejects.toThrow(
+      '429 rate limited'
+    )
   })
 
   it('resolves scheduledStart for waiting entries via getBasicInfo', async () => {
@@ -134,7 +136,7 @@ describe('discoverChannelStreams', () => {
           ? Promise.resolve({ basic_info: { start_timestamp: start } })
           : Promise.resolve({ basic_info: {} })
     })
-    const streams = await discoverChannelStreams(reader, '@lofigirl')
+    const streams = await discoverChannelStreams(reader, '@pixelgardener')
     expect(streams).toEqual([
       { videoId: 'aaaaaaaaaaa', title: 'Live now', state: 'live' },
       {
@@ -157,7 +159,7 @@ describe('discoverChannelStreams', () => {
           ? Promise.resolve({ basic_info: { start_timestamp: start } })
           : Promise.reject(new Error('boom'))
     })
-    const streams = await discoverChannelStreams(reader, '@lofigirl')
+    const streams = await discoverChannelStreams(reader, '@pixelgardener')
     expect(streams).toEqual([
       {
         videoId: 'bbbbbbbbbbb',
@@ -176,7 +178,7 @@ describe('discoverChannelStreams', () => {
       lockups: [live, upcoming],
       getBasicInfoCalls: calls
     })
-    await discoverChannelStreams(reader, '@lofigirl')
+    await discoverChannelStreams(reader, '@pixelgardener')
     expect(calls).toEqual(['bbbbbbbbbbb'])
   })
 })

@@ -76,20 +76,20 @@ describe('YouTubeSource lifecycle cancellation', () => {
   it('uses a normalized, deduplicating source id', () => {
     const getReader = (): Promise<never> => new Promise(() => undefined) as Promise<never>
     const a = new YouTubeSource(
-      '@LofiGirl',
+      '@PixelGardener',
       getReader,
       vi.fn() as unknown as typeof fetch,
       emotes,
       auth
     )
     const b = new YouTubeSource(
-      'https://www.youtube.com/@lofigirl/live',
+      'https://www.youtube.com/@pixelgardener/live',
       getReader,
       vi.fn() as unknown as typeof fetch,
       emotes,
       auth
     )
-    expect(a.id).toBe('youtube:@lofigirl')
+    expect(a.id).toBe('youtube:@pixelgardener')
     expect(b.id).toBe(a.id)
   })
 })
@@ -195,7 +195,7 @@ describe('YouTubeSource post-live handling', () => {
       }
       const pageFetch = vi.fn().mockResolvedValue({
         ok: true,
-        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        url: 'https://www.youtube.com/watch?v=ddddddddddd',
         text: () => Promise.resolve('')
       })
       const source = new YouTubeSource(
@@ -986,7 +986,7 @@ describe('YouTubeSource user profile', () => {
         title: 'Lofi Girl',
         description: 'beats to relax/study to. '.repeat(20),
         avatar: [{ url: 'https://yt3.example/s88.jpg', width: 88, height: 88 }],
-        vanity_channel_url: 'http://www.youtube.com/@LofiGirl'
+        vanity_channel_url: 'http://www.youtube.com/@PixelGardener'
       },
       header: {
         content: {
@@ -996,7 +996,7 @@ describe('YouTubeSource user profile', () => {
           },
           metadata: {
             metadata_rows: [
-              { metadata_parts: [{ text: { text: '@LofiGirl' } }] },
+              { metadata_parts: [{ text: { text: '@PixelGardener' } }] },
               {
                 metadata_parts: [
                   { text: { text: '15.2M subscribers' } },
@@ -1010,18 +1010,18 @@ describe('YouTubeSource user profile', () => {
     }
     const yt = { getChannel: vi.fn().mockResolvedValue(channel) }
 
-    const profile = await sourceWith(yt).getUserProfile('UCSJ4gkVC6NrvII8umztf0Ow')
+    const profile = await sourceWith(yt).getUserProfile('UCaaaaaaaaaaaaaaaaaaaaaa')
 
-    expect(yt.getChannel).toHaveBeenCalledWith('UCSJ4gkVC6NrvII8umztf0Ow')
+    expect(yt.getChannel).toHaveBeenCalledWith('UCaaaaaaaaaaaaaaaaaaaaaa')
     expect(profile).toMatchObject({
       platform: 'youtube',
-      userId: 'UCSJ4gkVC6NrvII8umztf0Ow',
+      userId: 'UCaaaaaaaaaaaaaaaaaaaaaa',
       displayName: 'Lofi Girl',
-      handle: '@LofiGirl',
+      handle: '@PixelGardener',
       // The largest avatar wins across the metadata + header thumbnail sets.
       avatarUrl: 'https://yt3.example/s160.jpg',
       audience: '15.2M subscribers',
-      url: 'https://www.youtube.com/channel/UCSJ4gkVC6NrvII8umztf0Ow'
+      url: 'https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa'
     })
     // The multi-page description is capped (with an ellipsis); the join date is not fetched.
     expect(profile?.description?.length).toBeLessThanOrEqual(300)
@@ -1080,7 +1080,7 @@ describe('YouTubeSource creator identity', () => {
   it('resolves the creator channel + name from basic_info and derives the streamer key', async () => {
     const yt = {
       getInfo: vi.fn().mockResolvedValue({
-        basic_info: { is_live: true, channel_id: 'UCmade-up', author: 'Fallen Shadow' },
+        basic_info: { is_live: true, channel_id: 'UCmade-up', author: 'Moss Flower' },
         livechat: { continuation: 'c0', is_replay: false }
       }),
       getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
@@ -1095,8 +1095,8 @@ describe('YouTubeSource creator identity', () => {
     )
 
     await source.connect()
-    expect(source.creator()).toEqual({ channelId: 'UCmade-up', name: 'Fallen Shadow' })
-    expect(source.streamerKey()).toBe('fallenshadow')
+    expect(source.creator()).toEqual({ channelId: 'UCmade-up', name: 'Moss Flower' })
+    expect(source.streamerKey()).toBe('mossflower')
 
     await source.disconnect()
   })
@@ -1104,7 +1104,7 @@ describe('YouTubeSource creator identity', () => {
   it('reports the persisted streamer key even after the creator resolves', async () => {
     const yt = {
       getInfo: vi.fn().mockResolvedValue({
-        basic_info: { is_live: true, channel_id: 'UCmade-up', author: 'Fallen Shadow' },
+        basic_info: { is_live: true, channel_id: 'UCmade-up', author: 'Moss Flower' },
         livechat: { continuation: 'c0', is_replay: false }
       }),
       getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
@@ -1120,7 +1120,7 @@ describe('YouTubeSource creator identity', () => {
     )
 
     await source.connect()
-    expect(source.creator()).toEqual({ channelId: 'UCmade-up', name: 'Fallen Shadow' })
+    expect(source.creator()).toEqual({ channelId: 'UCmade-up', name: 'Moss Flower' })
     expect(source.streamerKey()).toBe('other')
 
     await source.disconnect()
@@ -1151,12 +1151,16 @@ describe('YouTubeSource creator identity', () => {
   })
 
   it("keys a column opened by video by the channel's handle, not its display name", async () => {
-    // @Nitya_Nil displays as "Nitya ch. Phase Connect"; the handle is the username a Twitch tab
+    // @Tidal_Fern displays as "Tidal Fern ch. Reef Collective"; the handle is the username a Twitch tab
     // would share, so it is the key.
     const yt = {
       getInfo: vi.fn().mockResolvedValue({
-        basic_info: { is_live: true, channel_id: 'UCnitya', author: 'Nitya ch. Phase Connect' },
-        secondary_info: { owner: { author: { url: 'https://www.youtube.com/@Nitya_Nil' } } },
+        basic_info: {
+          is_live: true,
+          channel_id: 'UCtidal',
+          author: 'Tidal Fern ch. Reef Collective'
+        },
+        secondary_info: { owner: { author: { url: 'https://www.youtube.com/@Tidal_Fern' } } },
         livechat: { continuation: 'c0', is_replay: false }
       }),
       getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
@@ -1170,16 +1174,20 @@ describe('YouTubeSource creator identity', () => {
       auth
     )
     await source.connect()
-    expect(source.streamerKey()).toBe('nityanil')
-    expect(source.creator()?.handle).toBe('@Nitya_Nil')
+    expect(source.streamerKey()).toBe('tidalfern')
+    expect(source.creator()?.handle).toBe('@Tidal_Fern')
     await source.disconnect()
   })
 
   it('lets the handle replace a stored name-derived key, but keeps a key stored by association', async () => {
     const ytFor = () => ({
       getInfo: vi.fn().mockResolvedValue({
-        basic_info: { is_live: true, channel_id: 'UCnitya', author: 'Nitya ch. Phase Connect' },
-        secondary_info: { owner: { author: { url: 'https://www.youtube.com/@Nitya_Nil' } } },
+        basic_info: {
+          is_live: true,
+          channel_id: 'UCtidal',
+          author: 'Tidal Fern ch. Reef Collective'
+        },
+        secondary_info: { owner: { author: { url: 'https://www.youtube.com/@Tidal_Fern' } } },
         livechat: { continuation: 'c0', is_replay: false }
       }),
       getBasicInfo: vi.fn().mockResolvedValue({ basic_info: { is_live: true } }),
@@ -1192,10 +1200,10 @@ describe('YouTubeSource creator identity', () => {
       idleFetch,
       emotes,
       auth,
-      { persistedStreamerKey: 'nityachphaseconnect', persistedCreatorId: 'UCnitya' }
+      { persistedStreamerKey: 'tidalfernchreefcollective', persistedCreatorId: 'UCtidal' }
     )
     await fromName.connect()
-    expect(fromName.streamerKey()).toBe('nityanil')
+    expect(fromName.streamerKey()).toBe('tidalfern')
     await fromName.disconnect()
     // Stored because the user added this room from a Twitch tab's menu: their say-so stands.
     const associated = new YouTubeSource(
@@ -1204,7 +1212,7 @@ describe('YouTubeSource creator identity', () => {
       idleFetch,
       emotes,
       auth,
-      { persistedStreamerKey: 'sometwitchlogin', persistedCreatorId: 'UCnitya' }
+      { persistedStreamerKey: 'sometwitchlogin', persistedCreatorId: 'UCtidal' }
     )
     await associated.connect()
     expect(associated.streamerKey()).toBe('sometwitchlogin')
@@ -1213,14 +1221,14 @@ describe('YouTubeSource creator identity', () => {
 
   it('falls back to a target-based key before the creator resolves', () => {
     const source = new YouTubeSource(
-      '@FallenShadow',
+      '@MossFlower',
       () => new Promise(() => undefined) as Promise<never>,
       idleFetch,
       emotes,
       auth
     )
     expect(source.creator()).toBeUndefined()
-    expect(source.streamerKey()).toBe('fallenshadow')
+    expect(source.streamerKey()).toBe('mossflower')
   })
 })
 
@@ -1266,7 +1274,7 @@ describe('YouTubeSource channel URL resolution', () => {
   it('fetches the /live page for a /channel URL', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      url: 'https://www.youtube.com/watch?v=ddddddddddd',
       text: () => Promise.resolve('')
     })
     const yt = {

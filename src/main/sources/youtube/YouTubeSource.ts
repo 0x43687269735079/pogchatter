@@ -1037,7 +1037,7 @@ function textOf(value: unknown): string | undefined {
   return undefined
 }
 
-/** The `@handle` segment of a vanity channel URL (e.g. `http://www.youtube.com/@LofiGirl`). */
+/** The `@handle` segment of a vanity channel URL (e.g. `http://www.youtube.com/@PixelGardener`). */
 function handleFromUrl(url: unknown): string | undefined {
   if (typeof url !== 'string') {
     return undefined

@@ -99,9 +99,9 @@ describe('donationFrom attribution', () => {
     const donation = donationFrom(
       message({ highlight: { kind: 'superchat', displayAmount: '$5.00' } }),
       'youtube:some-video',
-      'fallenshadow'
+      'mossflower'
     )
-    expect(donation?.streamerKey).toBe('fallenshadow')
+    expect(donation?.streamerKey).toBe('mossflower')
     expect(donation?.channelId).toBe('youtube:some-video')
   })
 
@@ -114,10 +114,8 @@ describe('donationFrom attribution', () => {
       badges: [],
       roles: {} as never
     }
-    bot.fragments = [{ type: 'text', text: 'kota3684 just tipped £10.00!' }]
-    expect(donationFrom(bot, 'twitch:fallenshadow', 'fallenshadow')?.streamerKey).toBe(
-      'fallenshadow'
-    )
+    bot.fragments = [{ type: 'text', text: 'pebble_42 just tipped £10.00!' }]
+    expect(donationFrom(bot, 'twitch:mossflower', 'mossflower')?.streamerKey).toBe('mossflower')
   })
 
   it('names an anonymous donor rather than storing a blank author', () => {
@@ -192,12 +190,12 @@ describe('donationFrom tips announced in chat', () => {
 
   it('collects a StreamElements tip, crediting the donor rather than the bot', () => {
     const donation = donationFrom(
-      botTip("kota3684 just tipped £100.00! thanks~ here's what they say: hippo birdie"),
+      botTip("pebble_42 just tipped £100.00! thanks~ here's what they say: hippo birdie"),
       'tw:chan',
       'sk'
     )
     expect(donation?.kind).toBe('tip')
-    expect(donation?.author.displayName).toBe('kota3684')
+    expect(donation?.author.displayName).toBe('pebble_42')
     expect(donation?.value).toEqual({
       unit: 'money',
       amount: 100,

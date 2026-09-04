@@ -369,7 +369,7 @@ describe('DonationStore removal by clear target', () => {
 })
 
 describe('DonationStore membership dedup', () => {
-  const context = { streamerKey: 'fallenshadow', creatorId: 'UC_fallenshadow' }
+  const context = { streamerKey: 'mossflower', creatorId: 'UC_mossflower' }
 
   function membership(id: string, timestamp = 1_000, memberId = 'member-1'): ChatMessage {
     return {
@@ -494,8 +494,8 @@ describe('DonationStore membership dedup', () => {
     // Without a creator id nothing says two rooms belong to one channel, and guessing would drop a
     // purchase that really happened.
     const donations = store()
-    donations.record(membership('a', 1_000), 'youtube:vid', { streamerKey: 'fallenshadow' })
-    donations.record(membership('b', 2_000), 'youtube:other', { streamerKey: 'fallenshadow' })
+    donations.record(membership('a', 1_000), 'youtube:vid', { streamerKey: 'mossflower' })
+    donations.record(membership('b', 2_000), 'youtube:other', { streamerKey: 'mossflower' })
     expect(donations.list()).toHaveLength(2)
   })
 })
@@ -519,7 +519,7 @@ describe('DonationStore author and streamer key', () => {
       highlight: { kind: 'bits', amount: 500 }
     }
     const donation = donations.record(anonymousCheer, 'twitch:chan', {
-      streamerKey: 'fallenshadow'
+      streamerKey: 'mossflower'
     })
     expect(donation?.author.displayName).toBe('Anonymous')
     expect(donation?.value).toEqual({ unit: 'bits', bits: 500 })
@@ -535,7 +535,7 @@ describe('DonationStore author and streamer key', () => {
         donations: [
           {
             id: 'old-cheer',
-            channelId: 'twitch:FallenShadow',
+            channelId: 'twitch:MossFlower',
             platform: 'twitch',
             kind: 'bits',
             timestamp: 1,
@@ -546,7 +546,7 @@ describe('DonationStore author and streamer key', () => {
           },
           {
             id: 'old-superchat',
-            channelId: 'youtube:dQw4w9WgXcQ',
+            channelId: 'youtube:ddddddddddd',
             platform: 'youtube',
             kind: 'superchat',
             timestamp: 2,
@@ -563,9 +563,9 @@ describe('DonationStore author and streamer key', () => {
         .list()
         .map((d) => [d.id, d.streamerKey])
     )
-    expect(keys.get('old-cheer')).toBe('fallenshadow')
+    expect(keys.get('old-cheer')).toBe('mossflower')
     // A video id names no streamer, so it stays opaque rather than being mangled into a key.
-    expect(keys.get('old-superchat')).toBe('youtube:dQw4w9WgXcQ')
+    expect(keys.get('old-superchat')).toBe('youtube:ddddddddddd')
   })
 
   it('keeps a streamer key and header the file already carried', () => {
@@ -583,14 +583,14 @@ describe('DonationStore author and streamer key', () => {
             value: { unit: 'count', count: 1 },
             text: '',
             read: false,
-            streamerKey: 'fallenshadow',
+            streamerKey: 'mossflower',
             headerText: 'Welcome!'
           }
         ]
       })
     )
     const loaded = store().list()[0]
-    expect(loaded?.streamerKey).toBe('fallenshadow')
+    expect(loaded?.streamerKey).toBe('mossflower')
     expect(loaded?.headerText).toBe('Welcome!')
   })
 })

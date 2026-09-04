@@ -56,7 +56,7 @@ export function streamerKeyOf(
     return normalise(target)
   }
   // A handle is the username itself — the same thing a Twitch login is — so it outranks the
-  // creator's display name, which can be anything ("Nitya ch. Phase Connect" for @Nitya_Nil).
+  // creator's display name, which can be anything ("Tidal Fern ch. Reef Collective" for @Tidal_Fern).
   if (target.startsWith('@') && normalise(target.slice(1)) !== '') {
     return normalise(target.slice(1))
   }

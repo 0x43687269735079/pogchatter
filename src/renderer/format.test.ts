@@ -4,7 +4,7 @@ import { atName, clockHM, plainText } from '@renderer/format'
 
 describe('atName', () => {
   it('adds @ to a bare name (Twitch display names)', () => {
-    expect(atName('fallenshadow')).toBe('@fallenshadow')
+    expect(atName('mossflower')).toBe('@mossflower')
   })
 
   it('leaves an existing @ untouched (YouTube handles)', () => {

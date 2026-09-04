@@ -20,7 +20,7 @@ function donation(over: {
     value: over.value ?? { unit: 'count', count: 1 },
     text: '',
     read: false,
-    streamerKey: 'fallenshadow'
+    streamerKey: 'mossflower'
   }
   if (over.headerText !== undefined) {
     built.headerText = over.headerText

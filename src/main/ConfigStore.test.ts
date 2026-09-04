@@ -178,7 +178,7 @@ describe('ConfigStore channels', () => {
   })
 
   it('recomputes a stale persisted id from the target (older normalization scheme)', () => {
-    const url = 'https://www.youtube.com/channel/UCSJ4gkVC6NrvII8umztf0Ow'
+    const url = 'https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa'
     writeFileSync(
       CONFIG,
       JSON.stringify({
@@ -187,7 +187,7 @@ describe('ConfigStore channels', () => {
       })
     )
     expect(new ConfigStore().channels()).toEqual([
-      { platform: 'youtube', target: url, id: 'youtube:UCSJ4gkVC6NrvII8umztf0Ow' }
+      { platform: 'youtube', target: url, id: 'youtube:UCaaaaaaaaaaaaaaaaaaaaaa' }
     ])
   })
 
@@ -196,14 +196,29 @@ describe('ConfigStore channels', () => {
       CONFIG,
       JSON.stringify({
         channels: [
-          { platform: 'youtube', target: '@LofiGirl', id: 'youtube:@lofigirl', label: 'first' },
-          { platform: 'youtube', target: 'lofigirl', id: 'youtube:@lofigirl', label: 'second' }
+          {
+            platform: 'youtube',
+            target: '@PixelGardener',
+            id: 'youtube:@pixelgardener',
+            label: 'first'
+          },
+          {
+            platform: 'youtube',
+            target: 'pixelgardener',
+            id: 'youtube:@pixelgardener',
+            label: 'second'
+          }
         ],
         settings: {}
       })
     )
     expect(new ConfigStore().channels()).toEqual([
-      { platform: 'youtube', target: '@LofiGirl', id: 'youtube:@lofigirl', label: 'first' }
+      {
+        platform: 'youtube',
+        target: '@PixelGardener',
+        id: 'youtube:@pixelgardener',
+        label: 'first'
+      }
     ])
   })
 })
@@ -214,7 +229,7 @@ describe('ConfigStore channel identity', () => {
     store.addChannel({ platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa' })
 
     store.updateChannel('youtube:aaaaaaaaaaa', {
-      streamerKey: 'fallenshadow',
+      streamerKey: 'mossflower',
       creatorId: 'UCmade-up'
     })
 
@@ -223,7 +238,7 @@ describe('ConfigStore channel identity', () => {
         platform: 'youtube',
         target: 'aaaaaaaaaaa',
         id: 'youtube:aaaaaaaaaaa',
-        streamerKey: 'fallenshadow',
+        streamerKey: 'mossflower',
         creatorId: 'UCmade-up'
       }
     ])

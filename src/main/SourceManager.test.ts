@@ -226,7 +226,7 @@ describe('SourceManager de-duplicates a follower onto a standalone video column'
 describe('SourceManager de-duplicates two follower columns on the same video', () => {
   const VIDEO = 'vid12345678'
   const HANDLE = 'youtube:@handle'
-  const CHANNEL = 'youtube:UCSJ4gkVC6NrvII8umztf0Ow'
+  const CHANNEL = 'youtube:UCaaaaaaaaaaaaaaaaaaaaaa'
 
   it('keeps the first-added follower and removes the later one', async () => {
     const removed: string[] = []
@@ -377,13 +377,11 @@ class KeyedSource extends BaseChatSource {
 describe('SourceManager.list carries streamerKey', () => {
   it('uses the source-provided key, falling back to legacyStreamerKey when the source has none', async () => {
     const manager = new SourceManager(() => {})
-    await manager.add(new KeyedSource('youtube:@handle', 'fallenshadow'), 'yt:@handle')
+    await manager.add(new KeyedSource('youtube:@handle', 'mossflower'), 'yt:@handle')
     await manager.add(new FakeSource('twitch:foo'), '#foo')
 
     const list = manager.list()
-    expect(list.find((channel) => channel.id === 'youtube:@handle')?.streamerKey).toBe(
-      'fallenshadow'
-    )
+    expect(list.find((channel) => channel.id === 'youtube:@handle')?.streamerKey).toBe('mossflower')
     // FakeSource exposes no streamerKey() — falls back to legacyStreamerKey('twitch:foo').
     expect(list.find((channel) => channel.id === 'twitch:foo')?.streamerKey).toBe('foo')
   })
@@ -436,11 +434,11 @@ describe('SourceManager onIdentityResolved', () => {
     const source = new ResolvingYouTubeSource('youtube:@handle')
     await manager.add(source, 'yt:@handle')
 
-    source.resolveCreator('UCmade-up', 'Fallen Shadow')
+    source.resolveCreator('UCmade-up', 'Moss Flower')
     expect(resolved).toEqual([
       {
         sourceId: 'youtube:@handle',
-        identity: { streamerKey: 'fallen shadow', creatorId: 'UCmade-up' }
+        identity: { streamerKey: 'moss flower', creatorId: 'UCmade-up' }
       }
     ])
 
@@ -556,7 +554,7 @@ describe('SourceManager re-announces channels when a creator resolves', () => {
     await manager.add(source, 'yt:aaaaaaaaaaa')
     const before = events.filter((event) => event.kind === 'channels').length
 
-    source.resolveCreator('UCmade-up', 'Fallen Shadow')
+    source.resolveCreator('UCmade-up', 'Moss Flower')
 
     const after = events.filter(
       (event): event is Extract<ChatEvent, { kind: 'channels' }> => event.kind === 'channels'

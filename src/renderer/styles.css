@@ -1001,8 +1001,14 @@ body,
   line-height: 0;
   cursor: zoom-in;
 }
+/* An expanded GIF is tall: the name sits on its top line, as with any long message. */
 .pc-gif-toggle.open {
   cursor: zoom-out;
+  vertical-align: top;
+}
+/* A tile row centres the time and avatar on the name's line too, so the whole row lines up. */
+.pc-msg:has(.pc-gif-toggle:not(.open)) {
+  align-items: center;
 }
 .pc-gif-toggle:focus-visible {
   outline: 1px solid var(--accent);

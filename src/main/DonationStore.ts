@@ -9,10 +9,12 @@ import {
 } from '@shared/donations'
 import { donationFrom } from '@shared/donationFrom'
 import { membershipDedupKey } from '@shared/membershipKey'
-import { legacyStreamerKey } from '@shared/streamerKey'
+import { legacyStreamerKey, normaliseStreamerKey } from '@shared/streamerKey'
 
 /** How long to batch writes, so a gift-sub storm doesn't rewrite the file once per event. */
 const WRITE_DEBOUNCE_MS = 1000
+/** Arrivals coalesce over this much shorter window: a gift storm must not rewrite the file per event. */
+const ARRIVAL_WRITE_DEBOUNCE_MS = 250
 
 /**
  * How far apart two announcements of the same membership can be and still be one purchase. Wide
@@ -76,6 +78,8 @@ export class DonationStore {
    */
   readonly #membershipSeen = new Map<string, Array<{ at: number; rooms: Set<string> }>>()
   #timer: ReturnType<typeof setTimeout> | undefined
+  /** When the pending write is due, so a request for a sooner one can pull it forward. */
+  #timerDue = 0
   /** Unsaved changes are pending; cleared only by a write that actually succeeded. */
   #dirty = false
 
@@ -110,6 +114,9 @@ export class DonationStore {
     if (donation === undefined) {
       return undefined
     }
+    if (context.creatorId !== undefined) {
+      donation.creatorId = context.creatorId
+    }
     if (this.#isRepeatMembership(donation, channelId, context.creatorId)) {
       this.#suppressed.add(message.id)
       while (this.#suppressed.size > SUPPRESSED_ECHO_MAX) {
@@ -140,11 +147,12 @@ export class DonationStore {
         this.#ids.delete(dropped.id)
       }
     }
-    // Arrivals persist promptly: this store exists to outlive the session, and a crash inside the
-    // debounce window would lose the paid event outright. Read-state changes stay debounced, since
-    // those are frequent and cheap to lose.
+    // Arrivals persist promptly — this store exists to outlive the session — but not as one file
+    // rewrite per event: a cheer or gift storm coalesces over a window short enough that a crash is
+    // very unlikely to land inside it. Read-state changes wait longer; they are frequent and cheap
+    // to lose.
     this.#dirty = true
-    this.#persist()
+    this.#schedulePersist(ARRIVAL_WRITE_DEBOUNCE_MS)
     return donation
   }
 
@@ -202,6 +210,16 @@ export class DonationStore {
     )
   }
 
+  /** Forget every donation and everything seen, starting the collection from scratch; written at once. */
+  clear(): void {
+    this.#donations = []
+    this.#ids.clear()
+    this.#suppressed.clear()
+    this.#membershipSeen.clear()
+    this.#dirty = true
+    this.flush()
+  }
+
   /** Write any unsaved change immediately (shutdown). */
   flush(): void {
     if (this.#timer !== undefined) {
@@ -244,7 +262,15 @@ export class DonationStore {
       this.#membershipSeen.set(key, recent)
       return true
     }
-    recent.push({ at: donation.timestamp, rooms: new Set([room]) })
+    this.#membershipSeen.set(key, recent)
+    this.#rememberMembership(key, donation.timestamp, new Set([room]))
+    return false
+  }
+
+  /** Remember a membership purchase under its key, newest key last, bounded by eviction of the oldest key. */
+  #rememberMembership(key: string, at: number, rooms: Set<string>): void {
+    const recent = this.#membershipSeen.get(key) ?? []
+    recent.push({ at, rooms })
     this.#membershipSeen.delete(key)
     this.#membershipSeen.set(key, recent)
     while (this.#membershipSeen.size > MEMBERSHIP_DEDUP_MAX) {
@@ -254,19 +280,23 @@ export class DonationStore {
       }
       this.#membershipSeen.delete(oldest.value)
     }
-    return false
   }
 
-  #schedulePersist(): void {
+  #schedulePersist(delayMs = WRITE_DEBOUNCE_MS): void {
+    const due = Date.now() + delayMs
     if (this.#timer !== undefined) {
-      return
+      if (due >= this.#timerDue) {
+        return
+      }
+      clearTimeout(this.#timer)
     }
     const timer = setTimeout(() => {
       this.#timer = undefined
       this.#persist()
-    }, WRITE_DEBOUNCE_MS)
+    }, delayMs)
     timer.unref()
     this.#timer = timer
+    this.#timerDue = due
   }
 
   #persist(): void {
@@ -310,6 +340,17 @@ export class DonationStore {
         }
       }
       this.#donations = loaded
+      // Seed the cross-room membership memory from what was stored, so a purchase collected just
+      // before a restart still recognises its echo from another room after it.
+      for (const donation of loaded) {
+        const key =
+          donation.creatorId === undefined
+            ? undefined
+            : membershipDedupKey(donation, donation.creatorId)
+        if (key !== undefined) {
+          this.#rememberMembership(key, donation.timestamp, new Set([donation.channelId]))
+        }
+      }
     } catch {
       // A truncated or hand-edited file starts empty rather than preventing startup.
       this.#donations = []
@@ -393,10 +434,15 @@ function sanitizeDonation(value: unknown): Donation | undefined {
     // the channel id they do carry, so they group with later ones instead of standing alone. An
     // empty key is no identity either, so it is rebuilt the same way.
     streamerKey:
-      storedKey !== undefined && storedKey !== '' ? storedKey : legacyStreamerKey(channelId)
+      storedKey !== undefined && storedKey !== ''
+        ? normaliseStreamerKey(storedKey)
+        : legacyStreamerKey(channelId)
   }
   if (input['removed'] === true) {
     donation.removed = true
+  }
+  if (typeof input['creatorId'] === 'string' && input['creatorId'] !== '') {
+    donation.creatorId = input['creatorId']
   }
   if (typeof input['headerText'] === 'string') {
     donation.headerText = input['headerText']

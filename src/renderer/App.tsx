@@ -405,12 +405,13 @@ export function App(): ReactElement {
     setOrder((prev) =>
       reconcileColumnOrder(prev, {
         flaggedVisible,
+        donationsVisible: settings.donationsPanel,
         monitorIds,
         channelIds: channels.map((channel) => channel.id),
         stored
       })
     )
-  }, [channels, monitorIds, flaggedVisible, settings.columnOrder])
+  }, [channels, monitorIds, flaggedVisible, settings.columnOrder, settings.donationsPanel])
 
   // Chat columns and monitor views in one ordered list, so both move and reorder the same way.
   const orderedColumns = order
@@ -419,7 +420,7 @@ export function App(): ReactElement {
         return flaggedVisible ? { kind: 'flagged', id } : undefined
       }
       if (id === DONATIONS_COLUMN_ID) {
-        return { kind: 'donations', id }
+        return settings.donationsPanel ? { kind: 'donations', id } : undefined
       }
       const channel = channels.find((c) => c.id === id)
       if (channel !== undefined) {
@@ -496,7 +497,7 @@ export function App(): ReactElement {
   async function addStreamsFromMenu(originColumnId: string, target: string): Promise<void> {
     setStreamsInFlight((prev) => new Set(prev).add(target))
     try {
-      const result = await window.chat.addYouTubeStreams(target)
+      const result = await window.chat.addYouTubeStreams(target, originColumnId)
       if (result.ok) {
         commitOrder(insertAfter(orderRef.current, originColumnId, result.channelIds))
         showColumnNote(originColumnId, `added ${result.added}/${result.total} streams`)
@@ -509,6 +510,42 @@ export function App(): ReactElement {
         next.delete(target)
         return next
       })
+    }
+  }
+
+  /** Forget every collected donation, main's store and this view alike; the list restarts empty. */
+  function clearDonations(): void {
+    void window.chat.clearDonations().then(() => {
+      setDonations((prev) => ({ ...prev, donations: [] }))
+    })
+  }
+
+  /**
+   * The tab/header menu's "count this streamer's donations" item: a toggle on the streamer key, so
+   * every open chat of that streamer — on either platform — counts as one. A YouTube column opened
+   * by video id has no certain key until its creator resolves, so the item waits for that.
+   */
+  function donationItem(channel: ChannelInfo): TabContextMenuItem {
+    const key = channel.streamerKey
+    const ready =
+      channel.platform === 'twitch' ||
+      channel.id.startsWith('youtube:@') ||
+      channel.creatorId !== undefined
+    if (!ready) {
+      return { label: 'Count donations', disabled: true, hint: 'resolving…', onSelect: () => {} }
+    }
+    const counted = settings.donationStreamers.includes(key)
+    return {
+      label: counted ? `Stop counting ${key}'s donations` : `Count ${key}'s donations`,
+      disabled: false,
+      onSelect: () => {
+        setTabMenu(undefined)
+        updateSettings({
+          donationStreamers: counted
+            ? settings.donationStreamers.filter((entry) => entry !== key)
+            : [...settings.donationStreamers, key]
+        })
+      }
     }
   }
 
@@ -930,6 +967,7 @@ export function App(): ReactElement {
           onMarkRead={(ids, read) => {
             void window.chat.markDonationsRead(ids, read)
           }}
+          onClear={clearDonations}
           onMarkAllRead={() => {
             void window.chat.markAllDonationsRead()
           }}
@@ -1243,7 +1281,7 @@ export function App(): ReactElement {
         {tabMenu !== undefined ? (
           <TabContextMenu
             anchor={tabMenu.anchor}
-            items={[tabMenuItem(tabMenu.channel)]}
+            items={[tabMenuItem(tabMenu.channel), donationItem(tabMenu.channel)]}
             onClose={() => {
               setTabMenu(undefined)
             }}

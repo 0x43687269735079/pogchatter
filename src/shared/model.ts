@@ -611,6 +611,16 @@ export interface AppSettings {
    * fetched from GIPHY. On by default.
    */
   embedGifs: boolean
+  /**
+   * Show the donations panel and collect paid events. Off hides the panel and stops collecting
+   * until it is back on. On by default.
+   */
+  donationsPanel: boolean
+  /**
+   * Streamer keys whose paid events are collected, chosen by right-clicking a tab. Every open chat
+   * of a listed streamer counts, on either platform; anyone not listed is ignored.
+   */
+  donationStreamers: string[]
 }
 
 /**
@@ -667,7 +677,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   twitchHistory: true,
   spelling: 'en-US',
   rawLog: { enabled: false },
-  embedGifs: true
+  embedGifs: true,
+  donationsPanel: true,
+  donationStreamers: []
 }
 
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */
@@ -752,6 +764,8 @@ export interface ChatApi {
   /** Mark the named donations read (or unread); the change echoes back as a `donationsRead` event. */
   markDonationsRead(ids: string[], read: boolean): Promise<void>
   markAllDonationsRead(): Promise<void>
+  /** Forget every collected donation and start the collection again. */
+  clearDonations(): Promise<void>
   listChannels(): Promise<ChannelInfo[]>
   /** Send a message. `reply` carries the Twitch native-reply + thread target; YouTube tags the user inline and ignores it. */
   send(channelId: string, text: string, reply?: SendReply): Promise<SendResult>
@@ -801,7 +815,7 @@ export interface ChatApi {
   /** Open a channel (persisted across restarts). The new column arrives via a `channels` event. */
   addChannel(platform: Platform, target: string): Promise<SendResult>
   /** Discover a YouTube channel's live + waiting-room streams and open each as its own column. */
-  addYouTubeStreams(target: string): Promise<AddStreamsResult>
+  addYouTubeStreams(target: string, originChannelId?: string): Promise<AddStreamsResult>
   removeChannel(channelId: string): Promise<void>
   /** The default chat-log directory, shown when none is set. */
   defaultLogDirectory(): Promise<string>

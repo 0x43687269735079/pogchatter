@@ -20,7 +20,8 @@ import {
   DEFAULT_SETTINGS,
   type Platform,
   type SendResult,
-  type TwitchLoginPrompt
+  type TwitchLoginPrompt,
+  BACKLOG_MESSAGES_PER_CHANNEL
 } from '@shared/model'
 import { AutoMod } from '@main/AutoMod'
 import { EventBatcher } from '@main/Batcher'
@@ -305,6 +306,15 @@ function collectDonation(event: ChatEvent): void {
   // The source's resolved cross-platform identity when the source is still registered (it always
   // is, on the same event that carries the message); a legacy channel-id-derived key otherwise.
   const streamerKey = manager?.streamerKeyOf(event.channelId) ?? legacyStreamerKey(event.channelId)
+  // Collection is opt-in per streamer (right-click a tab), and off altogether with the panel.
+  const settings = configStore?.settings()
+  if (
+    settings === undefined ||
+    !settings.donationsPanel ||
+    !settings.donationStreamers.includes(streamerKey)
+  ) {
+    return
+  }
   const creatorId = manager?.creatorIdOf(event.channelId)
   const donation = donationStore.record(event.message, event.channelId, {
     streamerKey,
@@ -635,7 +645,9 @@ void app
     })
     batcher = new EventBatcher(sendEvents)
     // Replay ring so a fresh renderer (startup race, crash-reload) can refill its chat buffers.
-    const backlog = new EventBacklog()
+    const backlog = new EventBacklog(
+      () => configStore?.settings().bufferSize ?? BACKLOG_MESSAGES_PER_CHANNEL
+    )
     // Created below (it needs the source manager for the action path); the sink guards on it.
     let autoMod: AutoMod | undefined
     const emitEvent = (event: ChatEvent): void => {
@@ -764,6 +776,9 @@ void app
       },
       refreshRates,
       broadcastBaseCurrency,
+      clearDonations: () => {
+        donationStore?.clear()
+      },
       markAllDonationsRead: () => {
         const changed = donationStore?.markAllRead() ?? []
         if (changed.length > 0) {
@@ -984,14 +999,15 @@ void app
       return youtubeReader
     }
 
-    const makeSource = (platform: Platform, target: string): ChatSource => {
+    const makeSource = (platform: Platform, target: string, streamerKey?: string): ChatSource => {
       const id = channelId(platform, target)
       if (platform === 'youtube') {
-        // A previously-resolved streamer key persisted onto this channel's config entry (e.g. from
-        // an earlier run's creator resolution), so donations attribute correctly from the first
-        // message instead of only after this run re-resolves the creator.
+        // The streamer this column belongs to, when already known: the key the caller associates
+        // it with (a column added from another tab's menu is that tab's streamer), else one
+        // persisted onto its config entry by an earlier run's creator resolution — so donations
+        // attribute correctly from the first message instead of only once the creator resolves.
         const persisted = config.channels().find((c) => c.id === id)
-        const persistedStreamerKey = persisted?.streamerKey
+        const persistedStreamerKey = streamerKey ?? persisted?.streamerKey
         const persistedCreatorId = persisted?.creatorId
         // Pass the reader factory, not an awaited instance: YouTubeSource acquires it
         // inside connect(), so creating a YouTube channel never blocks add()/restore.
@@ -1018,7 +1034,7 @@ void app
     }
 
     channelService = {
-      async add(platform, target, label) {
+      async add(platform, target, label, streamerKey) {
         const trimmed = target.trim()
         if (trimmed === '') {
           return { ok: false, error: 'Enter a channel name' }
@@ -1045,7 +1061,7 @@ void app
         }
         try {
           await sourceManager.add(
-            makeSource(platform, trimmed),
+            makeSource(platform, trimmed, streamerKey),
             label ?? channelLabel(platform, trimmed)
           )
           config.addChannel({
@@ -1054,6 +1070,9 @@ void app
             id,
             ...(label !== undefined && { label })
           })
+          if (streamerKey !== undefined) {
+            config.updateChannel(id, { streamerKey })
+          }
           return { ok: true }
         } catch (error) {
           return {
@@ -1062,7 +1081,16 @@ void app
           }
         }
       },
-      async addYouTubeStreams(target) {
+      async addYouTubeStreams(target, originChannelId) {
+        // Columns added from a tab's menu belong to that tab's streamer by the user's own say-so:
+        // they take its key, so their donations group with it whatever YouTube calls the creator.
+        // Only a login or a handle names a streamer for certain; a column opened by video id has a
+        // key that may still be resolving, so its discoveries keep their own.
+        const streamerKey =
+          originChannelId !== undefined &&
+          (originChannelId.startsWith('twitch:') || originChannelId.startsWith('youtube:@'))
+            ? sourceManager.streamerKeyFor(originChannelId)
+            : undefined
         const trimmed = target.trim()
         if (trimmed === '' || !isAcceptableYouTubeTarget(trimmed)) {
           return { ok: false, error: 'Enter a YouTube @handle or channel URL' }
@@ -1092,7 +1120,12 @@ void app
           if (open.has(stream.videoId)) {
             continue
           }
-          const result = await channelService?.add('youtube', stream.videoId, stream.title)
+          const result = await channelService?.add(
+            'youtube',
+            stream.videoId,
+            stream.title,
+            streamerKey
+          )
           if (result?.ok === true) {
             added += 1
             open.add(stream.videoId)
@@ -1154,6 +1187,8 @@ app.on('before-quit', (event) => {
   debugLog('app', 'quitting')
   keepAlive?.stop()
   batcher?.dispose()
+  // The 7TV socket and the engine's timers would otherwise run until the forced exit below.
+  emoteEngine?.dispose()
   // Writes are debounced, so a donation (or a read tick) from the last second would otherwise be
   // lost to the forced exit below. Synchronous, so it completes before the race starts.
   donationStore?.flush()

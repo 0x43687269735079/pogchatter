@@ -47,7 +47,9 @@ const DEFAULTS = {
   twitchHistory: true,
   spelling: 'en-US',
   rawLog: { enabled: false },
-  embedGifs: true
+  embedGifs: true,
+  donationsPanel: true,
+  donationStreamers: []
 }
 
 describe('ConfigStore settings', () => {
@@ -294,6 +296,16 @@ describe('ConfigStore spelling and raw-log settings', () => {
     expect(store.settings().embedGifs).toBe(true)
     expect(store.setSettings({ embedGifs: 'no' } as never).embedGifs).toBe(true)
     expect(store.setSettings({ embedGifs: false }).embedGifs).toBe(false)
+  })
+
+  it('shows the donations panel unless told otherwise, and keeps its streamer list to distinct keys', () => {
+    const store = new ConfigStore()
+    expect(store.setSettings({ donationsPanel: 'no' } as never).donationsPanel).toBe(true)
+    expect(store.setSettings({ donationsPanel: false }).donationsPanel).toBe(false)
+    expect(
+      store.setSettings({ donationStreamers: ['some_one', 'someone', 7, ''] } as never)
+        .donationStreamers
+    ).toEqual(['someone'])
   })
 
   it('defaults spelling and raw-log when the settings file omits them', () => {

@@ -152,6 +152,19 @@ export function SettingsModal({
   useEffect(() => {
     void window.chat.rawLogStatus().then(setRawLogStatus)
   }, [settings.rawLog.enabled, log.directory])
+  // A stream error (disk full, removed volume) stops the log on main's side without any settings
+  // write; poll while it is meant to be on, so an open dialog shows "Logging stopped" within seconds.
+  useEffect(() => {
+    if (!settings.rawLog.enabled) {
+      return undefined
+    }
+    const timer = setInterval(() => {
+      void window.chat.rawLogStatus().then(setRawLogStatus)
+    }, 5000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [settings.rawLog.enabled])
 
   function updateLog(patch: Partial<ChatLogSettings>): void {
     onChange({ chatLog: { ...log, ...patch } })
@@ -337,6 +350,25 @@ export function SettingsModal({
               </>
             )}
           </select>
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
+            <span className="pc-setting-name">donations panel</span>
+            <span className="pc-setting-desc">
+              Show the donations panel and collect paid events for the streamers you have chosen
+              (right-click a tab). Off hides the panel and stops collecting until it&rsquo;s back
+              on.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="pc-switch"
+            checked={settings.donationsPanel}
+            onChange={(event) => {
+              onChange({ donationsPanel: event.target.checked })
+            }}
+          />
         </label>
 
         <label className="pc-setting">
@@ -580,8 +612,10 @@ export function SettingsModal({
               <span className="pc-setting-desc">
                 Writes every raw Twitch IRC line and YouTube chat action, verbatim, to a{' '}
                 <code>raw</code> folder inside the chat-log folder — one file per platform per day.
-                This stores full message content. Files are never deleted automatically. If the disk
-                can&apos;t keep up, lines are dropped and the gap is noted in the file.
+                This stores full message content. Files are never deleted automatically. On macOS
+                and Linux they are readable by your user only; on Windows they inherit the
+                folder&apos;s permissions. If the disk can&apos;t keep up, lines are dropped and the
+                gap is noted in the file.
               </span>
             </span>
             <input

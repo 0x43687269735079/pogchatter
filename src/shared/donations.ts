@@ -51,6 +51,11 @@ export interface Donation {
   removed?: boolean
   /** Normalised username identifying the streamer this donation belongs to, across platforms. */
   streamerKey: string
+  /**
+   * The YouTube creator the room belongs to, when the source knew it. Stored so a membership
+   * collected before a restart can still recognise its echo from another room afterwards.
+   */
+  creatorId?: string
   /** The source highlight's header line, e.g. "Gifted 5 memberships". */
   headerText?: string
 }

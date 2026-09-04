@@ -32,8 +32,10 @@ import type { YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManage
 
 /** Adds/removes chat columns and persists the channel list (implemented by the composition root). */
 export interface ChannelService {
-  add(platform: Platform, target: string, label?: string): Promise<SendResult>
-  addYouTubeStreams(target: string): Promise<AddStreamsResult>
+  /** `streamerKey`, when given, files the column under that streamer from its first message. */
+  add(platform: Platform, target: string, label?: string, streamerKey?: string): Promise<SendResult>
+  /** `originChannelId` is the tab whose menu asked, whose streamer the new columns then belong to. */
+  addYouTubeStreams(target: string, originChannelId?: string): Promise<AddStreamsResult>
   remove(channelId: string): Promise<void>
 }
 
@@ -61,6 +63,8 @@ export interface IpcDeps {
   /** Set read state on the named donations; broadcasts what actually changed. */
   markDonationsRead(ids: string[], read: boolean): void
   markAllDonationsRead(): void
+  /** Forget every collected donation; the collection starts again from nothing. */
+  clearDonations(): void
   /** Re-fetch exchange rates for the current base currency (no-op while the cache is fresh). */
   refreshRates(): void
   /** Tell the renderer which currency the panel converts into (so the base follows the setting). */
@@ -115,6 +119,9 @@ export function registerIpc(deps: IpcDeps): void {
   handle('chat:listChannels', () => activeManager.list())
   handle('chat:getBacklog', () => deps.backlogSnapshot())
   handle('chat:getDonations', () => deps.donationsSnapshot())
+  handle('chat:clearDonations', () => {
+    deps.clearDonations()
+  })
   handle('chat:markDonationsRead', (_event, ids, read) => {
     if (Array.isArray(ids) && typeof read === 'boolean') {
       deps.markDonationsRead(
@@ -348,12 +355,12 @@ export function registerIpc(deps: IpcDeps): void {
       Promise.resolve({ ok: false, error: 'Not ready yet' })
     )
   })
-  handle('chat:addYouTubeStreams', (_event, target): Promise<AddStreamsResult> => {
-    if (typeof target !== 'string') {
+  handle('chat:addYouTubeStreams', (_event, target, origin): Promise<AddStreamsResult> => {
+    if (typeof target !== 'string' || (origin !== undefined && typeof origin !== 'string')) {
       return Promise.resolve({ ok: false, error: 'Invalid channel request' })
     }
     return (
-      deps.getChannelService()?.addYouTubeStreams(target) ??
+      deps.getChannelService()?.addYouTubeStreams(target, origin) ??
       Promise.resolve({ ok: false, error: 'Not ready yet' })
     )
   })

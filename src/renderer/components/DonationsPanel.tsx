@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useMemo } from 'react'
+import { type ReactElement, useEffect, useMemo, useState } from 'react'
 import type { ChannelInfo, Platform } from '@shared/model'
 import type { Donation, DonationKind, DonationTotals, KindTotal } from '@shared/donations'
 import { convert, countryName, flagFor, formatMoney } from '@shared/currencyFormat'
@@ -31,6 +31,8 @@ interface DonationsPanelProps {
   onJump: (channelId: string) => void
   onMarkRead: (ids: string[], read: boolean) => void
   onMarkAllRead: () => void
+  /** Forget every collected donation and start the collection again from nothing. */
+  onClear: () => void
   onMove: (id: string, direction: -1 | 1) => void
   onResize: (id: string, width: number) => void
 }
@@ -61,10 +63,13 @@ export function DonationsPanel({
   onJump,
   onMarkRead,
   onMarkAllRead,
+  onClear,
   onMove,
   onResize
 }: DonationsPanelProps): ReactElement {
   const { donations, rates, baseCurrency, sessionStartedAt } = state
+  // Clearing is two clicks, never one: the collection is the point of the panel.
+  const [confirmClear, setConfirmClear] = useState(false)
   const chips = useMemo(() => streamerChips(donations, channels), [donations, channels])
   // A selection whose streamer no longer has any donations (its chat closed mid-session, say)
   // reverts to "all" (undefined — never a key a streamer could be named) rather than scoping to nothing.
@@ -112,6 +117,44 @@ export function DonationsPanel({
           >
             mark all read
           </button>
+          {confirmClear ? (
+            <>
+              <button
+                type="button"
+                className="pc-mbtn"
+                onClick={() => {
+                  setConfirmClear(false)
+                  onClear()
+                }}
+                aria-label="Confirm clearing every donation"
+              >
+                clear all?
+              </button>
+              <button
+                type="button"
+                className="pc-mbtn"
+                onClick={() => {
+                  setConfirmClear(false)
+                }}
+                aria-label="Keep the donations"
+              >
+                keep
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="pc-mbtn"
+              disabled={donations.length === 0}
+              onClick={() => {
+                setConfirmClear(true)
+              }}
+              aria-label="Clear every donation and start again"
+              title="Forget every collected donation and start counting from now"
+            >
+              clear
+            </button>
+          )}
           {inTab ? null : (
             <>
               <button
@@ -161,7 +204,8 @@ export function DonationsPanel({
       <div className="pc-stream">
         {scoped.length === 0 ? (
           <div className="pc-empty">
-            no donations yet — Super Chats, members, cheers and subs land here
+            no donations yet — right-click a tab and choose “Count … donations”; that streamer’s
+            Super Chats, members, cheers, subs and tips then land here
           </div>
         ) : (
           <Feed

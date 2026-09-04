@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, Highlight } from '@shared/model'
 import { DONATION_RETENTION } from '@shared/donations'
 import { DonationStore } from '@main/DonationStore'
@@ -174,19 +174,59 @@ describe('DonationStore ordering and durability', () => {
     ])
   })
 
-  it('writes an arrival immediately rather than waiting out the debounce', () => {
-    // A crash inside the debounce window would lose the paid event, in the store that exists to
-    // outlive the session.
-    const written: string[] = []
-    const donations = new DonationStore({
-      dir,
-      writeFile: (path, contents) => {
-        written.push(contents)
-        writeFileSync(path, contents)
-      }
-    })
+  it('writes a burst of arrivals once, within a short window', () => {
+    // A crash inside the window would lose the paid event, so the window is short — but a cheer
+    // storm must not rewrite the whole file once per cheer.
+    vi.useFakeTimers()
+    try {
+      const written: string[] = []
+      const donations = new DonationStore({
+        dir,
+        writeFile: (path, contents) => {
+          written.push(contents)
+          writeFileSync(path, contents)
+        }
+      })
+      donations.record(superchat('a'), 'yt:vid', { streamerKey: 'sk' })
+      donations.record(superchat('b', '£5.00', 2_000), 'yt:vid', { streamerKey: 'sk' })
+      expect(written).toHaveLength(0)
+      vi.advanceTimersByTime(250)
+      expect(written).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pulls a pending read-state write forward for an arrival', () => {
+    vi.useFakeTimers()
+    try {
+      const written: string[] = []
+      const donations = new DonationStore({
+        dir,
+        writeFile: (path, contents) => {
+          written.push(contents)
+          writeFileSync(path, contents)
+        }
+      })
+      donations.record(superchat('a'), 'yt:vid', { streamerKey: 'sk' })
+      vi.advanceTimersByTime(250)
+      donations.markRead(['a'], true) // on its own, a one-second wait
+      donations.record(superchat('b', '£5.00', 2_000), 'yt:vid', { streamerKey: 'sk' })
+      vi.advanceTimersByTime(250)
+      expect(written).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the collection and forgets what it had seen', () => {
+    const donations = store()
     donations.record(superchat('a'), 'yt:vid', { streamerKey: 'sk' })
-    expect(written).toHaveLength(1)
+    donations.clear()
+    expect(donations.list()).toEqual([])
+    expect(store().list()).toEqual([])
+    // Nothing from before the reset is held against a new arrival, not even its id.
+    expect(donations.record(superchat('a'), 'yt:vid', { streamerKey: 'sk' })).toBeDefined()
   })
 
   it('retries on shutdown after a write that failed', () => {
@@ -200,7 +240,8 @@ describe('DonationStore ordering and durability', () => {
         writeFileSync(path, contents)
       }
     })
-    donations.record(superchat('a'), 'yt:vid', { streamerKey: 'sk' }) // this write throws
+    donations.record(superchat('a'), 'yt:vid', { streamerKey: 'sk' })
+    donations.flush() // this write throws
     fail = false
     donations.flush() // must still write, though no timer is pending
     expect(
@@ -383,6 +424,18 @@ describe('DonationStore membership dedup', () => {
     donations.record(membership('p1-b', 1_500), 'youtube:b', context)
     donations.record(membership('p1-b', 1_500), 'youtube:b', context)
     expect(donations.list().map((d) => d.id)).toEqual(['p1'])
+  })
+
+  it('recognises the echo of a purchase stored before a restart', () => {
+    // Memory alone would forget the purchase on restart; the stored record carries the creator, so
+    // the other room's copy — a different message id — is still an echo, not a second purchase.
+    const before = store()
+    before.record(membership('p1', 1_000), 'youtube:a', context)
+    before.flush()
+    const after = store()
+    after.record(membership('p1', 1_000), 'youtube:a', context)
+    after.record(membership('p1-b', 1_500), 'youtube:b', context)
+    expect(after.list().map((d) => d.id)).toEqual(['p1'])
   })
 
   it('collects a genuine second purchase once the window has passed', () => {

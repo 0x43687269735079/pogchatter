@@ -47,6 +47,9 @@ const api: ChatApi = {
   markDonationsRead(ids: string[], read: boolean): Promise<void> {
     return ipcRenderer.invoke('chat:markDonationsRead', ids, read) as Promise<void>
   },
+  clearDonations(): Promise<void> {
+    return ipcRenderer.invoke('chat:clearDonations') as Promise<void>
+  },
   markAllDonationsRead(): Promise<void> {
     return ipcRenderer.invoke('chat:markAllDonationsRead') as Promise<void>
   },
@@ -134,8 +137,12 @@ const api: ChatApi = {
   addChannel(platform: Platform, target: string): Promise<SendResult> {
     return ipcRenderer.invoke('chat:addChannel', platform, target) as Promise<SendResult>
   },
-  addYouTubeStreams(target: string): Promise<AddStreamsResult> {
-    return ipcRenderer.invoke('chat:addYouTubeStreams', target) as Promise<AddStreamsResult>
+  addYouTubeStreams(target: string, originChannelId?: string): Promise<AddStreamsResult> {
+    return ipcRenderer.invoke(
+      'chat:addYouTubeStreams',
+      target,
+      originChannelId
+    ) as Promise<AddStreamsResult>
   },
   removeChannel(channelId: string): Promise<void> {
     return ipcRenderer.invoke('chat:removeChannel', channelId) as Promise<void>

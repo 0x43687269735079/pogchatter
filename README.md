@@ -8,8 +8,9 @@ multi-column window. Built with Electron, React, and TypeScript.
 - Right-click moderation (report/block; remove/timeout/ban when you are a mod or the broadcaster)
 - Reveal deleted messages and highlight/ping on specific users or keywords
 - 7TV / BTTV / FFZ and Twitch emotes, plus the live YouTube emoji catalog
-- A donations tab collecting Super Chats, members, cheers, subs and StreamElements tips across
-  every open chat, grouped per streamer, with currency conversion
+- A donations tab collecting Super Chats, members, cheers, subs and StreamElements tips for the
+  streamers you choose (right-click a tab), grouped per streamer across both platforms, with
+  currency conversion, a clear button to start the count again, and a switch to hide the panel
 - Right-click a tab to open a streamer's YouTube waiting rooms and live chat in order
 - Twitch GIFs shown inline as small tiles, expanded on click (or as text, if you turn embedding off);
   spell-check in the composer (US or UK English)
@@ -118,9 +119,10 @@ Everything the app talks to, so you can judge it for yourself:
 
 Nothing else is contacted. The optional **raw message log** (Settings → Advanced) writes every
 inbound Twitch and YouTube message verbatim to a `raw` folder inside the chat-log folder — it stores
-full message content, and it is off by default. The folder and its files are readable by your user
-only. If the disk can't keep up, lines are dropped rather than queued, and a `{"dropped": N}` line
-records the gap.
+full message content, and it is off by default. On macOS and Linux the folder and its files are
+created readable by your user only; on Windows they inherit the chat-log folder's permissions. If
+the disk can't keep up, lines are dropped rather than queued, and a `{"dropped": N}` line records
+the gap.
 
 ## Disclaimer
 

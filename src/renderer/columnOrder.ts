@@ -94,6 +94,8 @@ export function rankInsert(list: string[], id: string, monitorIds: ReadonlySet<s
 export interface ReconcileOptions {
   /** Whether the flagged view currently exists (any moderation watchlist term configured). */
   flaggedVisible: boolean
+  /** Whether the donations view is shown (Settings → donations panel); shown when omitted. */
+  donationsVisible?: boolean | undefined
   /** Ids of the configured monitor views. */
   monitorIds: ReadonlySet<string>
   /** Open chat channel ids, in the order main reports them. */
@@ -113,12 +115,12 @@ export interface ReconcileOptions {
  * changed, so callers can skip a re-render.
  */
 export function reconcileColumnOrder(prev: string[], options: ReconcileOptions): string[] {
-  const { flaggedVisible, monitorIds, channelIds, stored } = options
-  // The donations view is always present: it is the feature's entry point and has its own empty
-  // state, unlike the flagged view which only appears once moderation rules exist.
+  const { flaggedVisible, donationsVisible, monitorIds, channelIds, stored } = options
+  // The donations view is present unless turned off in Settings: it is the feature's entry point
+  // and has its own empty state, unlike the flagged view which only appears once rules exist.
   const ids = [
     ...(flaggedVisible ? [FLAGGED_COLUMN_ID] : []),
-    DONATIONS_COLUMN_ID,
+    ...(donationsVisible === false ? [] : [DONATIONS_COLUMN_ID]),
     ...monitorIds,
     ...channelIds
   ]

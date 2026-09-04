@@ -128,7 +128,7 @@ export function ChannelColumn({
   async function addStreams(target: string): Promise<void> {
     setStreamsBusy(true)
     setStreamsNote(undefined)
-    const result = await window.chat.addYouTubeStreams(target)
+    const result = await window.chat.addYouTubeStreams(target, channel.id)
     setStreamsBusy(false)
     setStreamsNote(result.ok ? `added ${result.added}/${result.total} streams` : result.error)
   }

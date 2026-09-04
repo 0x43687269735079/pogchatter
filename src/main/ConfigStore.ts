@@ -20,6 +20,7 @@ import {
   type RawLogSettings
 } from '@shared/model'
 import { MAX_PATTERN_LENGTH } from '@shared/patternMatch'
+import { normaliseStreamerKey } from '@shared/streamerKey'
 import { channelId, isPlatform } from '@main/sources/channelId'
 
 export interface PersistedChannel {
@@ -248,6 +249,9 @@ function sanitizeRawLog(value: unknown): RawLogSettings | undefined {
   return { enabled: input['enabled'] === true }
 }
 
+/** A ceiling on the donation streamer list: a tab per streamer is the realistic scale. */
+const MAX_DONATION_STREAMERS = 200
+
 /** Keep only known setting keys with the right types, so a stale file or the renderer can't inject arbitrary config. */
 function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof value !== 'object' || value === null) {
@@ -354,6 +358,16 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   }
   if (typeof input['embedGifs'] === 'boolean') {
     settings.embedGifs = input['embedGifs']
+  }
+  if (typeof input['donationsPanel'] === 'boolean') {
+    settings.donationsPanel = input['donationsPanel']
+  }
+  if (Array.isArray(input['donationStreamers'])) {
+    const keys = input['donationStreamers']
+      .filter((key): key is string => typeof key === 'string')
+      .map((key) => normaliseStreamerKey(key))
+      .filter((key) => key !== '')
+    settings.donationStreamers = [...new Set(keys)].slice(0, MAX_DONATION_STREAMERS)
   }
   return settings
 }

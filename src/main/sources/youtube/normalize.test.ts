@@ -332,7 +332,7 @@ describe('parseReplyThread', () => {
                       authorName: { simpleText: '@nonixium' },
                       timestampUsec: '1780960616391332',
                       purchaseAmountText: { simpleText: '$5.00' },
-                      message: { runs: [{ text: 'hug Nitya' }] },
+                      message: { runs: [{ text: 'hug Fern' }] },
                       bodyBackgroundColor: 4280150454
                     }
                   }

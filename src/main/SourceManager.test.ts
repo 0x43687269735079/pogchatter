@@ -226,7 +226,7 @@ describe('SourceManager de-duplicates a follower onto a standalone video column'
 describe('SourceManager de-duplicates two follower columns on the same video', () => {
   const VIDEO = 'vid12345678'
   const HANDLE = 'youtube:@handle'
-  const CHANNEL = 'youtube:UCSJ4gkVC6NrvII8umztf0Ow'
+  const CHANNEL = 'youtube:UCaaaaaaaaaaaaaaaaaaaaaa'
 
   it('keeps the first-added follower and removes the later one', async () => {
     const removed: string[] = []
@@ -355,6 +355,111 @@ describe('SourceManager late connect rejection', () => {
   })
 })
 
+class KeyedSource extends BaseChatSource {
+  readonly platform: Platform = 'youtube'
+
+  constructor(
+    readonly id: string,
+    private readonly key: string
+  ) {
+    super()
+  }
+
+  streamerKey(): string {
+    return this.key
+  }
+
+  async connect(): Promise<void> {}
+  async disconnect(): Promise<void> {}
+  async send(): Promise<void> {}
+}
+
+describe('SourceManager.list carries streamerKey', () => {
+  it('uses the source-provided key, falling back to legacyStreamerKey when the source has none', async () => {
+    const manager = new SourceManager(() => {})
+    await manager.add(new KeyedSource('youtube:@handle', 'mossflower'), 'yt:@handle')
+    await manager.add(new FakeSource('twitch:foo'), '#foo')
+
+    const list = manager.list()
+    expect(list.find((channel) => channel.id === 'youtube:@handle')?.streamerKey).toBe('mossflower')
+    // FakeSource exposes no streamerKey() — falls back to legacyStreamerKey('twitch:foo').
+    expect(list.find((channel) => channel.id === 'twitch:foo')?.streamerKey).toBe('foo')
+  })
+})
+
+class ResolvingYouTubeSource extends BaseChatSource {
+  readonly platform: Platform = 'youtube'
+  #creator: { channelId: string; name: string } | undefined
+
+  constructor(readonly id: string) {
+    super()
+  }
+
+  creator(): { channelId: string; name: string } | undefined {
+    return this.#creator
+  }
+
+  streamerKey(): string {
+    return this.#creator === undefined ? 'pending' : this.#creator.name.toLowerCase()
+  }
+
+  /** Test hook: resolve the creator and announce a status change, as the real source does. */
+  resolveCreator(channelId: string, name: string): void {
+    this.#creator = { channelId, name }
+    this.setStatus({ state: 'live' })
+  }
+
+  /** Test hook: a further status change, to prove onIdentityResolved doesn't re-fire. */
+  end(): void {
+    this.setStatus({ state: 'ended' })
+  }
+
+  async connect(): Promise<void> {}
+  async disconnect(): Promise<void> {}
+  async send(): Promise<void> {}
+}
+
+describe('SourceManager onIdentityResolved', () => {
+  it('fires once with the resolved streamer key and creator id when a YouTube source resolves', async () => {
+    const resolved: Array<{
+      sourceId: string
+      identity: { streamerKey: string; creatorId?: string }
+    }> = []
+    const manager = new SourceManager(
+      () => {},
+      () => {},
+      () => {},
+      (sourceId, identity) => resolved.push({ sourceId, identity })
+    )
+    const source = new ResolvingYouTubeSource('youtube:@handle')
+    await manager.add(source, 'yt:@handle')
+
+    source.resolveCreator('UCmade-up', 'Moss Flower')
+    expect(resolved).toEqual([
+      {
+        sourceId: 'youtube:@handle',
+        identity: { streamerKey: 'moss flower', creatorId: 'UCmade-up' }
+      }
+    ])
+
+    // A further status change on the same (already-resolved) source must not re-fire it.
+    source.end()
+    expect(resolved).toHaveLength(1)
+  })
+
+  it('never fires for a source whose creator never resolves', async () => {
+    const resolved: unknown[] = []
+    const manager = new SourceManager(
+      () => {},
+      () => {},
+      () => {},
+      (sourceId, identity) => resolved.push({ sourceId, identity })
+    )
+    await manager.add(new FakeSource('twitch:foo'), '#foo')
+    expect(resolved).toEqual([])
+  })
+})
+
 describe('SourceManager reconnectAll', () => {
   class SpySource extends BaseChatSource {
     connects = 0
@@ -438,5 +543,59 @@ describe('SourceManager reconnectAll', () => {
     await reconnect
 
     expect(source.connects).toBe(0) // the removed source must not be reconnected (a leaked connection)
+  })
+})
+
+describe('SourceManager re-announces channels when a creator resolves', () => {
+  it('emits a channels event carrying the creator id once identity is known', async () => {
+    const events: ChatEvent[] = []
+    const manager = new SourceManager((event) => events.push(event))
+    const source = new ResolvingYouTubeSource('youtube:aaaaaaaaaaa')
+    await manager.add(source, 'yt:aaaaaaaaaaa')
+    const before = events.filter((event) => event.kind === 'channels').length
+
+    source.resolveCreator('UCmade-up', 'Moss Flower')
+
+    const after = events.filter(
+      (event): event is Extract<ChatEvent, { kind: 'channels' }> => event.kind === 'channels'
+    )
+    expect(after.length).toBeGreaterThan(before)
+    expect(after.at(-1)?.channels[0]?.creatorId).toBe('UCmade-up')
+  })
+})
+
+describe('SourceManager reports an identity change', () => {
+  it('reports again when a handle resolves to a different creator than before', async () => {
+    const resolved: string[] = []
+    const manager = new SourceManager(
+      () => {},
+      () => {},
+      () => {},
+      (_sourceId, identity) => resolved.push(identity.creatorId ?? '')
+    )
+    const source = new ResolvingYouTubeSource('youtube:@handle')
+    await manager.add(source, 'yt:@handle')
+    source.resolveCreator('UCold', 'Old Owner')
+    source.end() // a further status change with the same creator: no repeat
+    source.resolveCreator('UCnew', 'New Owner') // same status as before, so nothing emits yet
+    source.end() // the next status change carries the new owner
+    expect(resolved).toEqual(['UCold', 'UCnew'])
+  })
+
+  it('reports again when the same creator resolves to a better key', async () => {
+    const keys: string[] = []
+    const manager = new SourceManager(
+      () => {},
+      () => {},
+      () => {},
+      (_sourceId, identity) => keys.push(identity.streamerKey)
+    )
+    const source = new ResolvingYouTubeSource('youtube:aaaaaaaaaaa')
+    await manager.add(source, 'yt:video')
+    source.resolveCreator('UC1', 'Display Name')
+    source.end()
+    source.resolveCreator('UC1', 'handle') // the fake keys by name; a real source by handle
+    source.end()
+    expect(keys).toEqual(['display name', 'handle'])
   })
 })

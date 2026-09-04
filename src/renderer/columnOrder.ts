@@ -49,6 +49,26 @@ export function moveColumnTo(order: string[], id: string, toIndex: number): stri
 }
 
 /**
+ * Insert `ids` immediately after `anchorId`, preserving their given order. Any of `ids` already
+ * present in `order` are relocated (removed from their old spot first); `anchorId` itself is
+ * never moved, even if it's listed in `ids`. When `anchorId` is absent from `order`, `ids` are
+ * appended at the end instead. Returns the input array unchanged (same reference) when nothing
+ * would change (empty `ids`, or they're already in exactly that position), so the caller can skip
+ * persisting a no-op.
+ */
+export function insertAfter(order: string[], anchorId: string, ids: string[]): string[] {
+  const toInsert = ids.filter((id) => id !== anchorId)
+  if (toInsert.length === 0) {
+    return order
+  }
+  const base = order.filter((id) => !toInsert.includes(id))
+  const anchorIndex = base.indexOf(anchorId)
+  const at = anchorIndex === -1 ? base.length : anchorIndex + 1
+  const next = [...base.slice(0, at), ...toInsert, ...base.slice(at)]
+  return next.length === order.length && next.every((id, i) => id === order[i]) ? order : next
+}
+
+/**
  * Default left-to-right priority for a column that hasn't been explicitly placed: the flagged
  * (moderation) view leads, monitor views come second, chat columns follow.
  */
@@ -74,6 +94,8 @@ export function rankInsert(list: string[], id: string, monitorIds: ReadonlySet<s
 export interface ReconcileOptions {
   /** Whether the flagged view currently exists (any moderation watchlist term configured). */
   flaggedVisible: boolean
+  /** Whether the donations view is shown (Settings → donations panel); shown when omitted. */
+  donationsVisible?: boolean | undefined
   /** Ids of the configured monitor views. */
   monitorIds: ReadonlySet<string>
   /** Open chat channel ids, in the order main reports them. */
@@ -93,12 +115,12 @@ export interface ReconcileOptions {
  * changed, so callers can skip a re-render.
  */
 export function reconcileColumnOrder(prev: string[], options: ReconcileOptions): string[] {
-  const { flaggedVisible, monitorIds, channelIds, stored } = options
-  // The donations view is always present: it is the feature's entry point and has its own empty
-  // state, unlike the flagged view which only appears once moderation rules exist.
+  const { flaggedVisible, donationsVisible, monitorIds, channelIds, stored } = options
+  // The donations view is present unless turned off in Settings: it is the feature's entry point
+  // and has its own empty state, unlike the flagged view which only appears once rules exist.
   const ids = [
     ...(flaggedVisible ? [FLAGGED_COLUMN_ID] : []),
-    DONATIONS_COLUMN_ID,
+    ...(donationsVisible === false ? [] : [DONATIONS_COLUMN_ID]),
     ...monitorIds,
     ...channelIds
   ]

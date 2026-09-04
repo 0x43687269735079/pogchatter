@@ -329,7 +329,8 @@ describe('applyEventsToChannels', () => {
     id,
     platform: 'youtube',
     label: id,
-    status: { state: 'offline' }
+    status: { state: 'offline' },
+    streamerKey: id
   })
 
   it('replaces the list on a channels event', () => {

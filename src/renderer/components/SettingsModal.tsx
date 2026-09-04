@@ -12,7 +12,8 @@ import {
   FONT_SIZE_OPTIONS,
   type HighlightRule,
   type LinuxKeyringBackend,
-  type ModerationRule
+  type ModerationRule,
+  type RawLogStatus
 } from '@shared/model'
 
 const BUFFER_NOTE: Record<number, string> = {
@@ -21,6 +22,20 @@ const BUFFER_NOTE: Record<number, string> = {
   1000: 'large',
   2000: 'very large',
   5000: 'maximum'
+}
+
+/** Formats a byte count for the raw-log size line (`0 B`, `12.3 KB`, `4.1 MB`, `1.2 GB`). */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 /**
@@ -126,10 +141,30 @@ export function SettingsModal({
   onClose
 }: SettingsModalProps): ReactElement {
   const log = settings.chatLog
+  const isMac = window.win.platform === 'darwin'
   const [defaultDir, setDefaultDir] = useState('')
+  const [rawLogStatus, setRawLogStatus] = useState<RawLogStatus | undefined>(undefined)
   useEffect(() => {
     void window.chat.defaultLogDirectory().then(setDefaultDir)
   }, [])
+  // Re-read after a toggle or a directory move: main re-opens or closes the log on the same settings
+  // write, and the size shown must follow it.
+  useEffect(() => {
+    void window.chat.rawLogStatus().then(setRawLogStatus)
+  }, [settings.rawLog.enabled, log.directory])
+  // A stream error (disk full, removed volume) stops the log on main's side without any settings
+  // write; poll while it is meant to be on, so an open dialog shows "Logging stopped" within seconds.
+  useEffect(() => {
+    if (!settings.rawLog.enabled) {
+      return undefined
+    }
+    const timer = setInterval(() => {
+      void window.chat.rawLogStatus().then(setRawLogStatus)
+    }, 5000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [settings.rawLog.enabled])
 
   function updateLog(patch: Partial<ChatLogSettings>): void {
     onChange({ chatLog: { ...log, ...patch } })
@@ -140,6 +175,10 @@ export function SettingsModal({
     if (dir !== undefined) {
       updateLog({ directory: dir })
     }
+  }
+
+  function toggleRawLog(enabled: boolean): void {
+    onChange({ rawLog: { enabled } })
   }
 
   return (
@@ -279,6 +318,61 @@ export function SettingsModal({
 
         <label className="pc-setting">
           <span className="pc-setting-meta">
+            <span className="pc-setting-name">spelling</span>
+            <span className="pc-setting-desc">
+              {isMac
+                ? 'Spelling is managed by macOS (System Settings → Keyboard); only Off applies here.'
+                : 'Underlines misspellings in the composer; right-click a word for suggestions. ' +
+                  "On Windows and Linux the dictionary is downloaded once from Chromium's CDN."}
+            </span>
+          </span>
+          <select
+            className="pc-select"
+            value={isMac && settings.spelling !== 'off' ? 'en-US' : settings.spelling}
+            aria-label="Spelling"
+            onChange={(event) => {
+              const value = event.target.value
+              onChange({
+                spelling: value === 'en-GB' ? 'en-GB' : value === 'off' ? 'off' : 'en-US'
+              })
+            }}
+          >
+            {isMac ? (
+              <>
+                <option value="en-US">On — system language</option>
+                <option value="off">Off</option>
+              </>
+            ) : (
+              <>
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="off">Off</option>
+              </>
+            )}
+          </select>
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
+            <span className="pc-setting-name">donations panel</span>
+            <span className="pc-setting-desc">
+              Show the donations panel and collect paid events for the streamers you have chosen
+              (right-click a tab). Off hides the panel and stops collecting until it&rsquo;s back
+              on.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="pc-switch"
+            checked={settings.donationsPanel}
+            onChange={(event) => {
+              onChange({ donationsPanel: event.target.checked })
+            }}
+          />
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
             <span className="pc-setting-name">donation currency</span>
             <span className="pc-setting-desc">
               Currency the donations panel converts amounts into. Leave blank to follow your system.
@@ -362,6 +456,23 @@ export function SettingsModal({
               />
             </label>
           ))}
+          <label className="pc-setting">
+            <span className="pc-setting-meta">
+              <span className="pc-setting-name">Twitch GIFs</span>
+              <span className="pc-setting-desc">
+                Show GIF messages as images. Off shows each GIF’s name as text instead, and nothing
+                is fetched from GIPHY.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="pc-switch"
+              checked={settings.embedGifs}
+              onChange={(event) => {
+                onChange({ embedGifs: event.target.checked })
+              }}
+            />
+          </label>
           <p className="pc-setting-note">
             If some emotes didn’t load, reload them from every source (7TV/BTTV/FFZ, Twitch,
             YouTube).
@@ -492,6 +603,44 @@ export function SettingsModal({
             </ul>
           </div>
         ) : null}
+
+        <div className="pc-setting-group">
+          <div className="pc-setting-group-title">Advanced</div>
+          <label className="pc-setting">
+            <span className="pc-setting-meta">
+              <span className="pc-setting-name">raw message log</span>
+              <span className="pc-setting-desc">
+                Writes every raw Twitch IRC line and YouTube chat action, verbatim, to a{' '}
+                <code>raw</code> folder inside the chat-log folder — one file per platform per day.
+                This stores full message content. Files are never deleted automatically. On macOS
+                and Linux they are readable by your user only; on Windows they inherit the
+                folder&apos;s permissions. If the disk can&apos;t keep up, lines are dropped and the
+                gap is noted in the file.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="pc-switch"
+              checked={settings.rawLog.enabled}
+              onChange={(event) => toggleRawLog(event.target.checked)}
+            />
+          </label>
+          <div className="pc-log-dir">
+            <span className="pc-log-path">
+              {rawLogStatus === undefined ? '…' : formatBytes(rawLogStatus.bytes)}
+            </span>
+            <button
+              type="button"
+              className="pc-mbtn"
+              onClick={() => void window.chat.openRawLogDir()}
+            >
+              show folder
+            </button>
+          </div>
+          {rawLogStatus?.disabledReason !== undefined ? (
+            <p className="pc-setting-note">Logging stopped: {rawLogStatus.disabledReason}</p>
+          ) : null}
+        </div>
       </div>
       <div className="mf">
         <button type="button" className="pc-mbtn" onClick={onClose}>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   FLAGGED_COLUMN_ID,
+  insertAfter,
   moveColumnBy,
   moveColumnTo,
   rankInsert,
@@ -34,6 +35,31 @@ describe('moveColumnTo', () => {
     const order = ['a', 'b', 'c']
     expect(moveColumnTo(order, 'gone', 1)).toBe(order)
     expect(moveColumnTo(order, 'b', 1)).toBe(order) // already at index 1 once removed
+  })
+})
+
+describe('insertAfter', () => {
+  it('splices ids in after the anchor, relocating any already present', () => {
+    expect(insertAfter(['a', 'b', 'c'], 'a', ['x', 'b'])).toEqual(['a', 'x', 'b', 'c'])
+  })
+
+  it('appends the ids in order when the anchor is missing', () => {
+    expect(insertAfter(['a', 'b'], 'gone', ['x', 'y'])).toEqual(['a', 'b', 'x', 'y'])
+  })
+
+  it('returns the same array reference when ids is empty', () => {
+    const order = ['a', 'b', 'c']
+    expect(insertAfter(order, 'a', [])).toBe(order)
+  })
+
+  it('returns the same array reference when the ids are already in place', () => {
+    const order = ['a', 'x', 'b', 'c']
+    expect(insertAfter(order, 'a', ['x', 'b'])).toBe(order)
+  })
+
+  it('ignores the anchor itself when listed in ids, never moving it', () => {
+    const order = ['a', 'b', 'c']
+    expect(insertAfter(order, 'a', ['a', 'x'])).toEqual(['a', 'x', 'b', 'c'])
   })
 })
 

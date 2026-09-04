@@ -16,9 +16,11 @@ import {
   type MonitoredUser,
   type MonitorView,
   type Platform,
-  type PrebanSettings
+  type PrebanSettings,
+  type RawLogSettings
 } from '@shared/model'
 import { MAX_PATTERN_LENGTH } from '@shared/patternMatch'
+import { normaliseStreamerKey } from '@shared/streamerKey'
 import { channelId, isPlatform } from '@main/sources/channelId'
 
 export interface PersistedChannel {
@@ -27,6 +29,10 @@ export interface PersistedChannel {
   id: string
   /** Display label override (e.g. a discovered stream title), so columns keep their name across restarts. */
   label?: string
+  /** Cross-platform streamer identity key, once resolved (see `@shared/streamerKey`). */
+  streamerKey?: string
+  /** YouTube creator channel id, once resolved. */
+  creatorId?: string
 }
 
 interface Config {
@@ -46,6 +52,26 @@ function isPersistedChannel(value: unknown): value is PersistedChannel {
     typeof channel['id'] === 'string' &&
     (channel['label'] === undefined || typeof channel['label'] === 'string')
   )
+}
+
+/**
+ * Keep `streamerKey`/`creatorId` only when they're non-empty strings, dropping the key entirely
+ * otherwise — a stale or hand-edited config file can carry junk (wrong type, or an empty string),
+ * and `exactOptionalPropertyTypes` means "unset" must be the key's absence, not `''`.
+ */
+function sanitizePersistedChannel(channel: PersistedChannel): PersistedChannel {
+  const { platform, target, id, label, streamerKey, creatorId } = channel
+  const sanitized: PersistedChannel = { platform, target, id }
+  if (typeof label === 'string') {
+    sanitized.label = label
+  }
+  if (typeof streamerKey === 'string' && streamerKey !== '') {
+    sanitized.streamerKey = streamerKey
+  }
+  if (typeof creatorId === 'string' && creatorId !== '') {
+    sanitized.creatorId = creatorId
+  }
+  return sanitized
 }
 
 /**
@@ -214,6 +240,18 @@ function sanitizeChatLog(value: unknown): ChatLogSettings | undefined {
   }
 }
 
+/** Raw-log settings from untrusted JSON, or undefined if not a valid object. */
+function sanitizeRawLog(value: unknown): RawLogSettings | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined
+  }
+  const input = value as Record<string, unknown>
+  return { enabled: input['enabled'] === true }
+}
+
+/** A ceiling on the donation streamer list: a tab per streamer is the realistic scale. */
+const MAX_DONATION_STREAMERS = 200
+
 /** Keep only known setting keys with the right types, so a stale file or the renderer can't inject arbitrary config. */
 function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof value !== 'object' || value === null) {
@@ -307,6 +345,30 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof input['showConvertedAmounts'] === 'boolean') {
     settings.showConvertedAmounts = input['showConvertedAmounts']
   }
+  if (
+    input['spelling'] === 'en-US' ||
+    input['spelling'] === 'en-GB' ||
+    input['spelling'] === 'off'
+  ) {
+    settings.spelling = input['spelling']
+  }
+  const rawLog = sanitizeRawLog(input['rawLog'])
+  if (rawLog !== undefined) {
+    settings.rawLog = rawLog
+  }
+  if (typeof input['embedGifs'] === 'boolean') {
+    settings.embedGifs = input['embedGifs']
+  }
+  if (typeof input['donationsPanel'] === 'boolean') {
+    settings.donationsPanel = input['donationsPanel']
+  }
+  if (Array.isArray(input['donationStreamers'])) {
+    const keys = input['donationStreamers']
+      .filter((key): key is string => typeof key === 'string')
+      .map((key) => normaliseStreamerKey(key))
+      .filter((key) => key !== '')
+    settings.donationStreamers = [...new Set(keys)].slice(0, MAX_DONATION_STREAMERS)
+  }
   return settings
 }
 
@@ -346,6 +408,33 @@ export class ConfigStore {
     }
   }
 
+  /**
+   * Patch a persisted channel's resolved streamer identity (streamerKey/creatorId). A no-op for an
+   * unknown id, and saves only when the patch actually changes something.
+   */
+  updateChannel(id: string, patch: { streamerKey?: string; creatorId?: string }): void {
+    const index = this.#config.channels.findIndex((channel) => channel.id === id)
+    const current = this.#config.channels[index]
+    if (current === undefined) {
+      return
+    }
+    let changed = false
+    const next: PersistedChannel = { ...current }
+    if (patch.streamerKey !== undefined && patch.streamerKey !== current.streamerKey) {
+      next.streamerKey = patch.streamerKey
+      changed = true
+    }
+    if (patch.creatorId !== undefined && patch.creatorId !== current.creatorId) {
+      next.creatorId = patch.creatorId
+      changed = true
+    }
+    if (!changed) {
+      return
+    }
+    this.#config.channels[index] = next
+    this.#save()
+  }
+
   /** The persisted YouTube visitor_data, for a durable browser identity across restarts. */
   visitorData(): string | undefined {
     return this.#config.visitorData
@@ -378,7 +467,9 @@ export class ConfigStore {
       const parsed = JSON.parse(readFileSync(this.#path, 'utf8')) as Partial<Config>
       const config: Config = {
         channels: Array.isArray(parsed.channels)
-          ? recomputeChannelIds(parsed.channels.filter(isPersistedChannel))
+          ? recomputeChannelIds(
+              parsed.channels.filter(isPersistedChannel).map(sanitizePersistedChannel)
+            )
           : [],
         settings: { ...DEFAULT_SETTINGS, ...sanitizeSettings(parsed.settings) }
       }

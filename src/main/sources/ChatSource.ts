@@ -74,6 +74,10 @@ export interface ChatSource {
   refreshEmotes?(): Promise<void>
   /** A moderator's channel-activity for an author — moderation counts + message history (YouTube). */
   getUserModerationHistory?(userId: string): Promise<UserModerationActivity | undefined>
+  /** Normalised username identifying the streamer across platforms, once known. */
+  streamerKey?(): string
+  /** The YouTube creator channel (id + name) this source's chat belongs to, once resolved. */
+  creator?(): { channelId: string; name: string } | undefined
   on<E extends keyof ChatSourceEventMap>(
     event: E,
     listener: (...args: ChatSourceEventMap[E]) => void

@@ -12,9 +12,11 @@ vi.mock('@main/emotes/providers/ffz', () => ({
   fetchFfzGlobal: vi.fn().mockResolvedValue([]),
   fetchFfzChannel: vi.fn().mockResolvedValue([])
 }))
+vi.mock('@main/debugLog', () => ({ debugLog: vi.fn() }))
 
 import type { EmoteProviderSettings } from '@shared/model'
-import { EmoteEngine } from '@main/emotes/EmoteEngine'
+import { debugLog } from '@main/debugLog'
+import { EmoteEngine, type IndexChange } from '@main/emotes/EmoteEngine'
 import type { EventsSocket } from '@main/emotes/SevenTvEvents'
 import { fetchBttvChannel, fetchBttvGlobal } from '@main/emotes/providers/bttv'
 import { fetchFfzChannel, fetchFfzGlobal } from '@main/emotes/providers/ffz'
@@ -31,6 +33,13 @@ function sevenTvEmote(code: string): ResolvedEmote {
 
 function bttvEmote(code: string): ResolvedEmote {
   return { code, provider: 'bttv', url: `http://b/${code}`, zeroWidth: false, animated: false }
+}
+
+/** Let queued microtasks run without letting any timer fire — "did it resolve this tick?". */
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 describe('EmoteEngine Twitch emotes', () => {
@@ -337,15 +346,35 @@ describe('EmoteEngine bootstrap failure retry', () => {
     expect(fetchBttvGlobal).toHaveBeenCalledTimes(2)
   })
 
-  it('caches a genuinely empty channel without scheduling retries', async () => {
-    const engine = new EmoteEngine()
+  it('caches a genuinely empty channel without retry back-off, re-checking only after five minutes', async () => {
+    let now = 1_000_000
+    const engine = new EmoteEngine(undefined, undefined, () => now)
     engine.ensureChannel('twitch', '123')
     await vi.advanceTimersByTimeAsync(1)
-    await vi.advanceTimersByTimeAsync(600_000)
+    now += 4 * 60_000
+    await vi.advanceTimersByTimeAsync(4 * 60_000)
 
+    // Four minutes of back-off-free quiet: an empty channel is not a failure to retry.
     expect(fetchFfzChannel).toHaveBeenCalledTimes(1)
     expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
     expect(fetchSevenTvChannel).toHaveBeenCalledTimes(1)
+
+    // …but it is worth one look every five minutes, in case the channel signed up since.
+    now += 60_000 + 1
+    await vi.advanceTimersByTimeAsync(60_000 + 1)
+    expect(fetchSevenTvChannel).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-checks when the timer fires a millisecond before the wall clock agrees', async () => {
+    // Node timers run on a monotonic clock and can fire before Date.now() shows the full delay; the
+    // timer must not defer to a wall-clock due check that would swallow it with nothing left to fire.
+    let now = 1_000_000
+    const engine = new EmoteEngine(undefined, undefined, () => now)
+    engine.ensureChannel('twitch', '123')
+    await vi.advanceTimersByTimeAsync(1)
+    now += 5 * 60_000 - 1
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    expect(fetchSevenTvChannel).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -416,5 +445,342 @@ describe('EmoteEngine releaseChannel', () => {
     expect(engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')).toEqual([
       expect.objectContaining({ type: 'emote', code: 'chanJAM' })
     ])
+  })
+})
+
+describe('EmoteEngine load signal', () => {
+  beforeEach(() => {
+    vi.mocked(fetchFfzChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvChannel).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+  })
+
+  it('whenChannelLoaded waits for the first load to settle', async () => {
+    let resolveBttv: ((value: ResolvedEmote[]) => void) | undefined
+    vi.mocked(fetchBttvChannel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveBttv = resolve
+        })
+    )
+    const engine = new EmoteEngine()
+    engine.ensureChannel('twitch', '123')
+
+    let settled = false
+    const waited = engine.whenChannelLoaded({ platform: 'twitch', channelId: '123' }).then(() => {
+      settled = true
+    })
+    await flushMicrotasks()
+    expect(settled).toBe(false)
+    // This is exactly the window a message backlog would be tokenized in without the signal.
+    expect(engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')).toEqual([
+      { type: 'text', text: 'chanJAM' }
+    ])
+
+    resolveBttv?.([bttvEmote('chanJAM')])
+    await waited
+    expect(settled).toBe(true)
+    expect(engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')).toEqual([
+      expect.objectContaining({ type: 'emote', code: 'chanJAM' })
+    ])
+  })
+
+  it('whenChannelLoaded resolves in the same tick once loaded, and for a scope never ensured', async () => {
+    const engine = new EmoteEngine()
+    engine.ensureChannel('twitch', '123')
+    await engine.whenChannelLoaded({ platform: 'twitch', channelId: '123' })
+
+    const resolved: string[] = []
+    void engine.whenChannelLoaded({ platform: 'twitch', channelId: '123' }).then(() => {
+      resolved.push('loaded')
+    })
+    void engine.whenChannelLoaded({ platform: 'youtube', channelId: 'UCnever' }).then(() => {
+      resolved.push('unknown')
+    })
+    // No timers advanced: both must already be settled.
+    await flushMicrotasks()
+
+    expect(resolved).toEqual(['loaded', 'unknown'])
+  })
+
+  it('whenChannelLoaded resolves rather than rejects when the first load fails', async () => {
+    vi.mocked(fetchBttvChannel).mockRejectedValueOnce(new Error('offline'))
+    const engine = new EmoteEngine()
+    engine.ensureChannel('twitch', '123')
+
+    await expect(
+      engine.whenChannelLoaded({ platform: 'twitch', channelId: '123' })
+    ).resolves.toBeUndefined()
+    engine.dispose()
+  })
+})
+
+describe('EmoteEngine index-change events', () => {
+  beforeEach(() => {
+    vi.mocked(fetchFfzChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvChannel).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+  })
+
+  it('reports each scope once per load and coalesces the shared layer into one notification', async () => {
+    vi.useFakeTimers()
+    try {
+      const engine = new EmoteEngine()
+      const changes: IndexChange[] = []
+      engine.onIndexChanged((changed) => {
+        changes.push(changed)
+      })
+
+      engine.ensureChannel('twitch', '1')
+      engine.ensureChannel('twitch', '2')
+      engine.ensureChannel('youtube', 'UC3')
+      await vi.advanceTimersByTimeAsync(1)
+
+      const scopes = changes.filter((changed) => changed !== 'shared')
+      expect(scopes).toHaveLength(3)
+      expect(scopes).toContainEqual({ platform: 'twitch', channelId: '1' })
+      expect(scopes).toContainEqual({ platform: 'twitch', channelId: '2' })
+      expect(scopes).toContainEqual({ platform: 'youtube', channelId: 'UC3' })
+      // Three rebuilds inside the window, still nothing emitted yet.
+      expect(changes).not.toContain('shared')
+
+      await vi.advanceTimersByTimeAsync(250)
+      expect(changes.filter((changed) => changed === 'shared')).toEqual(['shared'])
+      engine.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops notifying once the subscription is released', async () => {
+    const engine = new EmoteEngine()
+    const changes: IndexChange[] = []
+    const unsubscribe = engine.onIndexChanged((changed) => {
+      changes.push(changed)
+    })
+    const scopes = (): IndexChange[] => changes.filter((changed) => changed !== 'shared')
+
+    engine.ensureChannel('twitch', '1')
+    await engine.whenChannelLoaded({ platform: 'twitch', channelId: '1' })
+    expect(scopes()).toEqual([{ platform: 'twitch', channelId: '1' }])
+
+    unsubscribe()
+    engine.ensureChannel('twitch', '2')
+    await engine.whenChannelLoaded({ platform: 'twitch', channelId: '2' })
+
+    expect(scopes()).toEqual([{ platform: 'twitch', channelId: '1' }])
+    engine.dispose()
+  })
+})
+
+describe('EmoteEngine not-found re-check', () => {
+  beforeEach(() => {
+    vi.mocked(fetchFfzChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvChannel).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+  })
+
+  it('re-checks a not-found scope on its own timer, without a second ensureChannel', async () => {
+    // A Twitch source only calls ensureChannel when the room id first resolves, so the engine has to
+    // own the five-minute re-check itself or a channel that adds a 7TV set later never gets it.
+    vi.useFakeTimers()
+    try {
+      let now = 1_000_000
+      const engine = new EmoteEngine(undefined, undefined, () => now)
+      const scope = { platform: 'twitch', channelId: '123' } as const
+      engine.ensureChannel(scope.platform, scope.channelId)
+      await engine.whenChannelLoaded(scope)
+      expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
+
+      vi.mocked(fetchBttvChannel).mockResolvedValue([bttvEmote('chanJAM')])
+      now += 5 * 60_000 + 1
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1)
+      await engine.whenChannelLoaded(scope)
+      expect(fetchBttvChannel).toHaveBeenCalledTimes(2)
+      expect(engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')).toEqual([
+        expect.objectContaining({ type: 'emote', code: 'chanJAM' })
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not re-check a released scope', async () => {
+    vi.useFakeTimers()
+    try {
+      let now = 1_000_000
+      const engine = new EmoteEngine(undefined, undefined, () => now)
+      engine.ensureChannel('twitch', '123')
+      await engine.whenChannelLoaded({ platform: 'twitch', channelId: '123' })
+      engine.releaseChannel('twitch', '123')
+      now += 6 * 60_000
+      await vi.advanceTimersByTimeAsync(6 * 60_000)
+      expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('notifies when the native Twitch catalog changes, so buffered rows re-tokenise', async () => {
+    vi.useFakeTimers()
+    try {
+      const engine = new EmoteEngine()
+      const seen: IndexChange[] = []
+      engine.onIndexChanged((changed) => seen.push(changed))
+      engine.setTwitchGlobal([])
+      await vi.advanceTimersByTimeAsync(300)
+      expect(seen).toContain('shared')
+      engine.setTwitchChannel('123', [])
+      expect(seen).toContainEqual({ platform: 'twitch', channelId: '123' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-fetches a scope every provider 404d, but not before five minutes have passed', async () => {
+    let now = 1_000_000
+    const engine = new EmoteEngine(undefined, undefined, () => now)
+    const scope = { platform: 'twitch', channelId: '123' } as const
+    engine.ensureChannel(scope.platform, scope.channelId)
+    await engine.whenChannelLoaded(scope)
+    expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
+
+    now += 4 * 60_000
+    engine.ensureChannel(scope.platform, scope.channelId)
+    await engine.whenChannelLoaded(scope)
+    expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
+
+    // The channel signed up to a provider in the meantime.
+    vi.mocked(fetchBttvChannel).mockResolvedValue([bttvEmote('chanJAM')])
+    now += 2 * 60_000
+    engine.ensureChannel(scope.platform, scope.channelId)
+    await engine.whenChannelLoaded(scope)
+    expect(fetchBttvChannel).toHaveBeenCalledTimes(2)
+    expect(engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')).toEqual([
+      expect.objectContaining({ type: 'emote', code: 'chanJAM' })
+    ])
+
+    // Now that the scope has emotes it is cached for good again.
+    now += 10 * 60_000
+    engine.ensureChannel(scope.platform, scope.channelId)
+    await engine.whenChannelLoaded(scope)
+    expect(fetchBttvChannel).toHaveBeenCalledTimes(2)
+    engine.dispose()
+  })
+
+  it('treats a provider failure as retryable, not as not-found', async () => {
+    vi.useFakeTimers()
+    try {
+      let now = 1_000_000
+      vi.mocked(fetchBttvChannel).mockRejectedValueOnce(new Error('offline'))
+      const engine = new EmoteEngine(undefined, undefined, () => now)
+      engine.ensureChannel('twitch', '123')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
+
+      // Well past the re-check window, a re-ensure is still a no-op: the back-off owns the retry.
+      now += 6 * 60_000
+      engine.ensureChannel('twitch', '123')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchBttvChannel).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(fetchBttvChannel).toHaveBeenCalledTimes(2)
+      engine.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('EmoteEngine debug logging', () => {
+  beforeEach(() => {
+    vi.mocked(debugLog).mockClear()
+    vi.mocked(fetchFfzChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvChannel).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+  })
+
+  it('logs one line per settled load with the per-provider counts', async () => {
+    vi.mocked(fetchBttvChannel).mockResolvedValue([bttvEmote('chanJAM'), bttvEmote('pogJAM')])
+    vi.mocked(fetchSevenTvChannel).mockResolvedValue({
+      setId: undefined,
+      emotes: [sevenTvEmote('glorpass')]
+    })
+    const engine = new EmoteEngine()
+    engine.ensureChannel('twitch', '123')
+    await engine.whenChannelLoaded({ platform: 'twitch', channelId: '123' })
+
+    expect(debugLog).toHaveBeenCalledTimes(1)
+    expect(debugLog).toHaveBeenCalledWith('emotes', 'scope loaded', {
+      scope: 'twitch:123',
+      ffz: 0,
+      bttv: 2,
+      sevenTv: 1,
+      complete: true,
+      notFound: false
+    })
+    engine.dispose()
+  })
+
+  it('marks an all-empty settled load as not found, and a failed one as incomplete', async () => {
+    vi.useFakeTimers()
+    try {
+      const engine = new EmoteEngine()
+      engine.ensureChannel('twitch', '123')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(debugLog).toHaveBeenLastCalledWith(
+        'emotes',
+        'scope loaded',
+        expect.objectContaining({ scope: 'twitch:123', complete: true, notFound: true })
+      )
+
+      vi.mocked(fetchFfzChannel).mockRejectedValueOnce(new Error('offline'))
+      engine.ensureChannel('youtube', 'UCxyz')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(debugLog).toHaveBeenLastCalledWith(
+        'emotes',
+        'scope loaded',
+        expect.objectContaining({ scope: 'youtube:UCxyz', complete: false, notFound: false })
+      )
+      expect(debugLog).toHaveBeenCalledTimes(2)
+      engine.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('EmoteEngine overlapping loads', () => {
+  beforeEach(() => {
+    vi.mocked(fetchFfzChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvChannel).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvChannel).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+    vi.mocked(fetchFfzGlobal).mockReset().mockResolvedValue([])
+    vi.mocked(fetchBttvGlobal).mockReset().mockResolvedValue([])
+    vi.mocked(fetchSevenTvGlobal).mockReset().mockResolvedValue({ setId: undefined, emotes: [] })
+  })
+
+  it('keeps the newer catalogue when an older load finishes after a refresh', async () => {
+    // The initial request stalls; a refresh (provider toggle, manual reload) completes first with
+    // the channel's emotes. When the stalled request finally settles empty, it must not win.
+    let settleInitial: (emotes: ResolvedEmote[]) => void = () => {}
+    vi.mocked(fetchBttvChannel)
+      .mockReturnValueOnce(
+        new Promise<ResolvedEmote[]>((resolve) => {
+          settleInitial = resolve
+        })
+      )
+      .mockResolvedValueOnce([bttvEmote('chanJAM')])
+    const engine = new EmoteEngine()
+    engine.ensureChannel('twitch', '123')
+    await flushMicrotasks()
+    await engine.refreshEmotes()
+    const tokenized = (): string | undefined =>
+      engine.tokenize([{ type: 'text', text: 'chanJAM' }], 'twitch', '123')[0]?.type
+    expect(tokenized()).toBe('emote')
+    settleInitial([])
+    await flushMicrotasks()
+    expect(tokenized()).toBe('emote')
   })
 })

@@ -1,20 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage as TwitchChatMessage } from '@twurple/chat'
+import { buildEmoteImageUrl, type ChatMessage as TwitchChatMessage } from '@twurple/chat'
 import {
   decodeTwitchMenuToken,
   encodeTwitchMenuToken,
   normalizeTwitchAnnouncement,
+  normalizeTwitchCommunitySub,
   normalizeTwitchMessage,
   normalizeTwitchNotice,
+  normalizeTwitchSub,
   normalizeTwitchSubGift
 } from '@main/sources/twitch/normalize'
 
 /** A minimal twurple ChatMessage covering the fields `normalizeTwitchMessage` reads. */
-function ircMessage(author: { userId?: string; userName?: string } = {}): TwitchChatMessage {
+function ircMessage(
+  author: { userId?: string; userName?: string } = {},
+  tags: Map<string, string> = new Map()
+): TwitchChatMessage {
   return {
     id: 'msg-1',
     date: new Date(1_700_000_000_000),
     emoteOffsets: new Map(),
+    tags,
     bits: 0,
     isFirst: false,
     isHighlight: false,
@@ -222,6 +228,62 @@ describe('normalizeTwitchSubGift moderation context', () => {
   })
 })
 
+describe("Twitch's anonymous service accounts", () => {
+  it('labels an anonymous cheer and offers no moderation menu', () => {
+    // Anonymous cheers arrive as an ordinary PRIVMSG from Twitch's shared AnAnonymousCheerer
+    // account — banning it would moderate no one and block the channel's future anonymous cheers.
+    const msg = ircMessage({ userId: 'id-anon-cheer', userName: 'ananonymouscheerer' })
+    ;(msg as { bits: number }).bits = 500
+    const message = normalizeTwitchMessage('s', 'Cheer500', msg)
+    expect(message.highlight).toEqual({ kind: 'bits', amount: 500 })
+    expect(message.author.displayName).toBe('Anonymous')
+    expect(message.menuToken).toBeUndefined()
+  })
+
+  it('labels an anonymous community gift while keeping its batch count', () => {
+    const msg = ircMessage({ userId: 'id-anon-gift', userName: 'ananonymousgifter' })
+    const message = normalizeTwitchCommunitySub('s', { count: 5, plan: '1000' }, msg)
+    expect(message.highlight).toMatchObject({ kind: 'membership_gift', count: 5 })
+    expect(message.author.displayName).toBe('Anonymous')
+    expect(message.menuToken).toBeUndefined()
+  })
+
+  it('still moderates (and names) an ordinary cheerer', () => {
+    const msg = ircMessage()
+    ;(msg as { bits: number }).bits = 500
+    const message = normalizeTwitchMessage('s', 'Cheer500', msg)
+    expect(message.author.displayName).toBe('Alice')
+    expect(message.menuToken).toBeDefined()
+  })
+})
+
+describe('normalizeTwitchSub gifted-sub renewals', () => {
+  const subInfo = {
+    userId: 'u100',
+    displayName: 'Alice',
+    plan: '1000',
+    planName: 'T1',
+    isPrime: false,
+    months: 6
+  }
+
+  it('marks a month of a multi-month gifted sub as not a purchase', () => {
+    // The gifter's purchase was already announced (and counted) when they bought the gift.
+    const message = normalizeTwitchSub(
+      's',
+      { ...subInfo, originalGiftInfo: { anonymous: true, duration: 6, redeemedMonth: 2 } },
+      ircMessage(),
+      'resub'
+    )
+    expect(message.highlight?.notAPurchase).toBe(true)
+  })
+
+  it('leaves a self-paid resub countable', () => {
+    const message = normalizeTwitchSub('s', subInfo, ircMessage(), 'resub')
+    expect(message.highlight?.notAPurchase).toBeUndefined()
+  })
+})
+
 describe('normalizeTwitchNotice', () => {
   it('renders a system line carrying the description while keeping the author for the log', () => {
     const msg = ircMessage({ userId: 'u-raider', userName: 'raider' })
@@ -283,5 +345,109 @@ describe('normalizeTwitchMessage cheermotes', () => {
   it('never cheer-parses a message that carries no bits', () => {
     const message = normalizeTwitchMessage('s', 'Cheer100 hi', ircMessage(), { cheermotes })
     expect(message.fragments).toEqual([{ type: 'text', text: 'Cheer100 hi' }])
+  })
+})
+
+describe('normalizeTwitchMessage gifs tag', () => {
+  it("splices Twitch's documented GIF example into a single GIF fragment", () => {
+    const text = '[Y A Y Yes GIF by Djemilah Birnie]'
+    const url =
+      'https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=abc&ep=v1_gifs_trending&rid=giphy.gif&ct=g'
+    const tags = new Map([['gifs', `0-33|joSNxeswxuc74Juo8X|${url}`]])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'gif', text, url, id: 'joSNxeswxuc74Juo8X' }])
+  })
+
+  it('positions the GIF by code points, so an emoji before it does not shift the range', () => {
+    // A supplementary-plane character is two UTF-16 units but one code point; the tag counts the
+    // latter (like the emotes tag), and so must the splice.
+    const placeholder = '[Y A Y Yes GIF by X]'
+    const text = `🙂 ${placeholder}`
+    const start = 2
+    const end = start + [...placeholder].length - 1
+    const tags = new Map([
+      ['gifs', `${start}-${end}|abc|https://media1.giphy.com/media/x/giphy.gif`]
+    ])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([
+      { type: 'text', text: '🙂 ' },
+      {
+        type: 'gif',
+        text: placeholder,
+        url: 'https://media1.giphy.com/media/x/giphy.gif',
+        id: 'abc'
+      }
+    ])
+  })
+
+  it('refuses a GIF hosted anywhere but GIPHY, or carrying credentials', () => {
+    // The recent-messages backlog is a third party's replay of chat; a forged tag there must not
+    // make every viewer fetch an attacker's URL.
+    for (const url of [
+      'https://tracker.example/pixel.gif',
+      'https://giphy.com.evil.example/x.gif',
+      'https://user:pw@media1.giphy.com/media/x/giphy.gif',
+      'http://media1.giphy.com/media/x/giphy.gif'
+    ]) {
+      const text = 'gif'
+      const tags = new Map([['gifs', `0-2|abc|${url}`]])
+      const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+      expect(message.fragments, url).toEqual([{ type: 'text', text }])
+    }
+  })
+
+  it('leaves the text unchanged when the range is not numeric', () => {
+    const text = 'hello world'
+    const tags = new Map([['gifs', 'abc|x|https://a']])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'text', text }])
+  })
+
+  it('drops a non-https GIF url, leaving the text unchanged', () => {
+    const text = 'hello'
+    const tags = new Map([['gifs', '0-3|x|http://a']])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'text', text }])
+  })
+
+  it('keeps the full URL when it contains pipes', () => {
+    const text = 'gif here'
+    const url = 'https://media1.giphy.com/media/x/giphy.gif?a=1|b=2'
+    const tags = new Map([['gifs', `0-2|abc|${url}`]])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([
+      { type: 'gif', text: 'gif', url, id: 'abc' },
+      { type: 'text', text: ' here' }
+    ])
+  })
+
+  it('keeps a preceding emote fragment alongside the GIF', () => {
+    const text = 'Kappa hello'
+    const tags = new Map([['gifs', '6-10|abc|https://media2.giphy.com/media/g/giphy.gif']])
+    const msg = ircMessage({}, tags)
+    ;(msg as { emoteOffsets: Map<string, string[]> }).emoteOffsets = new Map([['e1', ['0-4']]])
+    const message = normalizeTwitchMessage('s', text, msg)
+    expect(message.fragments).toEqual([
+      {
+        type: 'emote',
+        code: 'Kappa',
+        url: buildEmoteImageUrl('e1', { size: '2.0', backgroundType: 'dark' }),
+        provider: 'twitch'
+      },
+      { type: 'text', text: ' ' },
+      { type: 'gif', text: 'hello', url: 'https://media2.giphy.com/media/g/giphy.gif', id: 'abc' }
+    ])
+  })
+
+  it('ignores an entry whose range runs past the end of the text', () => {
+    const text = 'hi'
+    const tags = new Map([['gifs', '0-5|abc|https://media2.giphy.com/media/g/giphy.gif']])
+    const message = normalizeTwitchMessage('s', text, ircMessage({}, tags))
+    expect(message.fragments).toEqual([{ type: 'text', text }])
+  })
+
+  it('leaves a message with no gifs tag unchanged', () => {
+    const message = normalizeTwitchMessage('s', 'plain text', ircMessage())
+    expect(message.fragments).toEqual([{ type: 'text', text: 'plain text' }])
   })
 })

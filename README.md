@@ -8,6 +8,12 @@ multi-column window. Built with Electron, React, and TypeScript.
 - Right-click moderation (report/block; remove/timeout/ban when you are a mod or the broadcaster)
 - Reveal deleted messages and highlight/ping on specific users or keywords
 - 7TV / BTTV / FFZ and Twitch emotes, plus the live YouTube emoji catalog
+- A donations tab collecting Super Chats, members, cheers, subs and StreamElements tips for the
+  streamers you choose (right-click a tab), grouped per streamer across both platforms, with
+  currency conversion, a clear button to start the count again, and a switch to hide the panel
+- Right-click a tab to open a streamer's YouTube waiting rooms and live chat in order
+- Twitch GIFs shown inline as small tiles, expanded on click (or as text, if you turn embedding off);
+  spell-check in the composer (US or UK English)
 
 ## Install
 
@@ -91,6 +97,32 @@ accept that risk.
 Crash minidumps (under `Crashpad/` in the same directory) can contain decrypted credentials
 captured from memory. The app deletes dumps older than a week, but scrub that folder before
 sharing diagnostics with anyone.
+
+## Network
+
+Everything the app talks to, so you can judge it for yourself:
+
+- **Twitch** — chat over IRC (`irc-ws.chat.twitch.tv`), the Helix API, and the recent-messages
+  history service (`recent-messages.robotty.de`) when Twitch chat history is on.
+- **YouTube** — the live-chat and channel endpoints the website itself uses.
+- **Emotes** — 7TV, BTTV and FFZ (`7tv.io`, `betterttv.net`, `frankerfacez.com`) and their CDNs.
+- **Exchange rates** for the donations panel — `open.er-api.com`, with `frankfurter.dev` as the
+  fallback; one request a day, carrying only a currency code.
+- **Spelling dictionaries** — on Windows and Linux the built-in spell-checker downloads its
+  Hunspell dictionary once from Chromium's CDN (a Google host). macOS uses the system checker and
+  downloads nothing. Turn spelling off in Settings to avoid it.
+- **Twitch GIFs** — a GIF message is shown inline as a small tile (click it to see the GIF at its
+  own size), loaded from GIPHY's CDN (`*.giphy.com`, the only host accepted) the same way twitch.tv
+  loads it. GIPHY refuses these URLs as a page you open directly, so there is no "open in browser"
+  for them. Turning **Twitch GIFs** off in Settings → Emotes shows each GIF's name as text instead,
+  and then nothing is fetched from GIPHY.
+
+Nothing else is contacted. The optional **raw message log** (Settings → Advanced) writes every
+inbound Twitch and YouTube message verbatim to a `raw` folder inside the chat-log folder — it stores
+full message content, and it is off by default. On macOS and Linux the folder and its files are
+created readable by your user only; on Windows they inherit the chat-log folder's permissions. If
+the disk can't keep up, lines are dropped rather than queued, and a `{"dropped": N}` line records
+the gap.
 
 ## Disclaimer
 

@@ -5,7 +5,8 @@ import {
   type ChatMessage as TwitchChatMessage,
   type ChatSubGiftInfo,
   type ChatSubInfo,
-  type ChatUser
+  type ChatUser,
+  type ParsedMessageTextPart
 } from '@twurple/chat'
 import type { Author, Badge, ChatMessage, Fragment, Highlight, ReplyContext } from '@shared/model'
 
@@ -18,6 +19,121 @@ export interface TwitchUserNotice {
   date: Date
   userInfo: ChatUser
   emoteOffsets: Map<string, string[]>
+  tags: Map<string, string>
+}
+
+/** One parsed `gifs` tag entry: a GIF's code-point range into the message text, and its URL. */
+interface GifTagEntry {
+  start: number
+  end: number
+  id: string
+  url: string
+}
+
+/**
+ * Twitch serves chat GIFs from GIPHY, so that is the only host an image may be loaded from. The tag
+ * is trusted when it comes from Twitch's own server, but the recent-messages backlog is a third
+ * party's replay of it — an attacker-chosen host there would turn every viewer into a tracking-pixel
+ * fetch. Credentials in the URL are refused for the same reason.
+ */
+function isGiphyImageUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+    return false
+  }
+  return parsed.hostname === 'giphy.com' || parsed.hostname.endsWith('.giphy.com')
+}
+
+const GIF_ENTRY_BOUND = /^\d+$/
+
+/** Parse one `<start>-<end>|<gif_id>|<url>` entry, or `undefined` if it is malformed. */
+function parseGifEntry(entry: string): GifTagEntry | undefined {
+  const firstPipe = entry.indexOf('|')
+  const secondPipe = firstPipe === -1 ? -1 : entry.indexOf('|', firstPipe + 1)
+  if (firstPipe === -1 || secondPipe === -1) {
+    return undefined
+  }
+  const range = entry.slice(0, firstPipe)
+  const id = entry.slice(firstPipe + 1, secondPipe)
+  // The URL is everything after the second `|` — it may itself contain `|`, so it is never split on.
+  const url = entry.slice(secondPipe + 1)
+  const dash = range.indexOf('-')
+  if (dash === -1 || !isGiphyImageUrl(url)) {
+    return undefined
+  }
+  const startText = range.slice(0, dash)
+  const endText = range.slice(dash + 1)
+  if (!GIF_ENTRY_BOUND.test(startText) || !GIF_ENTRY_BOUND.test(endText)) {
+    return undefined
+  }
+  const start = Number(startText)
+  const end = Number(endText)
+  return start <= end ? { start, end, id, url } : undefined
+}
+
+/**
+ * Parse the IRC `gifs` tag: a comma-separated list of `<start>-<end>|<gif_id>|<url>` entries with
+ * zero-based code-point positions into the message text (the same convention as the `emotes`
+ * tag). Malformed entries are dropped; the result is sorted by start with any entry overlapping
+ * an earlier kept one dropped too, so it is safe to splice in without further overlap checks.
+ */
+export function parseGifTag(value: string | undefined): GifTagEntry[] {
+  if (value === undefined || value === '') {
+    return []
+  }
+  const candidates = value
+    .split(',')
+    .map(parseGifEntry)
+    .filter((entry): entry is GifTagEntry => entry !== undefined)
+    .sort((a, b) => a.start - b.start)
+  const kept: GifTagEntry[] = []
+  for (const entry of candidates) {
+    const last = kept[kept.length - 1]
+    if (last === undefined || entry.start > last.end) {
+      kept.push(entry)
+    }
+  }
+  return kept
+}
+
+/**
+ * Split a text part around the GIF ranges that land fully inside it, into text / link / text.
+ * A range only partly inside the part (spanning into an adjacent emote or text part) is ignored,
+ * as if the message carried no GIF metadata for it.
+ */
+function spliceGifs(
+  part: ParsedMessageTextPart,
+  ranges: GifTagEntry[],
+  codePoints: string[]
+): Fragment[] {
+  const partEnd = part.position + part.length
+  const covering = ranges.filter((range) => range.start >= part.position && range.end < partEnd)
+  if (covering.length === 0) {
+    return [{ type: 'text', text: part.text }]
+  }
+  const fragments: Fragment[] = []
+  let cursor = part.position
+  for (const range of covering) {
+    if (range.start > cursor) {
+      fragments.push({ type: 'text', text: codePoints.slice(cursor, range.start).join('') })
+    }
+    fragments.push({
+      type: 'gif',
+      text: codePoints.slice(range.start, range.end + 1).join(''),
+      url: range.url,
+      id: range.id
+    })
+    cursor = range.end + 1
+  }
+  if (cursor < partEnd) {
+    fragments.push({ type: 'text', text: codePoints.slice(cursor, partEnd).join('') })
+  }
+  return fragments
 }
 
 /** Supplies cheermote prefixes for message parsing and resolves one cheer to its tier art. */
@@ -28,7 +144,7 @@ export interface CheermoteResolver {
 
 function toFragments(
   text: string,
-  msg: Pick<TwitchChatMessage, 'emoteOffsets'>,
+  msg: Pick<TwitchChatMessage, 'emoteOffsets' | 'tags'>,
   cheermotes?: CheermoteResolver
 ): Fragment[] {
   const cheermoteNames = cheermotes?.names() ?? []
@@ -37,6 +153,8 @@ function toFragments(
     msg.emoteOffsets,
     cheermoteNames.length > 0 ? cheermoteNames : undefined
   )
+  const gifRanges = parseGifTag(msg.tags.get('gifs'))
+  const codePoints = gifRanges.length > 0 ? [...text] : []
   const fragments: Fragment[] = []
   for (const part of parts) {
     if (part.type === 'emote') {
@@ -62,6 +180,8 @@ function toFragments(
           { type: 'text', text: String(part.amount), verbatim: true }
         )
       }
+    } else if (gifRanges.length > 0) {
+      fragments.push(...spliceGifs(part, gifRanges, codePoints))
     } else {
       fragments.push({ type: 'text', text: part.text })
     }
@@ -184,6 +304,43 @@ function toAuthor(user: ChatUser, options: NormalizeOptions): Author {
 }
 
 /**
+ * Twitch's shared service accounts for anonymous cheers and anonymous gifts. Their lines get a
+ * human label and no moderation menu — banning a service account moderates no one and would block
+ * the channel's future anonymous notices.
+ */
+const ANONYMOUS_LOGINS = new Set(['ananonymouscheerer', 'ananonymousgifter'])
+
+/**
+ * Label the author and attach the right-click moderation context, where each applies: an anonymous
+ * service account reads as "Anonymous" and is never moderable, and the logged-in user's own lines
+ * carry no menu (there is nothing to moderate). `noDelete` marks a USERNOTICE-derived card, which
+ * Helix cannot delete.
+ */
+function applyIdentity(
+  message: ChatMessage,
+  user: ChatUser,
+  options: NormalizeOptions,
+  noDelete: boolean
+): void {
+  if (ANONYMOUS_LOGINS.has(user.userName)) {
+    message.author.displayName = 'Anonymous'
+    return
+  }
+  if (user.userId === options.selfUserId) {
+    return
+  }
+  const context: TwitchMenuContext = {
+    messageId: message.id,
+    userId: user.userId,
+    userLogin: user.userName
+  }
+  if (noDelete) {
+    context.noDelete = true
+  }
+  message.menuToken = encodeTwitchMenuToken(context)
+}
+
+/**
  * Build the reply context for a Twitch message: the directly-replied-to parent plus, when present,
  * the thread root id. The thread starter's display name is only carried when the parent is itself
  * the root (IRC gives no display name for the thread root otherwise — the renderer resolves it).
@@ -246,19 +403,7 @@ function fromUserNotice(
     author: toAuthor(msg.userInfo, options),
     fragments: []
   }
-  if (msg.userInfo.userName === 'ananonymousgifter') {
-    // Twitch sends anonymous gifts from its shared AnAnonymousGifter account. Show a human
-    // label and offer no moderation menu — banning the service account moderates no one and
-    // blocks the channel's future anonymous gift notices.
-    message.author.displayName = 'Anonymous'
-  } else if (msg.userInfo.userId !== options.selfUserId) {
-    message.menuToken = encodeTwitchMenuToken({
-      messageId: msg.id,
-      userId: msg.userInfo.userId,
-      userLogin: msg.userInfo.userName,
-      noDelete: true
-    })
-  }
+  applyIdentity(message, msg.userInfo, options, true)
   return message
 }
 
@@ -286,6 +431,11 @@ export function normalizeTwitchSub(
   }
   if (resub) {
     highlight.count = subInfo.months
+  }
+  if (subInfo.originalGiftInfo !== undefined) {
+    // A multi-month gifted sub renewing itself: the gifter's purchase was announced (and counted)
+    // when they bought it, so this month's line must not be counted as money again.
+    highlight.notAPurchase = true
   }
   message.highlight = highlight
   if (subInfo.message !== undefined && subInfo.message !== '') {
@@ -401,13 +551,7 @@ export function normalizeTwitchMessage(
     fragments: toFragments(text, msg, msg.bits > 0 ? options.cheermotes : undefined)
   }
 
-  if (msg.userInfo.userId !== options.selfUserId) {
-    message.menuToken = encodeTwitchMenuToken({
-      messageId: msg.id,
-      userId: msg.userInfo.userId,
-      userLogin: msg.userInfo.userName
-    })
-  }
+  applyIdentity(message, msg.userInfo, options, false)
 
   const highlight = toHighlight(msg)
   if (highlight !== undefined) {

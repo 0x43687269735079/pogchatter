@@ -21,8 +21,20 @@ const KINDS: Partial<Record<Highlight['kind'], DonationKind>> = {
   subscription: 'subscription'
 }
 
-/** A donation for a qualifying message, else `undefined`. New donations start unread. */
-export function donationFrom(message: ChatMessage, channelId: string): Donation | undefined {
+/**
+ * A donation for a qualifying message, else `undefined`. New donations start unread.
+ *
+ * Args:
+ *   message: The chat message to judge.
+ *   channelId: The source the message arrived on, kept so a clear can find the donation again.
+ *   streamerKey: Who the money went to (see `@shared/streamerKey`). Distinct from `channelId`: one
+ *     streamer's rooms share a key, and a YouTube stream's channel id changes with every video.
+ */
+export function donationFrom(
+  message: ChatMessage,
+  channelId: string,
+  streamerKey: string
+): Donation | undefined {
   // Chat history fetched from the third-party recent-messages service predates the session and was
   // never the user's to acknowledge; the rest of the app already treats it as second-class (it never
   // alerts, never auto-moderates, and its ids are untrusted), so it is not collected as income either.
@@ -31,7 +43,7 @@ export function donationFrom(message: ChatMessage, channelId: string): Donation 
   }
   // A bot's tip announcement is an ordinary chat message carrying no highlight, so it has to be
   // recognised before the highlight is required — not after.
-  const tip = tipDonation(message, channelId)
+  const tip = tipDonation(message, channelId, streamerKey)
   if (tip !== undefined) {
     return tip
   }
@@ -53,11 +65,17 @@ export function donationFrom(message: ChatMessage, channelId: string): Donation 
     channelId,
     platform: message.platform,
     kind,
-    author: { id: message.author.id, displayName: message.author.displayName },
+    // An anonymous cheer carries no user id and sometimes no name; the money was still spent, so it
+    // is recorded under the name the platform showed rather than dropped or listed blank.
+    author: { id: message.author.id, displayName: message.author.displayName || 'Anonymous' },
     timestamp: message.timestamp,
     value: valueOf(kind, highlight),
     text: textOf(message),
-    read: false
+    read: false,
+    streamerKey
+  }
+  if (highlight.headerText !== undefined) {
+    donation.headerText = highlight.headerText
   }
   if (message.deleted === true) {
     donation.removed = true
@@ -98,6 +116,11 @@ function textOf(message: ChatMessage): string {
       if (fragment.type === 'text') {
         return fragment.text
       }
+      if (fragment.type === 'gif') {
+        // The url has no other home in a donation record, so it rides along in the text rather
+        // than being dropped (a gift link is otherwise unrecoverable from the panel).
+        return `${fragment.text} (${fragment.url})`
+      }
       return fragment.type === 'emote' ? fragment.code : fragment.text
     })
     .join('')
@@ -113,7 +136,11 @@ function textOf(message: ChatMessage): string {
  * money to it would make the panel useless for thanking anyone. Their platform id is unknowable from
  * a chat announcement, so only the name they were given is carried.
  */
-function tipDonation(message: ChatMessage, channelId: string): Donation | undefined {
+function tipDonation(
+  message: ChatMessage,
+  channelId: string,
+  streamerKey: string
+): Donation | undefined {
   const tip = parseTipAnnouncement(message)
   if (tip === undefined) {
     return undefined
@@ -131,7 +158,8 @@ function tipDonation(message: ChatMessage, channelId: string): Donation | undefi
         ? { unit: 'money-unparsed', original: tip.amount }
         : { unit: 'money', amount: parsed.amount, currency: parsed.currency, original: tip.amount },
     text: tip.text,
-    read: false
+    read: false,
+    streamerKey
   }
   if (message.deleted === true) {
     donation.removed = true

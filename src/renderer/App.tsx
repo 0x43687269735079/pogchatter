@@ -21,10 +21,12 @@ import {
   type Platform,
   type SendResult
 } from '@shared/model'
+import { type RenderPrefs, RenderPrefsContext } from '@renderer/renderPrefs'
 import { AddChannelModal } from '@renderer/components/AddChannelModal'
 import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
+import { TabContextMenu, type TabContextMenuItem } from '@renderer/components/TabContextMenu'
 import { DonationThreadModal } from '@renderer/components/DonationThreadModal'
 import { DonationsPanel } from '@renderer/components/DonationsPanel'
 import {
@@ -57,6 +59,7 @@ import {
 import {
   DONATIONS_COLUMN_ID,
   FLAGGED_COLUMN_ID,
+  insertAfter,
   moveColumnBy,
   moveColumnTo,
   reconcileColumnOrder,
@@ -64,6 +67,7 @@ import {
 } from '@renderer/columnOrder'
 import { playPing, showPing } from '@renderer/ping'
 import { isOnline } from '@renderer/status'
+import { streamsTargetFor } from '@renderer/tabMenu'
 import { clearUnread, foldUnread, type UnreadLevel } from '@renderer/unread'
 import { TabBar } from '@renderer/components/TabBar'
 import { THEME_PALETTES } from '@renderer/theme'
@@ -113,6 +117,9 @@ export function App(): ReactElement {
   >(undefined)
   // Donations are owned by main and projected here; the tab's badge derives from this list.
   const [donations, setDonations] = useState<DonationsState>(EMPTY_DONATIONS)
+  // The donations panel's streamer-chip selection ('all' or a streamer key); a view concern, not
+  // part of the projected DonationsState.
+  const [selectedStreamer, setSelectedStreamer] = useState<string | undefined>(undefined)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Latest settings for the stable onEvents handler (set up once on mount); kept current below.
@@ -135,10 +142,22 @@ export function App(): ReactElement {
   const ytLoggedInRef = useRef(false)
   const ytUserLogoutRef = useRef(false)
   const [order, setOrder] = useState<string[]>([])
+  // The latest order for async callers: a discovery that resolves seconds later must insert into
+  // the order as it is *now*, not the one captured when the request started.
+  const orderRef = useRef<string[]>([])
+  orderRef.current = order
   const [widths, setWidths] = useState<Record<string, number>>({})
   const [activeIdState, setActiveId] = useState<string | undefined>(undefined)
   // Per-column unread level for the tabs layout (none/activity/alert); transient, never persisted.
   const [unread, setUnread] = useState<ReadonlyMap<string, UnreadLevel>>(new Map())
+  // The tab/header "add this streamer's other streams" context menu, if open.
+  const [tabMenu, setTabMenu] = useState<
+    { channel: ChannelInfo; anchor: { x: number; y: number } } | undefined
+  >(undefined)
+  // Streams targets with a request in flight, so the menu item disables rather than double-fires.
+  const [streamsInFlight, setStreamsInFlight] = useState<ReadonlySet<string>>(new Set())
+  // Transient add-streams result note, per origin column id (tab menu / header context menu).
+  const [columnNotes, setColumnNotes] = useState<Record<string, string>>({})
 
   // Total messages received; StatusBar samples it at 1 Hz for the msg/s rate, so the per-second
   // re-render stays scoped there instead of cascading through the whole column tree.
@@ -356,6 +375,10 @@ export function App(): ReactElement {
   flaggedVisibleRef.current = flaggedVisible
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
+  const renderPrefs = useMemo<RenderPrefs>(
+    () => ({ embedGifs: settings.embedGifs }),
+    [settings.embedGifs]
+  )
 
   const monitorIds = useMemo(
     () => new Set(settings.monitors.map((monitor) => monitor.id)),
@@ -382,12 +405,13 @@ export function App(): ReactElement {
     setOrder((prev) =>
       reconcileColumnOrder(prev, {
         flaggedVisible,
+        donationsVisible: settings.donationsPanel,
         monitorIds,
         channelIds: channels.map((channel) => channel.id),
         stored
       })
     )
-  }, [channels, monitorIds, flaggedVisible, settings.columnOrder])
+  }, [channels, monitorIds, flaggedVisible, settings.columnOrder, settings.donationsPanel])
 
   // Chat columns and monitor views in one ordered list, so both move and reorder the same way.
   const orderedColumns = order
@@ -396,7 +420,7 @@ export function App(): ReactElement {
         return flaggedVisible ? { kind: 'flagged', id } : undefined
       }
       if (id === DONATIONS_COLUMN_ID) {
-        return { kind: 'donations', id }
+        return settings.donationsPanel ? { kind: 'donations', id } : undefined
       }
       const channel = channels.find((c) => c.id === id)
       if (channel !== undefined) {
@@ -450,6 +474,103 @@ export function App(): ReactElement {
   /** Drag-to-reorder a tab to a target index (its position once removed). */
   function moveColumnToIndex(id: string, toIndex: number): void {
     commitOrder(moveColumnTo(order, id, toIndex))
+  }
+
+  // Show a transient note on a column's header (tab-menu add-streams feedback), auto-clearing after
+  // a few seconds — mirrors ChannelColumn's own streamsNote timing for the ⤓ button.
+  function showColumnNote(columnId: string, note: string): void {
+    setColumnNotes((prev) => ({ ...prev, [columnId]: note }))
+    setTimeout(() => {
+      setColumnNotes((prev) => {
+        if (prev[columnId] !== note) {
+          return prev // a newer note already replaced it
+        }
+        const next = { ...prev }
+        delete next[columnId]
+        return next
+      })
+    }, 5000)
+  }
+
+  // Run the tab/header menu's "add this streamer's other streams": adds the columns, inserts them
+  // right after the tab/column that opened the menu, and reports the result as a transient note.
+  async function addStreamsFromMenu(originColumnId: string, target: string): Promise<void> {
+    setStreamsInFlight((prev) => new Set(prev).add(target))
+    try {
+      const result = await window.chat.addYouTubeStreams(target, originColumnId)
+      if (result.ok) {
+        commitOrder(insertAfter(orderRef.current, originColumnId, result.channelIds))
+        showColumnNote(originColumnId, `added ${result.added}/${result.total} streams`)
+      } else {
+        showColumnNote(originColumnId, result.error)
+      }
+    } finally {
+      setStreamsInFlight((prev) => {
+        const next = new Set(prev)
+        next.delete(target)
+        return next
+      })
+    }
+  }
+
+  /** Forget every collected donation, main's store and this view alike; the list restarts empty. */
+  function clearDonations(): void {
+    void window.chat.clearDonations().then(() => {
+      setDonations((prev) => ({ ...prev, donations: [] }))
+    })
+  }
+
+  /**
+   * The tab/header menu's "count this streamer's donations" item: a toggle on the streamer key, so
+   * every open chat of that streamer — on either platform — counts as one. A YouTube column opened
+   * by video id has no certain key until its creator resolves, so the item waits for that.
+   */
+  function donationItem(channel: ChannelInfo): TabContextMenuItem {
+    const key = channel.streamerKey
+    const ready =
+      channel.platform === 'twitch' ||
+      channel.id.startsWith('youtube:@') ||
+      channel.creatorId !== undefined
+    if (!ready) {
+      return { label: 'Count donations', disabled: true, hint: 'resolving…', onSelect: () => {} }
+    }
+    const counted = settings.donationStreamers.includes(key)
+    return {
+      label: counted ? `Stop counting ${key}'s donations` : `Count ${key}'s donations`,
+      disabled: false,
+      onSelect: () => {
+        setTabMenu(undefined)
+        updateSettings({
+          donationStreamers: counted
+            ? settings.donationStreamers.filter((entry) => entry !== key)
+            : [...settings.donationStreamers, key]
+        })
+      }
+    }
+  }
+
+  /** Open the tab/header context menu for a chat column's channel (right-click on a tab or header). */
+  function openTabMenu(channel: ChannelInfo, x: number, y: number): void {
+    setTabMenu({ channel, anchor: { x, y } })
+  }
+
+  /** The tab/header menu's single item, resolved from the channel that opened it. */
+  function tabMenuItem(channel: ChannelInfo): TabContextMenuItem {
+    const resolved = streamsTargetFor(channel)
+    if (resolved.target === undefined) {
+      return { label: resolved.label, disabled: true, hint: resolved.reason, onSelect: () => {} }
+    }
+    const target = resolved.target
+    const busy = streamsInFlight.has(target)
+    return {
+      label: resolved.label,
+      disabled: busy,
+      hint: busy ? 'already adding…' : undefined,
+      onSelect: () => {
+        setTabMenu(undefined)
+        void addStreamsFromMenu(channel.id, target)
+      }
+    }
   }
 
   /** Select a tab, clear its unread indicator, and remember it across restarts (tabs reopen it). */
@@ -787,6 +908,8 @@ export function App(): ReactElement {
           onHeldAction={handleHeldAction}
           onScrollPause={reportScrollPause}
           monitoredKeys={monitoredKeys}
+          onHeaderContextMenu={openTabMenu}
+          menuNote={columnNotes[column.id]}
         />
       )
     }
@@ -837,11 +960,15 @@ export function App(): ReactElement {
           canMoveLeft={canMoveLeft}
           canMoveRight={canMoveRight}
           inTab={inTab}
+          countedStreamers={settings.donationStreamers}
+          selectedStreamer={selectedStreamer}
+          onSelectStreamer={setSelectedStreamer}
           onActivate={setActiveId}
           onJump={jumpToChannel}
           onMarkRead={(ids, read) => {
             void window.chat.markDonationsRead(ids, read)
           }}
+          onClear={clearDonations}
           onMarkAllRead={() => {
             void window.chat.markAllDonationsRead()
           }}
@@ -905,261 +1032,273 @@ export function App(): ReactElement {
       : undefined
 
   return (
-    <div
-      className={`pc-app theme-${theme}`}
-      style={{ '--chat-fs': `${settings.fontSize}px` } as CSSProperties}
-    >
-      <Titlebar
-        auth={auth}
-        onAdd={() => {
-          setAddOpen(true)
-        }}
-        onSearch={() => {
-          setSearchOpen(true)
-        }}
-        onSettings={() => {
-          setSettingsOpen(true)
-        }}
-        onTwitchLogin={() => {
-          void handleTwitchLogin()
-        }}
-        onTwitchLogout={() => {
-          void window.chat.logoutTwitch()
-        }}
-        onYouTubeLogin={() => {
-          setYouTubeModalOpen(true)
-        }}
-        onYouTubeLogout={() => {
-          ytUserLogoutRef.current = true
-          void window.chat.logoutYouTube()
-        }}
-        onYouTubePickChannel={() => {
-          setChannelModalOpen(true)
-        }}
-      />
-      <div className="pc-screen">
-        {settings.layout === 'tabs' ? (
-          <>
-            <TabBar
-              columns={orderedColumns}
-              channels={channels}
-              activeId={activeId}
-              unread={unread}
-              donationsUnread={unreadCount(donations)}
-              onSelect={selectTab}
-              onRemove={removeColumn}
-              onReorder={moveColumnToIndex}
-              trailing={addColumn}
-            />
-            <div className="pc-body pc-body-tabs">
-              {activeColumn !== undefined ? renderColumn(activeColumn, 0, true) : null}
-            </div>
-          </>
-        ) : (
-          <div className="pc-body">
-            {orderedColumns.map((column, index) => renderColumn(column, index, false))}
-            {addColumn}
-          </div>
-        )}
-      </div>
-      <StatusBar
-        channelCount={channels.length}
-        twitchOnline={twitchOnline}
-        youtubeOnline={youtubeOnline}
-        messageCountRef={messageCountRef}
-        user={auth.twitch.userName ?? 'guest'}
-      />
-      {prompt !== undefined ? (
-        <TwitchLoginModal
-          userCode={prompt.userCode}
-          verificationUri={prompt.verificationUri}
-          credentialStorage={auth.credentialStorage}
-          linuxKeyringBackend={auth.linuxKeyringBackend}
-          error={prompt.error}
-          onRetry={() => {
+    <RenderPrefsContext.Provider value={renderPrefs}>
+      <div
+        className={`pc-app theme-${theme}`}
+        style={{ '--chat-fs': `${settings.fontSize}px` } as CSSProperties}
+      >
+        <Titlebar
+          auth={auth}
+          onAdd={() => {
+            setAddOpen(true)
+          }}
+          onSearch={() => {
+            setSearchOpen(true)
+          }}
+          onSettings={() => {
+            setSettingsOpen(true)
+          }}
+          onTwitchLogin={() => {
             void handleTwitchLogin()
           }}
-          onClose={() => {
-            setPrompt(undefined)
+          onTwitchLogout={() => {
+            void window.chat.logoutTwitch()
+          }}
+          onYouTubeLogin={() => {
+            setYouTubeModalOpen(true)
+          }}
+          onYouTubeLogout={() => {
+            ytUserLogoutRef.current = true
+            void window.chat.logoutYouTube()
+          }}
+          onYouTubePickChannel={() => {
+            setChannelModalOpen(true)
           }}
         />
-      ) : null}
-      {authError !== undefined ? (
-        <ModalShell
-          onClose={() => {
-            setAuthError(undefined)
-          }}
-        >
-          <div className="mh">
-            <span className="tag tw">TW</span>
-            twitch login failed
-          </div>
-          <div className="mb">
-            <div className="pc-modal-err">{authError}</div>
-          </div>
-          <div className="mf">
-            <button
-              type="button"
-              className="pc-mbtn"
-              onClick={() => {
-                setAuthError(undefined)
-              }}
-            >
-              close
-            </button>
-          </div>
-        </ModalShell>
-      ) : null}
-      {addOpen ? (
-        <AddChannelModal
-          onClose={() => {
-            setAddOpen(false)
-          }}
-          onAdd={(platform, target) => window.chat.addChannel(platform, target)}
-          onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
-          onCompose={() => {
-            setAddOpen(false)
-            setComposerOpen(true)
-          }}
-        />
-      ) : null}
-      {composerOpen ? (
-        <MonitorComposer
-          channels={orderedChannels}
-          onCreate={createMonitor}
-          onClose={() => {
-            setComposerOpen(false)
-          }}
-        />
-      ) : null}
-      {userActivity !== undefined ? (
-        <UserActivityModal
-          author={userActivity.author}
-          channelId={userActivity.channelId}
-          channelLabel={
-            channels.find((channel) => channel.id === userActivity.channelId)?.label ??
-            userActivity.channelId
-          }
-          messages={(messages[userActivity.channelId] ?? []).filter(
-            (message) => message.author.id === userActivity.author.id
+        <div className="pc-screen">
+          {settings.layout === 'tabs' ? (
+            <>
+              <TabBar
+                columns={orderedColumns}
+                channels={channels}
+                activeId={activeId}
+                unread={unread}
+                donationsUnread={unreadCount(donations)}
+                onSelect={selectTab}
+                onRemove={removeColumn}
+                onReorder={moveColumnToIndex}
+                onTabContextMenu={openTabMenu}
+                trailing={addColumn}
+              />
+              <div className="pc-body pc-body-tabs">
+                {activeColumn !== undefined ? renderColumn(activeColumn, 0, true) : null}
+              </div>
+            </>
+          ) : (
+            <div className="pc-body">
+              {orderedColumns.map((column, index) => renderColumn(column, index, false))}
+              {addColumn}
+            </div>
           )}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          monitored={monitoredKeys.has(`${userActivity.platform}:${userActivity.author.id}`)}
-          onToggleMonitor={() => {
-            toggleMonitoredUser(
-              userActivity.platform,
-              userActivity.author.id,
-              userActivity.author.name
-            )
-          }}
-          onJump={(channelId) => {
-            jumpToChannel(channelId)
-            setUserActivity(undefined)
-          }}
-          onClose={() => {
-            setUserActivity(undefined)
-          }}
+        </div>
+        <StatusBar
+          channelCount={channels.length}
+          twitchOnline={twitchOnline}
+          youtubeOnline={youtubeOnline}
+          messageCountRef={messageCountRef}
+          user={auth.twitch.userName ?? 'guest'}
         />
-      ) : null}
-      {donationThread !== undefined ? (
-        <DonationThreadModal
-          channelId={donationThread.channelId}
-          threadToken={donationThread.threadToken}
-          parentAuthor={donationThread.parentAuthor}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          onJump={(channelId) => {
-            jumpToChannel(channelId)
-            setDonationThread(undefined)
-          }}
-          onClose={() => {
-            setDonationThread(undefined)
-          }}
-        />
-      ) : null}
-      {threadView !== undefined && thread !== undefined ? (
-        <ThreadModal
-          channelId={threadView.channelId}
-          messages={thread.messages}
-          rootId={threadView.rootId}
-          rootAuthor={thread.rootAuthor}
-          rootBuffered={thread.rootBuffered}
-          replyToId={threadView.replyToId}
-          canSend={threadChannel !== undefined && canSendTo(threadChannel, auth)}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          onSelectReplyTarget={(messageId) => {
-            setThreadView((current) => {
-              if (current === undefined) {
-                return current
-              }
-              // Clearing the pick drops the key entirely, so the composer falls back to the default
-              // (newest reply) rather than carrying an explicit `undefined`.
-              const { replyToId: _cleared, ...rest } = current
-              return messageId === undefined ? rest : { ...rest, replyToId: messageId }
-            })
-          }}
-          onJump={(channelId) => {
-            jumpToChannel(channelId)
-            setThreadView(undefined)
-          }}
-          onClose={() => {
-            setThreadView(undefined)
-          }}
-        />
-      ) : null}
-      {searchOpen ? (
-        <SearchModal
-          channels={channels}
-          messagesByChannel={messages}
-          cap={settings.bufferSize}
-          palette={palette}
-          monitoredKeys={monitoredKeys}
-          onJump={jumpToChannel}
-          onUserActivity={openUserActivity}
-          onDonationReplies={openDonationThread}
-          onClose={() => {
-            setSearchOpen(false)
-          }}
-        />
-      ) : null}
-      {settingsOpen ? (
-        <SettingsModal
-          settings={settings}
-          credentialStorage={auth.credentialStorage}
-          linuxKeyringBackend={auth.linuxKeyringBackend}
-          onChange={updateSettings}
-          onHighlightsChange={updateHighlights}
-          onModerationChange={updateModerationRules}
-          onModerationAlert={setModerationAlert}
-          onPrebanChange={updatePrebanRules}
-          onPrebanToggle={setPrebanToggles}
-          onClose={() => {
-            setSettingsOpen(false)
-          }}
-        />
-      ) : null}
-      {youtubeModalOpen ? (
-        <YouTubeLoginModal
-          credentialStorage={auth.credentialStorage}
-          linuxKeyringBackend={auth.linuxKeyringBackend}
-          onSubmit={(cookies) => window.chat.loginYouTube(cookies)}
-          onClose={() => {
-            setYouTubeModalOpen(false)
-          }}
-        />
-      ) : null}
-      {channelModalOpen && auth.youtube.loggedIn ? (
-        <YouTubeChannelModal
-          channels={auth.youtube.channels}
-          selectedChannelId={auth.youtube.selectedChannelId}
-          onSelect={(channelId) => window.chat.selectYouTubeChannel(channelId)}
-          onClose={() => {
-            setChannelModalOpen(false)
-          }}
-        />
-      ) : null}
-    </div>
+        {prompt !== undefined ? (
+          <TwitchLoginModal
+            userCode={prompt.userCode}
+            verificationUri={prompt.verificationUri}
+            credentialStorage={auth.credentialStorage}
+            linuxKeyringBackend={auth.linuxKeyringBackend}
+            error={prompt.error}
+            onRetry={() => {
+              void handleTwitchLogin()
+            }}
+            onClose={() => {
+              setPrompt(undefined)
+            }}
+          />
+        ) : null}
+        {authError !== undefined ? (
+          <ModalShell
+            onClose={() => {
+              setAuthError(undefined)
+            }}
+          >
+            <div className="mh">
+              <span className="tag tw">TW</span>
+              twitch login failed
+            </div>
+            <div className="mb">
+              <div className="pc-modal-err">{authError}</div>
+            </div>
+            <div className="mf">
+              <button
+                type="button"
+                className="pc-mbtn"
+                onClick={() => {
+                  setAuthError(undefined)
+                }}
+              >
+                close
+              </button>
+            </div>
+          </ModalShell>
+        ) : null}
+        {addOpen ? (
+          <AddChannelModal
+            onClose={() => {
+              setAddOpen(false)
+            }}
+            onAdd={(platform, target) => window.chat.addChannel(platform, target)}
+            onAddStreams={(target) => window.chat.addYouTubeStreams(target)}
+            onCompose={() => {
+              setAddOpen(false)
+              setComposerOpen(true)
+            }}
+          />
+        ) : null}
+        {composerOpen ? (
+          <MonitorComposer
+            channels={orderedChannels}
+            onCreate={createMonitor}
+            onClose={() => {
+              setComposerOpen(false)
+            }}
+          />
+        ) : null}
+        {userActivity !== undefined ? (
+          <UserActivityModal
+            author={userActivity.author}
+            channelId={userActivity.channelId}
+            channelLabel={
+              channels.find((channel) => channel.id === userActivity.channelId)?.label ??
+              userActivity.channelId
+            }
+            messages={(messages[userActivity.channelId] ?? []).filter(
+              (message) => message.author.id === userActivity.author.id
+            )}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            monitored={monitoredKeys.has(`${userActivity.platform}:${userActivity.author.id}`)}
+            onToggleMonitor={() => {
+              toggleMonitoredUser(
+                userActivity.platform,
+                userActivity.author.id,
+                userActivity.author.name
+              )
+            }}
+            onJump={(channelId) => {
+              jumpToChannel(channelId)
+              setUserActivity(undefined)
+            }}
+            onClose={() => {
+              setUserActivity(undefined)
+            }}
+          />
+        ) : null}
+        {donationThread !== undefined ? (
+          <DonationThreadModal
+            channelId={donationThread.channelId}
+            threadToken={donationThread.threadToken}
+            parentAuthor={donationThread.parentAuthor}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            onJump={(channelId) => {
+              jumpToChannel(channelId)
+              setDonationThread(undefined)
+            }}
+            onClose={() => {
+              setDonationThread(undefined)
+            }}
+          />
+        ) : null}
+        {threadView !== undefined && thread !== undefined ? (
+          <ThreadModal
+            channelId={threadView.channelId}
+            messages={thread.messages}
+            rootId={threadView.rootId}
+            rootAuthor={thread.rootAuthor}
+            rootBuffered={thread.rootBuffered}
+            replyToId={threadView.replyToId}
+            canSend={threadChannel !== undefined && canSendTo(threadChannel, auth)}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            onSelectReplyTarget={(messageId) => {
+              setThreadView((current) => {
+                if (current === undefined) {
+                  return current
+                }
+                // Clearing the pick drops the key entirely, so the composer falls back to the default
+                // (newest reply) rather than carrying an explicit `undefined`.
+                const { replyToId: _cleared, ...rest } = current
+                return messageId === undefined ? rest : { ...rest, replyToId: messageId }
+              })
+            }}
+            onJump={(channelId) => {
+              jumpToChannel(channelId)
+              setThreadView(undefined)
+            }}
+            onClose={() => {
+              setThreadView(undefined)
+            }}
+          />
+        ) : null}
+        {searchOpen ? (
+          <SearchModal
+            channels={channels}
+            messagesByChannel={messages}
+            cap={settings.bufferSize}
+            palette={palette}
+            monitoredKeys={monitoredKeys}
+            onJump={jumpToChannel}
+            onUserActivity={openUserActivity}
+            onDonationReplies={openDonationThread}
+            onClose={() => {
+              setSearchOpen(false)
+            }}
+          />
+        ) : null}
+        {settingsOpen ? (
+          <SettingsModal
+            settings={settings}
+            credentialStorage={auth.credentialStorage}
+            linuxKeyringBackend={auth.linuxKeyringBackend}
+            onChange={updateSettings}
+            onHighlightsChange={updateHighlights}
+            onModerationChange={updateModerationRules}
+            onModerationAlert={setModerationAlert}
+            onPrebanChange={updatePrebanRules}
+            onPrebanToggle={setPrebanToggles}
+            onClose={() => {
+              setSettingsOpen(false)
+            }}
+          />
+        ) : null}
+        {youtubeModalOpen ? (
+          <YouTubeLoginModal
+            credentialStorage={auth.credentialStorage}
+            linuxKeyringBackend={auth.linuxKeyringBackend}
+            onSubmit={(cookies) => window.chat.loginYouTube(cookies)}
+            onClose={() => {
+              setYouTubeModalOpen(false)
+            }}
+          />
+        ) : null}
+        {tabMenu !== undefined ? (
+          <TabContextMenu
+            anchor={tabMenu.anchor}
+            items={[tabMenuItem(tabMenu.channel), donationItem(tabMenu.channel)]}
+            onClose={() => {
+              setTabMenu(undefined)
+            }}
+          />
+        ) : null}
+        {channelModalOpen && auth.youtube.loggedIn ? (
+          <YouTubeChannelModal
+            channels={auth.youtube.channels}
+            selectedChannelId={auth.youtube.selectedChannelId}
+            onSelect={(channelId) => window.chat.selectYouTubeChannel(channelId)}
+            onClose={() => {
+              setChannelModalOpen(false)
+            }}
+          />
+        ) : null}
+      </div>
+    </RenderPrefsContext.Provider>
   )
 }

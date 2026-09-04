@@ -48,20 +48,20 @@ describe('Twitch normalization', () => {
 
 describe('YouTube dedup', () => {
   it('collapses a handle regardless of case, leading @, or surrounding URL', () => {
-    const id = 'youtube:@lofigirl'
-    expect(channelId('youtube', '@LofiGirl')).toBe(id)
-    expect(channelId('youtube', 'lofigirl')).toBe(id)
-    expect(channelId('youtube', 'https://www.youtube.com/@LofiGirl/live')).toBe(id)
-    expect(channelId('youtube', 'https://www.youtube.com/@lofigirl')).toBe(id)
+    const id = 'youtube:@pixelgardener'
+    expect(channelId('youtube', '@PixelGardener')).toBe(id)
+    expect(channelId('youtube', 'pixelgardener')).toBe(id)
+    expect(channelId('youtube', 'https://www.youtube.com/@PixelGardener/live')).toBe(id)
+    expect(channelId('youtube', 'https://www.youtube.com/@pixelgardener')).toBe(id)
   })
 
   it('reduces watch / share / live URLs and bare ids to the video id', () => {
-    const id = 'youtube:dQw4w9WgXcQ'
-    expect(channelId('youtube', 'dQw4w9WgXcQ')).toBe(id)
-    expect(channelId('youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe(id)
-    expect(channelId('youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s')).toBe(id)
-    expect(channelId('youtube', 'https://youtu.be/dQw4w9WgXcQ')).toBe(id)
-    expect(channelId('youtube', 'https://www.youtube.com/live/dQw4w9WgXcQ')).toBe(id)
+    const id = 'youtube:ddddddddddd'
+    expect(channelId('youtube', 'ddddddddddd')).toBe(id)
+    expect(channelId('youtube', 'https://www.youtube.com/watch?v=ddddddddddd')).toBe(id)
+    expect(channelId('youtube', 'https://www.youtube.com/watch?v=ddddddddddd&t=30s')).toBe(id)
+    expect(channelId('youtube', 'https://youtu.be/ddddddddddd')).toBe(id)
+    expect(channelId('youtube', 'https://www.youtube.com/live/ddddddddddd')).toBe(id)
   })
 
   it('preserves case for video ids (they are case-sensitive)', () => {
@@ -70,7 +70,7 @@ describe('YouTube dedup', () => {
 })
 
 describe('YouTube channel URLs', () => {
-  const UC = 'UCSJ4gkVC6NrvII8umztf0Ow' // standard 24-char channel id
+  const UC = 'UCaaaaaaaaaaaaaaaaaaaaaa' // standard 24-char channel id
 
   it('collapses a /channel/UC… URL and a bare UC… id to the channel id, preserving case', () => {
     expect(channelId('youtube', `https://www.youtube.com/channel/${UC}`)).toBe(`youtube:${UC}`)
@@ -78,7 +78,7 @@ describe('YouTube channel URLs', () => {
     expect(channelId('youtube', `https://www.youtube.com/channel/${UC}/live`)).toBe(`youtube:${UC}`)
     expect(channelId('youtube', UC)).toBe(`youtube:${UC}`)
     expect(isYouTubeChannelId(UC)).toBe(true)
-    expect(isYouTubeChannelId('@lofigirl')).toBe(false)
+    expect(isYouTubeChannelId('@pixelgardener')).toBe(false)
   })
 
   it('keeps a /channel/ URL with a non-standard id as a trimmed URL', () => {
@@ -109,11 +109,11 @@ describe('YouTube target host validation', () => {
   })
 
   it('accepts handles, ids, and YouTube URLs but rejects arbitrary URLs', () => {
-    expect(isAcceptableYouTubeTarget('@LofiGirl')).toBe(true)
-    expect(isAcceptableYouTubeTarget('LofiGirl')).toBe(true)
-    expect(isAcceptableYouTubeTarget('dQw4w9WgXcQ')).toBe(true)
+    expect(isAcceptableYouTubeTarget('@PixelGardener')).toBe(true)
+    expect(isAcceptableYouTubeTarget('PixelGardener')).toBe(true)
+    expect(isAcceptableYouTubeTarget('ddddddddddd')).toBe(true)
     expect(isAcceptableYouTubeTarget('https://www.youtube.com/channel/UC123')).toBe(true)
-    expect(isAcceptableYouTubeTarget('https://youtu.be/dQw4w9WgXcQ')).toBe(true)
+    expect(isAcceptableYouTubeTarget('https://youtu.be/ddddddddddd')).toBe(true)
     expect(isAcceptableYouTubeTarget('http://169.254.169.254/latest/meta-data')).toBe(false)
     expect(isAcceptableYouTubeTarget('https://evil.com/@foo')).toBe(false)
   })
@@ -123,6 +123,6 @@ describe('channelLabel', () => {
   it('formats per platform from the normalized target', () => {
     expect(channelLabel('twitch', '#Foo')).toBe('#foo')
     expect(channelLabel('youtube', '@Foo')).toBe('yt:@foo')
-    expect(channelLabel('youtube', 'https://youtu.be/dQw4w9WgXcQ')).toBe('yt:dQw4w9WgXcQ')
+    expect(channelLabel('youtube', 'https://youtu.be/ddddddddddd')).toBe('yt:ddddddddddd')
   })
 })

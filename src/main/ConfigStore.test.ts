@@ -44,7 +44,12 @@ const DEFAULTS = {
   showConvertedAmounts: true,
   allowPlaintextCredentials: false,
   keepAwake: true,
-  twitchHistory: true
+  twitchHistory: true,
+  spelling: 'en-US',
+  rawLog: { enabled: false },
+  embedGifs: true,
+  donationsPanel: true,
+  donationStreamers: []
 }
 
 describe('ConfigStore settings', () => {
@@ -173,7 +178,7 @@ describe('ConfigStore channels', () => {
   })
 
   it('recomputes a stale persisted id from the target (older normalization scheme)', () => {
-    const url = 'https://www.youtube.com/channel/UCSJ4gkVC6NrvII8umztf0Ow'
+    const url = 'https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa'
     writeFileSync(
       CONFIG,
       JSON.stringify({
@@ -182,7 +187,7 @@ describe('ConfigStore channels', () => {
       })
     )
     expect(new ConfigStore().channels()).toEqual([
-      { platform: 'youtube', target: url, id: 'youtube:UCSJ4gkVC6NrvII8umztf0Ow' }
+      { platform: 'youtube', target: url, id: 'youtube:UCaaaaaaaaaaaaaaaaaaaaaa' }
     ])
   })
 
@@ -191,14 +196,83 @@ describe('ConfigStore channels', () => {
       CONFIG,
       JSON.stringify({
         channels: [
-          { platform: 'youtube', target: '@LofiGirl', id: 'youtube:@lofigirl', label: 'first' },
-          { platform: 'youtube', target: 'lofigirl', id: 'youtube:@lofigirl', label: 'second' }
+          {
+            platform: 'youtube',
+            target: '@PixelGardener',
+            id: 'youtube:@pixelgardener',
+            label: 'first'
+          },
+          {
+            platform: 'youtube',
+            target: 'pixelgardener',
+            id: 'youtube:@pixelgardener',
+            label: 'second'
+          }
         ],
         settings: {}
       })
     )
     expect(new ConfigStore().channels()).toEqual([
-      { platform: 'youtube', target: '@LofiGirl', id: 'youtube:@lofigirl', label: 'first' }
+      {
+        platform: 'youtube',
+        target: '@PixelGardener',
+        id: 'youtube:@pixelgardener',
+        label: 'first'
+      }
+    ])
+  })
+})
+
+describe('ConfigStore channel identity', () => {
+  it('updateChannel persists streamerKey and creatorId, and a fresh instance reloads them', () => {
+    const store = new ConfigStore()
+    store.addChannel({ platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa' })
+
+    store.updateChannel('youtube:aaaaaaaaaaa', {
+      streamerKey: 'mossflower',
+      creatorId: 'UCmade-up'
+    })
+
+    expect(new ConfigStore().channels()).toEqual([
+      {
+        platform: 'youtube',
+        target: 'aaaaaaaaaaa',
+        id: 'youtube:aaaaaaaaaaa',
+        streamerKey: 'mossflower',
+        creatorId: 'UCmade-up'
+      }
+    ])
+  })
+
+  it('ignores updateChannel for an unknown id', () => {
+    const store = new ConfigStore()
+    store.addChannel({ platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa' })
+
+    store.updateChannel('youtube:does-not-exist', { streamerKey: 'x' })
+
+    expect(new ConfigStore().channels()).toEqual([
+      { platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa' }
+    ])
+  })
+
+  it('drops an empty-string streamerKey found in the file on load', () => {
+    writeFileSync(
+      CONFIG,
+      JSON.stringify({
+        channels: [
+          {
+            platform: 'youtube',
+            target: 'aaaaaaaaaaa',
+            id: 'youtube:aaaaaaaaaaa',
+            streamerKey: '',
+            creatorId: 'UC1'
+          }
+        ],
+        settings: {}
+      })
+    )
+    expect(new ConfigStore().channels()).toEqual([
+      { platform: 'youtube', target: 'aaaaaaaaaaa', id: 'youtube:aaaaaaaaaaa', creatorId: 'UC1' }
     ])
   })
 })
@@ -216,5 +290,43 @@ describe('ConfigStore donation settings', () => {
     // A garbage value must never reach the rate request — the previous good value stands.
     expect(store.setSettings({ baseCurrency: 'pounds' } as never).baseCurrency).toBe('GBP')
     expect(store.setSettings({ baseCurrency: 42 } as never).baseCurrency).toBe('GBP')
+  })
+})
+
+describe('ConfigStore spelling and raw-log settings', () => {
+  it('accepts a known dialect and rejects anything else, leaving the default in place', () => {
+    const store = new ConfigStore()
+    expect(store.setSettings({ spelling: 'fr' } as never).spelling).toBe('en-US')
+    expect(store.setSettings({ spelling: 'en-GB' }).spelling).toBe('en-GB')
+  })
+
+  it('sanitizes raw-log settings, coercing types', () => {
+    const result = new ConfigStore().setSettings({ rawLog: { enabled: 'yes' } } as never)
+    expect(result.rawLog).toEqual({ enabled: false })
+  })
+
+  it('embeds GIFs unless told otherwise, and only by a boolean', () => {
+    writeFileSync(CONFIG, JSON.stringify({ channels: [], settings: {} }))
+    const store = new ConfigStore()
+    expect(store.settings().embedGifs).toBe(true)
+    expect(store.setSettings({ embedGifs: 'no' } as never).embedGifs).toBe(true)
+    expect(store.setSettings({ embedGifs: false }).embedGifs).toBe(false)
+  })
+
+  it('shows the donations panel unless told otherwise, and keeps its streamer list to distinct keys', () => {
+    const store = new ConfigStore()
+    expect(store.setSettings({ donationsPanel: 'no' } as never).donationsPanel).toBe(true)
+    expect(store.setSettings({ donationsPanel: false }).donationsPanel).toBe(false)
+    expect(
+      store.setSettings({ donationStreamers: ['some_one', 'someone', 7, ''] } as never)
+        .donationStreamers
+    ).toEqual(['someone'])
+  })
+
+  it('defaults spelling and raw-log when the settings file omits them', () => {
+    writeFileSync(CONFIG, JSON.stringify({ channels: [], settings: {} }))
+    const settings = new ConfigStore().settings()
+    expect(settings.spelling).toBe('en-US')
+    expect(settings.rawLog).toEqual({ enabled: false })
   })
 })

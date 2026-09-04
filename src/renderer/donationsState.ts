@@ -1,4 +1,4 @@
-import type { ChatEvent } from '@shared/model'
+import type { ChannelInfo, ChatEvent } from '@shared/model'
 import { type Donation, DONATION_RETENTION, type RateTable } from '@shared/donations'
 
 /** The donations panel's view state: a projection of the store the main process owns. */
@@ -130,4 +130,58 @@ function applyRead(state: DonationsState, ids: string[], read: boolean): Donatio
 /** How many donations still need acknowledging — the tab's badge. */
 export function unreadCount(state: DonationsState): number {
   return state.donations.reduce((total, donation) => total + (donation.read ? 0 : 1), 0)
+}
+
+/** One streamer chip for the donations panel: its display label and unread count. */
+export interface StreamerChip {
+  key: string
+  label: string
+  unread: number
+  /** Whether new paid events for this streamer are being collected (the tab-menu opt-in). */
+  counted: boolean
+}
+
+/**
+ * One chip per streamer the panel knows about: everyone represented in `donations`, newest
+ * donation first, then every streamer being counted who has no donation yet — so the row always
+ * shows who is being tracked, not only who has already paid.
+ *
+ * The label prefers an open channel's own label (a chat the user is actually watching) over the
+ * bare key, so the chip reads like the rest of the UI; a streamer with no open channel (e.g. a
+ * chat that's since been closed) falls back to the key itself rather than disappearing.
+ */
+export function streamerChips(
+  donations: Donation[],
+  channels: ChannelInfo[],
+  counted: readonly string[] = []
+): StreamerChip[] {
+  const newest = new Map<string, number>()
+  const unread = new Map<string, number>()
+  for (const donation of donations) {
+    const key = donation.streamerKey
+    newest.set(key, Math.max(newest.get(key) ?? -Infinity, donation.timestamp))
+    unread.set(key, (unread.get(key) ?? 0) + (donation.read ? 0 : 1))
+  }
+  const withDonations = [...newest.keys()].sort(
+    (a, b) => (newest.get(b) ?? 0) - (newest.get(a) ?? 0)
+  )
+  const countedOnly = counted.filter((key) => !newest.has(key))
+  return [...withDonations, ...countedOnly].map((key) => ({
+    key,
+    // A Twitch column is labelled by login; a YouTube column by stream title, which would mislabel
+    // the whole streamer — so only a Twitch label is used, else the key itself.
+    label:
+      channels.find((channel) => channel.streamerKey === key && channel.platform === 'twitch')
+        ?.label ?? key,
+    unread: unread.get(key) ?? 0,
+    counted: counted.includes(key)
+  }))
+}
+
+/** The donations shown for a chip selection: everything for `'all'`, else just that streamer's. */
+export function visibleDonations(donations: Donation[], selected: string | undefined): Donation[] {
+  if (selected === undefined) {
+    return donations
+  }
+  return donations.filter((donation) => donation.streamerKey === selected)
 }

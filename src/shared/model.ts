@@ -61,6 +61,12 @@ export type Fragment =
       animated?: boolean
     }
   | { type: 'mention'; text: string; userId?: string }
+  /** A hyperlink — rendered as a clickable link (used for Twitch GIFs). */
+  /**
+   * A Twitch chat GIF: `text` is the platform's placeholder ("[Name GIF by Author]"), shown when the
+   * image can't be rendered; `url` is the image URL exactly as supplied and must be used unmodified.
+   */
+  | { type: 'gif'; text: string; url: string; id: string }
 
 export type HighlightKind =
   | 'superchat'
@@ -262,6 +268,10 @@ export interface ChannelInfo {
   platform: Platform
   label: string
   status: SourceStatus
+  /** Normalised username identifying the streamer across platforms. */
+  streamerKey: string
+  /** YouTube creator channel id, when resolved. */
+  creatorId?: string
   /**
    * Why the signed-in user currently can't send here (e.g. "Subscribers-only mode"), when the
    * platform reports a chat restriction. Undefined means no known restriction. Only meaningful
@@ -489,6 +499,21 @@ export interface ChatLogSettings {
   directory: string
 }
 
+/**
+ * Raw wire-level connector payload logging, independent of the human-readable {@link ChatLogSettings}
+ * log — for troubleshooting a platform's response shape rather than reviewing chat.
+ */
+export interface RawLogSettings {
+  enabled: boolean
+}
+
+/** The raw log's current state, surfaced to Settings: whether it's on, its file size, and why it's off. */
+export interface RawLogStatus {
+  enabled: boolean
+  bytes: number
+  disabledReason?: string
+}
+
 /** UI theme (the two built-in TUI palettes). */
 export type ThemeName = 'ice' | 'midnight'
 
@@ -577,6 +602,25 @@ export interface AppSettings {
    * serves no chat history, so this uses the third-party recent-messages service; on by default.
    */
   twitchHistory: boolean
+  /** Spelling dialect for the composer's inline spellcheck; `'off'` disables it. */
+  spelling: 'en-US' | 'en-GB' | 'off'
+  /** Raw wire-level connector logging, for troubleshooting (see {@link RawLogSettings}). */
+  rawLog: RawLogSettings
+  /**
+   * Show Twitch chat GIFs as images. Off shows each GIF's name as text instead, and nothing is
+   * fetched from GIPHY. On by default.
+   */
+  embedGifs: boolean
+  /**
+   * Show the donations panel and collect paid events. Off hides the panel and stops collecting
+   * until it is back on. On by default.
+   */
+  donationsPanel: boolean
+  /**
+   * Streamer keys whose paid events are collected, chosen by right-clicking a tab. Every open chat
+   * of a listed streamer counts, on either platform; anyone not listed is ignored.
+   */
+  donationStreamers: string[]
 }
 
 /**
@@ -630,7 +674,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showConvertedAmounts: true,
   allowPlaintextCredentials: false,
   keepAwake: true,
-  twitchHistory: true
+  twitchHistory: true,
+  spelling: 'en-US',
+  rawLog: { enabled: false },
+  embedGifs: true,
+  donationsPanel: true,
+  donationStreamers: []
 }
 
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */
@@ -652,7 +701,7 @@ export interface SendReply {
 
 /** Result of bulk-adding a YouTube channel's live + waiting-room streams as columns. */
 export type AddStreamsResult =
-  | { ok: true; added: number; total: number }
+  | { ok: true; added: number; total: number; channelIds: string[] }
   | { ok: false; error: string }
 
 /** Result of starting a Twitch device-code login: a code to enter, or an error. */
@@ -715,6 +764,8 @@ export interface ChatApi {
   /** Mark the named donations read (or unread); the change echoes back as a `donationsRead` event. */
   markDonationsRead(ids: string[], read: boolean): Promise<void>
   markAllDonationsRead(): Promise<void>
+  /** Forget every collected donation and start the collection again. */
+  clearDonations(): Promise<void>
   listChannels(): Promise<ChannelInfo[]>
   /** Send a message. `reply` carries the Twitch native-reply + thread target; YouTube tags the user inline and ignores it. */
   send(channelId: string, text: string, reply?: SendReply): Promise<SendResult>
@@ -764,7 +815,7 @@ export interface ChatApi {
   /** Open a channel (persisted across restarts). The new column arrives via a `channels` event. */
   addChannel(platform: Platform, target: string): Promise<SendResult>
   /** Discover a YouTube channel's live + waiting-room streams and open each as its own column. */
-  addYouTubeStreams(target: string): Promise<AddStreamsResult>
+  addYouTubeStreams(target: string, originChannelId?: string): Promise<AddStreamsResult>
   removeChannel(channelId: string): Promise<void>
   /** The default chat-log directory, shown when none is set. */
   defaultLogDirectory(): Promise<string>
@@ -776,6 +827,10 @@ export interface ChatApi {
   getSettings(): Promise<AppSettings>
   /** Update one or more settings; returns the merged, persisted result. */
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>
+  /** The raw wire-level log's current state (on/off, file size, why it's off if disabled). */
+  rawLogStatus(): Promise<RawLogStatus>
+  /** Reveal the raw log directory in the OS file manager. */
+  openRawLogDir(): Promise<void>
 }
 
 /** Native window controls + platform, exposed to the renderer for the frameless window chrome. */

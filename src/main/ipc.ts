@@ -15,6 +15,7 @@ import {
   type ModerationRule,
   type Platform,
   type PrebanImport,
+  type RawLogStatus,
   type SendResult,
   type TwitchLoginPrompt
 } from '@shared/model'
@@ -31,8 +32,10 @@ import type { YouTubeAuthManager } from '@main/sources/youtube/YouTubeAuthManage
 
 /** Adds/removes chat columns and persists the channel list (implemented by the composition root). */
 export interface ChannelService {
-  add(platform: Platform, target: string, label?: string): Promise<SendResult>
-  addYouTubeStreams(target: string): Promise<AddStreamsResult>
+  /** `streamerKey`, when given, files the column under that streamer from its first message. */
+  add(platform: Platform, target: string, label?: string, streamerKey?: string): Promise<SendResult>
+  /** `originChannelId` is the tab whose menu asked, whose streamer the new columns then belong to. */
+  addYouTubeStreams(target: string, originChannelId?: string): Promise<AddStreamsResult>
   remove(channelId: string): Promise<void>
 }
 
@@ -60,6 +63,8 @@ export interface IpcDeps {
   /** Set read state on the named donations; broadcasts what actually changed. */
   markDonationsRead(ids: string[], read: boolean): void
   markAllDonationsRead(): void
+  /** Forget every collected donation; the collection starts again from nothing. */
+  clearDonations(): void
   /** Re-fetch exchange rates for the current base currency (no-op while the cache is fresh). */
   refreshRates(): void
   /** Tell the renderer which currency the panel converts into (so the base follows the setting). */
@@ -76,6 +81,10 @@ export interface IpcDeps {
   applyChatLog(settings: ChatLogSettings): void
   /** Hold or release the macOS keep-awake power assertion per the setting. */
   applyKeepAwake(enabled: boolean): void
+  /** Apply the spelling setting to the app's default session's spell-checker. */
+  applySpelling(value: AppSettings['spelling']): void
+  /** (Re)open or close the raw wire-level log from settings. */
+  applyRawLog(settings: AppSettings): void
   /** The app's default chat-log directory, used when the user hasn't set one. */
   defaultLogDir(): string
   /** The directory logs are written to: the configured one, or the default. */
@@ -85,6 +94,10 @@ export interface IpcDeps {
   appFilePath: string
   /** POGCHATTER_SEND_DEBUG: time the send round-trip (IPC receipt → platform send resolved). */
   sendDebug: boolean
+  /** The raw wire-level log's current state (on/off, file size, why it's off if disabled). */
+  rawLogStatus(): Promise<RawLogStatus>
+  /** Reveal the raw log directory in the OS file manager. */
+  openRawLogDir(): Promise<void>
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -106,6 +119,9 @@ export function registerIpc(deps: IpcDeps): void {
   handle('chat:listChannels', () => activeManager.list())
   handle('chat:getBacklog', () => deps.backlogSnapshot())
   handle('chat:getDonations', () => deps.donationsSnapshot())
+  handle('chat:clearDonations', () => {
+    deps.clearDonations()
+  })
   handle('chat:markDonationsRead', (_event, ids, read) => {
     if (Array.isArray(ids) && typeof read === 'boolean') {
       deps.markDonationsRead(
@@ -339,12 +355,12 @@ export function registerIpc(deps: IpcDeps): void {
       Promise.resolve({ ok: false, error: 'Not ready yet' })
     )
   })
-  handle('chat:addYouTubeStreams', (_event, target): Promise<AddStreamsResult> => {
-    if (typeof target !== 'string') {
+  handle('chat:addYouTubeStreams', (_event, target, origin): Promise<AddStreamsResult> => {
+    if (typeof target !== 'string' || (origin !== undefined && typeof origin !== 'string')) {
       return Promise.resolve({ ok: false, error: 'Invalid channel request' })
     }
     return (
-      deps.getChannelService()?.addYouTubeStreams(target) ??
+      deps.getChannelService()?.addYouTubeStreams(target, origin) ??
       Promise.resolve({ ok: false, error: 'Not ready yet' })
     )
   })
@@ -381,6 +397,12 @@ export function registerIpc(deps: IpcDeps): void {
       // Apply the new policy now (write or scrub the plaintext store) and tell the UI.
       deps.getAuthStore()?.refreshPersistence()
       deps.broadcastAuth()
+    }
+    if ('spelling' in patch) {
+      deps.applySpelling(merged.spelling)
+    }
+    if ('rawLog' in patch || 'chatLog' in patch) {
+      deps.applyRawLog(merged)
     }
     return merged
   })
@@ -506,6 +528,8 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: false, error: error instanceof Error ? error.message : 'Failed to read file' }
     }
   })
+  handle('chat:rawLogStatus', (): Promise<RawLogStatus> => deps.rawLogStatus())
+  handle('chat:openRawLogDir', () => deps.openRawLogDir())
 }
 
 /** File marker for pre-ban exports (see the export handler). */

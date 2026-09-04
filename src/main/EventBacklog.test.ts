@@ -43,6 +43,16 @@ describe('EventBacklog', () => {
     ])
   })
 
+  it('keeps as many messages as the configured buffer', () => {
+    // The renderer shows `bufferSize` rows; a catalogue change must be able to re-tokenise them all.
+    const backlog = new EventBacklog(() => 5)
+    for (let i = 0; i < 8; i += 1) {
+      backlog.record(messageEvent(`m${i}`))
+    }
+    const ids = snapshotMessages(backlog).map((entry) => entry.id)
+    expect(ids).toEqual(['m3', 'm4', 'm5', 'm6', 'm7'])
+  })
+
   it('caps each channel at the ring size, dropping the oldest', () => {
     const backlog = new EventBacklog()
     for (let i = 0; i < BACKLOG_MESSAGES_PER_CHANNEL + 50; i += 1) {
@@ -93,6 +103,42 @@ describe('EventBacklog', () => {
     backlog.record(messageEvent('x', 'twitch:d'))
     backlog.record({ kind: 'channels', channels: [{ id: 'twitch:d' } as ChannelInfo] })
     expect(snapshotMessages(backlog)).toEqual([{ channelId: 'twitch:d', id: 'x' }])
+  })
+
+  it('messagesFor returns a channel’s buffered messages oldest-first, excluding non-message events', () => {
+    const backlog = new EventBacklog()
+    backlog.record(messageEvent('a'))
+    backlog.record({ kind: 'status', channelId: 'youtube:c', status: { state: 'live' } })
+    backlog.record(messageEvent('b'))
+    backlog.record(messageEvent('c'))
+    expect(backlog.messagesFor('youtube:c').map((m) => m.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('messagesFor returns an empty array for an unknown channel', () => {
+    const backlog = new EventBacklog()
+    backlog.record(messageEvent('a'))
+    expect(backlog.messagesFor('twitch:unknown')).toEqual([])
+  })
+
+  it('replaceMessage swaps a buffered message so snapshot reflects the new fragments', () => {
+    const backlog = new EventBacklog()
+    backlog.record(messageEvent('a'))
+    backlog.record(messageEvent('b'))
+    const updated: ChatMessage = { ...message('a'), fragments: [{ type: 'text', text: 'edited' }] }
+    expect(backlog.replaceMessage('youtube:c', updated)).toBe(true)
+    const replayed = backlog
+      .snapshot()
+      .flatMap((event) => (event.kind === 'message' ? [event.message] : []))
+    expect(replayed.find((m) => m.id === 'a')?.fragments).toEqual([
+      { type: 'text', text: 'edited' }
+    ])
+  })
+
+  it('replaceMessage returns false and leaves the ring untouched for an unknown id', () => {
+    const backlog = new EventBacklog()
+    backlog.record(messageEvent('a'))
+    expect(backlog.replaceMessage('youtube:c', message('gone'))).toBe(false)
+    expect(backlog.messagesFor('youtube:c').map((m) => m.id)).toEqual(['a'])
   })
 
   it('ignores status and auth events', () => {

@@ -35,18 +35,35 @@ import { parseAmount } from '@shared/currencyParse'
 const TIP_BOT_LOGIN = 'streamelements'
 
 /**
- * `kota3684 just tipped £100.00!` — donor, then the amount up to the exclamation mark.
+ * `pebble_42 just tipped £100.00!` — the donor (any words before "just tipped"), then the amount up
+ * to the exclamation mark.
  *
  * Everything after is the streamer's own wording and is not matched against: only the lead-in is
  * relied upon, so a customised thank-you doesn't stop the tip being recognised.
  */
-const TIP_PATTERN = /^\s*(\S+)\s+(?:just\s+)?tipped\s+([^!]+)!/iu
+const TIP_PATTERN = /^\s*(.+?)\s+(?:just\s+)?tipped\s+([^!]+)!/iu
 
 /**
  * `here's what they say: …` — the donor's own message, when the template includes one. Both the
  * straight and the curly apostrophe appear in the wild, and some templates drop it entirely.
  */
 const SAID_PATTERN = /here['’‘`]?s? what they say:\s*(.*)$/iu
+
+/**
+ * The donor as the tip page recorded them, or `Anonymous` when they chose not to be named.
+ *
+ * StreamElements lets a tipper type any name — spaces included — so the donor is whatever precedes
+ * "just tipped", not a single token. People who don't want naming type "Anonymous" or a variant,
+ * and tip moderation can mask a name with asterisks; all of those become one display name so the
+ * donations panel groups them together instead of showing a dozen spellings of nobody.
+ */
+const ANONYMOUS_DONOR =
+  /^(?:anon(?:ymous)?|an anonymous (?:user|viewer|donor|tipper|supporter)|someone|anonymous (?:user|viewer|donor|tipper)|\*+)$/iu
+
+function donorName(raw: string): string {
+  const name = raw.trim()
+  return name === '' || ANONYMOUS_DONOR.test(name) ? 'Anonymous' : name
+}
 
 export interface ParsedTip {
   /** The donor as the bot named them — a display name; their platform id is not knowable from chat. */
@@ -87,5 +104,5 @@ export function parseTipAnnouncement(message: ChatMessage): ParsedTip | undefine
   if (parseAmount(amount) === undefined) {
     return undefined
   }
-  return { donor, amount, text: SAID_PATTERN.exec(text)?.[1]?.trim() ?? '' }
+  return { donor: donorName(donor), amount, text: SAID_PATTERN.exec(text)?.[1]?.trim() ?? '' }
 }

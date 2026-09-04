@@ -10,13 +10,24 @@ import type { ChatEvent, ChatMessage, ClearTarget } from '@shared/model'
  */
 export class EventBacklog {
   readonly #byChannel = new Map<string, ChatMessage[]>()
+  readonly #capacity: () => number
+
+  /**
+   * Args:
+   *   capacity: How many messages to keep per channel — the renderer's buffer size, so a catalogue
+   *     change can re-tokenise every row the renderer still shows, not only the newest few.
+   */
+  constructor(capacity: () => number = () => BACKLOG_MESSAGES_PER_CHANNEL) {
+    this.#capacity = capacity
+  }
 
   record(event: ChatEvent): void {
     if (event.kind === 'message') {
       const list = this.#byChannel.get(event.channelId) ?? []
       list.push(event.message)
-      if (list.length > BACKLOG_MESSAGES_PER_CHANNEL) {
-        list.splice(0, list.length - BACKLOG_MESSAGES_PER_CHANNEL)
+      const capacity = this.#capacity()
+      if (list.length > capacity) {
+        list.splice(0, list.length - capacity)
       }
       this.#byChannel.set(event.channelId, list)
     } else if (event.kind === 'replace') {
@@ -56,6 +67,28 @@ export class EventBacklog {
       }
     }
     return events
+  }
+
+  /** The channel's currently buffered chat messages (from `message` events only), oldest first. */
+  messagesFor(channelId: string): ChatMessage[] {
+    return [...(this.#byChannel.get(channelId) ?? [])]
+  }
+
+  /**
+   * Swap the buffered message sharing `message.id` for `message`, so a later `snapshot()`
+   * reflects its new fragments. Returns `false` (leaving the ring untouched) when no such message
+   * is buffered for the channel.
+   */
+  replaceMessage(channelId: string, message: ChatMessage): boolean {
+    const list = this.#byChannel.get(channelId)
+    if (list?.some((m) => m.id === message.id) !== true) {
+      return false
+    }
+    this.#byChannel.set(
+      channelId,
+      list.map((m) => (m.id === message.id ? message : m))
+    )
+    return true
   }
 
   /**

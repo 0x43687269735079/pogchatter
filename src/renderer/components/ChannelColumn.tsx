@@ -58,6 +58,10 @@ interface ChannelColumnProps {
    * chrome is suppressed (those live on the tab). Defaults to a scroll-layout column.
    */
   inTab?: boolean
+  /** Right-click on the header: opens the "add this streamer's other streams" menu. */
+  onHeaderContextMenu: (channel: ChannelInfo, x: number, y: number) => void
+  /** Transient result note from that menu's last add-streams call for this column, if any. */
+  menuNote?: string | undefined
 }
 
 interface ContextMenuState {
@@ -87,7 +91,9 @@ export function ChannelColumn({
   onHeldAction,
   onScrollPause,
   monitoredKeys,
-  inTab = false
+  inTab = false,
+  onHeaderContextMenu,
+  menuNote
 }: ChannelColumnProps): ReactElement {
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -122,7 +128,7 @@ export function ChannelColumn({
   async function addStreams(target: string): Promise<void> {
     setStreamsBusy(true)
     setStreamsNote(undefined)
-    const result = await window.chat.addYouTubeStreams(target)
+    const result = await window.chat.addYouTubeStreams(target, channel.id)
     setStreamsBusy(false)
     setStreamsNote(result.ok ? `added ${result.added}/${result.total} streams` : result.error)
   }
@@ -400,13 +406,19 @@ export function ChannelColumn({
         onActivate(channel.id)
       }}
     >
-      <header className="pc-colhead">
+      <header
+        className="pc-colhead"
+        onContextMenu={(event) => {
+          event.preventDefault()
+          onHeaderContextMenu(channel, event.clientX, event.clientY)
+        }}
+      >
         <span className={`tag ${tag}`}>{tag.toUpperCase()}</span>
         <span className="chan">{channel.label}</span>
         <StatusChip status={channel.status} />
-        {streamsNote !== undefined ? (
-          <span className="pc-streamnote" title={streamsNote}>
-            {streamsNote}
+        {(streamsNote ?? menuNote) !== undefined ? (
+          <span className="pc-streamnote" title={streamsNote ?? menuNote}>
+            {streamsNote ?? menuNote}
           </span>
         ) : null}
         <span className="pc-colbtns">

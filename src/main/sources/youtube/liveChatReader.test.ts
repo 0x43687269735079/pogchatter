@@ -1012,6 +1012,32 @@ describe('LiveChatReader live-chat selection (CUB-7)', () => {
   })
 })
 
+describe('LiveChatReader rawSink', () => {
+  it('receives every raw action, in order, before normalisation — including unknown shapes', async () => {
+    const unknownAction = { someNewAction: {} }
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce(liveResponse([textAction, unknownAction]))
+      .mockReturnValue(new Promise(() => {}))
+    const rawSink = vi.fn()
+    const reader = new LiveChatReader(
+      { execute } as never,
+      'youtube:x',
+      'c0',
+      false,
+      handlers({ rawSink })
+    )
+
+    reader.start()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(rawSink).toHaveBeenNthCalledWith(1, textAction)
+    expect(rawSink).toHaveBeenNthCalledWith(2, unknownAction)
+    reader.stop()
+  })
+})
+
 describe('findModerationActivityContinuation', () => {
   const toggle = (defaultEndpoint: unknown, toggledEndpoint: unknown): unknown => ({
     continuationContents: {

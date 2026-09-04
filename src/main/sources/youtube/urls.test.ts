@@ -3,13 +3,13 @@ import { channelBaseUrl, liveUrl } from '@main/sources/youtube/urls'
 
 describe('channelBaseUrl', () => {
   it('builds a handle URL from a bare name or @handle', () => {
-    expect(channelBaseUrl('lofigirl')).toBe('https://www.youtube.com/@lofigirl')
-    expect(channelBaseUrl('@LofiGirl')).toBe('https://www.youtube.com/@LofiGirl')
+    expect(channelBaseUrl('pixelgardener')).toBe('https://www.youtube.com/@pixelgardener')
+    expect(channelBaseUrl('@PixelGardener')).toBe('https://www.youtube.com/@PixelGardener')
   })
 
   it('passes through a YouTube channel URL, trimming trailing slashes', () => {
-    expect(channelBaseUrl('https://www.youtube.com/@LofiGirl/')).toBe(
-      'https://www.youtube.com/@LofiGirl'
+    expect(channelBaseUrl('https://www.youtube.com/@PixelGardener/')).toBe(
+      'https://www.youtube.com/@PixelGardener'
     )
     expect(channelBaseUrl('https://www.youtube.com/channel/UC123')).toBe(
       'https://www.youtube.com/channel/UC123'
@@ -17,8 +17,8 @@ describe('channelBaseUrl', () => {
   })
 
   it('builds a /channel/ URL from a bare UC… channel id (the canonical form)', () => {
-    expect(channelBaseUrl('UCSJ4gkVC6NrvII8umztf0Ow')).toBe(
-      'https://www.youtube.com/channel/UCSJ4gkVC6NrvII8umztf0Ow'
+    expect(channelBaseUrl('UCaaaaaaaaaaaaaaaaaaaaaa')).toBe(
+      'https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa'
     )
   })
 
@@ -31,12 +31,12 @@ describe('channelBaseUrl', () => {
 
 describe('liveUrl', () => {
   it('appends /live to the channel base URL', () => {
-    expect(liveUrl('lofigirl')).toBe('https://www.youtube.com/@lofigirl/live')
-    expect(liveUrl('https://www.youtube.com/@LofiGirl')).toBe(
-      'https://www.youtube.com/@LofiGirl/live'
+    expect(liveUrl('pixelgardener')).toBe('https://www.youtube.com/@pixelgardener/live')
+    expect(liveUrl('https://www.youtube.com/@PixelGardener')).toBe(
+      'https://www.youtube.com/@PixelGardener/live'
     )
-    expect(liveUrl('UCSJ4gkVC6NrvII8umztf0Ow')).toBe(
-      'https://www.youtube.com/channel/UCSJ4gkVC6NrvII8umztf0Ow/live'
+    expect(liveUrl('UCaaaaaaaaaaaaaaaaaaaaaa')).toBe(
+      'https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa/live'
     )
   })
 

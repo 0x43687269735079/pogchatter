@@ -226,9 +226,12 @@ body,
 .pc-logo .blk {
   color: var(--accent);
 }
+/* The version beside the wordmark: small and quiet, but always there for a bug report. */
 .pc-ver {
+  margin-left: 6px;
   font-size: var(--fs-ui);
   color: var(--dimmer);
+  -webkit-app-region: drag;
 }
 .pc-tb-spacer {
   flex: 1;
@@ -988,6 +991,49 @@ body,
   font-size: 1.35em;
   line-height: 1;
   vertical-align: -0.16em;
+}
+/* A Twitch chat GIF sits inline after the colon as a tile of one fixed size, so the author's name
+   centres beside it and a run of GIFs reads evenly; a click expands it to the GIF's own size. */
+.pc-gif-toggle {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 2px;
+  /* Against the row body, not the image: an inline-block would otherwise size to the image. */
+  max-width: calc(100% - 4px);
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: zoom-in;
+}
+/* An expanded GIF is tall: the name sits on its top line, as with any long message. */
+.pc-gif-toggle.open {
+  cursor: zoom-out;
+  vertical-align: top;
+}
+/* A tile row centres the time and avatar on the name's line too, so the whole row lines up — unless
+   any GIF in it is expanded, when the row is tall and keeps its usual top alignment. */
+.pc-msg:has(.pc-gif-toggle):not(:has(.pc-gif-toggle.open)) {
+  align-items: center;
+}
+.pc-gif-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.pc-gif {
+  display: block;
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+}
+.pc-gif-toggle.open .pc-gif {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+}
+/* The GIF's name, shown when its image could not be loaded. */
+.pc-gif-name {
+  opacity: 0.75;
+  word-break: break-all;
 }
 .pc-emote {
   font-size: 1.5em;
@@ -1857,6 +1903,14 @@ body,
   background: var(--err);
   color: var(--bg);
 }
+.pc-ctx button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pc-ctx button:disabled:hover {
+  background: transparent;
+  color: var(--fg);
+}
 .pc-ctx-sep {
   height: 1px;
   margin: 3px 0;
@@ -2470,6 +2524,36 @@ body,
   font-size: var(--fs-small);
   color: var(--warn);
   border-bottom: 1px solid var(--rule);
+}
+/* Streamer chip row: which of the session's streamers the totals/feed are scoped to. */
+.pc-don-chips {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 5px var(--gut);
+  border-bottom: 1px solid var(--rule);
+}
+.pc-don-chips .pc-chip {
+  height: auto;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.pc-don-chips .pc-chip:hover {
+  border-color: var(--ruleStrong);
+  color: var(--fg);
+}
+/* The selected chip is marked by weight and outline, never colour alone. */
+.pc-don-chips .pc-chip[aria-pressed='true'] {
+  color: var(--fg);
+  font-weight: 700;
+  border-color: var(--accent);
+}
+.pc-don-chips .pc-chip:focus-visible,
+.pc-don-chips .pc-select:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 .pc-don-foot {
   flex: 0 0 auto;

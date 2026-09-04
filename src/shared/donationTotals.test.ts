@@ -22,7 +22,8 @@ function donation(
     timestamp,
     value,
     text: '',
-    read: false
+    read: false,
+    streamerKey: 'x'
   }
 }
 

@@ -15,6 +15,7 @@ import type {
   ModerationRule,
   Platform,
   PrebanImport,
+  RawLogStatus,
   SendReply,
   SendResult,
   TwitchLoginPrompt,
@@ -45,6 +46,9 @@ const api: ChatApi = {
   },
   markDonationsRead(ids: string[], read: boolean): Promise<void> {
     return ipcRenderer.invoke('chat:markDonationsRead', ids, read) as Promise<void>
+  },
+  clearDonations(): Promise<void> {
+    return ipcRenderer.invoke('chat:clearDonations') as Promise<void>
   },
   markAllDonationsRead(): Promise<void> {
     return ipcRenderer.invoke('chat:markAllDonationsRead') as Promise<void>
@@ -133,8 +137,12 @@ const api: ChatApi = {
   addChannel(platform: Platform, target: string): Promise<SendResult> {
     return ipcRenderer.invoke('chat:addChannel', platform, target) as Promise<SendResult>
   },
-  addYouTubeStreams(target: string): Promise<AddStreamsResult> {
-    return ipcRenderer.invoke('chat:addYouTubeStreams', target) as Promise<AddStreamsResult>
+  addYouTubeStreams(target: string, originChannelId?: string): Promise<AddStreamsResult> {
+    return ipcRenderer.invoke(
+      'chat:addYouTubeStreams',
+      target,
+      originChannelId
+    ) as Promise<AddStreamsResult>
   },
   removeChannel(channelId: string): Promise<void> {
     return ipcRenderer.invoke('chat:removeChannel', channelId) as Promise<void>
@@ -165,6 +173,12 @@ const api: ChatApi = {
   },
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     return ipcRenderer.invoke('chat:setSettings', patch) as Promise<AppSettings>
+  },
+  rawLogStatus(): Promise<RawLogStatus> {
+    return ipcRenderer.invoke('chat:rawLogStatus') as Promise<RawLogStatus>
+  },
+  openRawLogDir(): Promise<void> {
+    return ipcRenderer.invoke('chat:openRawLogDir') as Promise<void>
   }
 }
 

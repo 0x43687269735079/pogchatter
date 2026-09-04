@@ -7,7 +7,7 @@ import type { TwitchBadgeProvider } from '@main/sources/twitch/TwitchBadgeProvid
 import { TwitchCheermoteProvider } from '@main/sources/twitch/TwitchCheermoteProvider'
 import type { TwitchEmoteProvider } from '@main/sources/twitch/TwitchEmoteProvider'
 import { encodeTwitchMenuToken } from '@main/sources/twitch/normalize'
-import { TwitchSource } from '@main/sources/twitch/TwitchSource'
+import { TwitchSource, type TwitchSourceOptions } from '@main/sources/twitch/TwitchSource'
 
 // Mock the Helix boundary: the fake ApiClient records the moderation calls and the user
 // context they ran under, exactly where the real one would hit the network.
@@ -47,6 +47,7 @@ const irc = vi.hoisted(() => ({
     quit: ReturnType<typeof vi.fn>
     say: ReturnType<typeof vi.fn>
     isConnected: boolean
+    irc: { onAnyMessage: (fn: (...args: unknown[]) => void) => { unbind: () => void } }
   }>
 }))
 
@@ -58,6 +59,11 @@ vi.mock('@twurple/chat', async (importOriginal) => {
     quit = vi.fn()
     say = vi.fn(async () => {})
     isConnected = false
+    // The ircv3 client twurple exposes; only its any-message binder is used by the source.
+    irc = {
+      onAnyMessage: (fn: (...args: unknown[]) => void): { unbind: () => void } =>
+        this.#bind('anyMessage', fn)
+    }
     constructor() {
       irc.clients.push(this)
     }
@@ -153,6 +159,7 @@ vi.mock('@main/net/proxy', () => ({ proxiedFetch }))
 
 const emotes = {
   ensureChannel: vi.fn(),
+  whenChannelLoaded: vi.fn().mockResolvedValue(undefined),
   tokenize: (fragments: unknown): unknown => fragments,
   setTwitchChannel: vi.fn()
 } as unknown as EmoteEngine
@@ -200,20 +207,35 @@ const loggedOutAuth = {
   helixFetch: vi.fn().mockResolvedValue(undefined)
 } as unknown as TwitchAuthManager
 
-function makeSource(
-  auth: TwitchAuthManager,
-  historyEnabled: () => boolean = () => false
-): TwitchSource {
+/** What a test may vary about a source: the constructor options, the channel, the emote engine. */
+interface SourceOverrides {
+  twitchHistory?: () => boolean
+  rawSink?: (line: string, source: 'live' | 'recent-messages') => void
+  persistedStreamerKey?: string
+  login?: string
+  engine?: EmoteEngine
+}
+
+function makeSource(auth: TwitchAuthManager, overrides: SourceOverrides = {}): TwitchSource {
+  const options: TwitchSourceOptions = {
+    twitchHistory: overrides.twitchHistory ?? ((): boolean => false)
+  }
+  if (overrides.rawSink !== undefined) {
+    options.rawSink = overrides.rawSink
+  }
+  if (overrides.persistedStreamerKey !== undefined) {
+    options.persistedStreamerKey = overrides.persistedStreamerKey
+  }
   return new TwitchSource(
-    'somechannel',
-    emotes,
+    overrides.login ?? 'somechannel',
+    overrides.engine ?? emotes,
     auth,
     {
       badges,
       emotes: twitchEmotes,
       cheermotes: new TwitchCheermoteProvider()
     },
-    historyEnabled
+    options
   )
 }
 
@@ -225,6 +247,7 @@ function ircMessage(login: string): TwitchChatMessage {
     id: `msg-${login}-${Math.random()}`,
     date: new Date(1_700_000_000_000),
     emoteOffsets: new Map(),
+    tags: new Map<string, string>(),
     bits: 0,
     isFirst: false,
     isHighlight: false,
@@ -298,13 +321,53 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/** One raw backlog PRIVMSG, as the recent-messages service serves them. */
+const BACKLOG_LINE =
+  '@badge-info=;badges=;color=;display-name=Alice;emotes=;flags=;id=backlog-1;mod=0;room-id=500;' +
+  'subscriber=0;tmi-sent-ts=1700000000000;turbo=0;user-id=100;user-type= ' +
+  ':alice!alice@alice.tmi.twitch.tv PRIVMSG #somechannel :hello poggers'
+
+/** The channel emote the fake engine splices in once its catalog has loaded. */
+const CHANNEL_EMOTE = {
+  type: 'emote',
+  code: 'poggers',
+  url: 'https://cdn/poggers.png',
+  provider: '7tv'
+}
+
+/** Answer the recent-messages fetch with `lines`; every other call still resolves the room id. */
+function serveBacklog(lines: string[]): void {
+  proxiedFetch.mockImplementation((url: unknown) =>
+    typeof url === 'string' && url.includes('recent-messages.robotty.de')
+      ? Promise.resolve({ ok: true, json: async () => ({ messages: lines }) })
+      : Promise.resolve({ ok: true, json: async () => ({ data: [{ id: '500' }] }) })
+  )
+}
+
+/**
+ * An emote engine whose channel catalog lands after `loadMs`, and which only tokenizes the channel
+ * emote once it has — so a backlog row shows whether it waited.
+ */
+function lateLoadingEngine(loadMs: number): EmoteEngine {
+  let loaded = false
+  return {
+    ensureChannel: vi.fn(),
+    whenChannelLoaded: vi.fn(async (): Promise<void> => {
+      await new Promise<void>((resolve) => setTimeout(resolve, loadMs))
+      loaded = true
+    }),
+    tokenize: (fragments: unknown): unknown => (loaded ? [CHANNEL_EMOTE] : fragments),
+    setTwitchChannel: vi.fn()
+  } as unknown as EmoteEngine
+}
+
 describe('TwitchSource recent-messages history', () => {
   const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
   const historyCalls = (): unknown[] =>
     proxiedFetch.mock.calls.filter((call) => String(call[0]).includes('recent-messages.robotty.de'))
 
   it('fetches the recent-messages backlog on connect when history is enabled', async () => {
-    const source = makeSource(loggedOutAuth, () => true)
+    const source = makeSource(loggedOutAuth, { twitchHistory: () => true })
     await connectSource(source)
     await flush()
     expect(historyCalls()).toHaveLength(1)
@@ -312,10 +375,163 @@ describe('TwitchSource recent-messages history', () => {
   })
 
   it('does not fetch history when the setting is off', async () => {
-    const source = makeSource(loggedOutAuth, () => false)
+    const source = makeSource(loggedOutAuth, { twitchHistory: () => false })
     await connectSource(source)
     await flush()
     expect(historyCalls()).toHaveLength(0)
+  })
+
+  it("waits for the channel's emotes so the backlog tokenizes with them", async () => {
+    vi.useFakeTimers()
+    serveBacklog([BACKLOG_LINE])
+    const source = makeSource(makeAuth(), {
+      twitchHistory: () => true,
+      engine: lateLoadingEngine(1_000)
+    })
+    const messages: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    await connectSource(source)
+
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.backlog).toBe(true)
+    // Without the wait this row would have been tokenized against the global set only, and never
+    // re-tokenized — the channel emote would be missing from the whole backlog for good.
+    expect(messages[0]?.fragments).toEqual([CHANNEL_EMOTE])
+    await source.disconnect()
+  })
+
+  it('emits the backlog on the cap when the emote load stalls', async () => {
+    vi.useFakeTimers()
+    serveBacklog([BACKLOG_LINE])
+    const source = makeSource(makeAuth(), {
+      twitchHistory: () => true,
+      engine: lateLoadingEngine(10_000)
+    })
+    const messages: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    await connectSource(source)
+
+    await vi.advanceTimersByTimeAsync(2_900)
+    expect(messages).toEqual([])
+    await vi.advanceTimersByTimeAsync(300)
+    expect(messages).toHaveLength(1)
+    // The catalog still hasn't landed, so the row renders with plain text rather than waiting on.
+    expect(messages[0]?.fragments).toEqual([{ type: 'text', text: 'hello poggers' }])
+    await source.disconnect()
+  })
+})
+
+describe('TwitchSource raw line sink', () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  it('feeds every raw IRC line to the sink, live and from the backlog', async () => {
+    serveBacklog([BACKLOG_LINE])
+    const seen: Array<[string, string]> = []
+    const source = makeSource(makeAuth(), {
+      twitchHistory: () => true,
+      rawSink: (line, origin) => seen.push([line, origin])
+    })
+    const client = await connectSource(source)
+    const anyMessage = client.handlers.get('anyMessage')
+    anyMessage?.({
+      rawLine: ':alice!alice@alice.tmi.twitch.tv PRIVMSG #somechannel :hi',
+      tags: new Map()
+    })
+    anyMessage?.({
+      rawLine: '@ban-duration=10 :tmi.twitch.tv CLEARCHAT #somechannel :baduser',
+      tags: new Map()
+    })
+    // A line ircv3 parsed without keeping its source text has nothing to capture.
+    anyMessage?.({ rawLine: undefined, tags: new Map() })
+    for (let i = 0; i < 5; i++) {
+      await flush()
+    }
+
+    expect(seen.filter(([, origin]) => origin === 'live')).toEqual([
+      [':alice!alice@alice.tmi.twitch.tv PRIVMSG #somechannel :hi', 'live'],
+      ['@ban-duration=10 :tmi.twitch.tv CLEARCHAT #somechannel :baduser', 'live']
+    ])
+    expect(seen.filter(([, origin]) => origin === 'recent-messages')).toEqual([
+      [BACKLOG_LINE, 'recent-messages']
+    ])
+    await source.disconnect()
+  })
+})
+
+describe('TwitchSource anonymous gift-sub upgrade', () => {
+  it('emits one system line for the USERNOTICE twurple parses no event for', async () => {
+    const source = makeSource(makeAuth())
+    const messages: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    const client = await connectSource(source)
+    const anyMessage = client.handlers.get('anyMessage')
+    anyMessage?.({
+      rawLine:
+        '@msg-id=anongiftpaidupgrade;id=notice-1;login=viewer_one;display-name=Viewer_One;user-id=200000001 :tmi.twitch.tv USERNOTICE #somechannel',
+      command: 'USERNOTICE',
+      tags: new Map([
+        ['msg-id', 'anongiftpaidupgrade'],
+        ['id', 'notice-1'],
+        ['login', 'viewer_one'],
+        ['display-name', 'Viewer_One'],
+        ['user-id', '200000001']
+      ])
+    })
+    // Every other USERNOTICE reaches the column through twurple's own typed events; picking them
+    // up here too would double every sub, gift and raid.
+    anyMessage?.({
+      rawLine: '@msg-id=sub;id=notice-2 :tmi.twitch.tv USERNOTICE #somechannel',
+      command: 'USERNOTICE',
+      tags: new Map([
+        ['msg-id', 'sub'],
+        ['id', 'notice-2']
+      ])
+    })
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.id).toBe('notice-1')
+    expect(messages[0]?.system).toBe(true)
+    expect(messages[0]?.highlight).toBeUndefined()
+    expect(messages[0]?.author.displayName).toBe('Viewer_One')
+    expect(messages[0]?.author.id).toBe('200000001')
+    expect(messages[0]?.menuToken).toBeUndefined()
+    expect(messages[0]?.fragments).toEqual([
+      {
+        type: 'text',
+        text: 'Viewer_One is continuing the gift sub they got from an anonymous user'
+      }
+    ])
+    await source.disconnect()
+  })
+
+  it('falls back to a synthetic id when the notice carries none', async () => {
+    const source = makeSource(makeAuth())
+    const messages: ChatMessage[] = []
+    source.on('message', (message) => messages.push(message))
+    const client = await connectSource(source)
+    client.handlers.get('anyMessage')?.({
+      rawLine: '@msg-id=anongiftpaidupgrade :tmi.twitch.tv USERNOTICE #somechannel',
+      command: 'USERNOTICE',
+      tags: new Map([['msg-id', 'anongiftpaidupgrade']])
+    })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.id).toMatch(/^anon-upgrade-twitch:somechannel-/u)
+    await source.disconnect()
+  })
+})
+
+describe('TwitchSource.streamerKey', () => {
+  it('normalises the target login', () => {
+    expect(makeSource(makeAuth(), { login: 'Some_Login' }).streamerKey()).toBe('somelogin')
+  })
+
+  it('keeps the key the column was already stored under', () => {
+    const source = makeSource(makeAuth(), {
+      login: 'Some_Login',
+      persistedStreamerKey: 'formername'
+    })
+    expect(source.streamerKey()).toBe('formername')
   })
 })
 

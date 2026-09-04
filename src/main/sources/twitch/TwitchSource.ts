@@ -18,6 +18,7 @@ import {
 } from '@main/sources/twitch/normalize'
 import { fetchRecentMessages, parseRecentMessages } from '@main/sources/twitch/recentMessages'
 import { splitChatMessage } from '@shared/splitMessage'
+import { streamerKeyOf } from '@shared/streamerKey'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { TwitchAvatarProvider } from '@main/sources/twitch/TwitchAvatarProvider'
 import { TwitchRewardProvider } from '@main/sources/twitch/TwitchRewardProvider'
@@ -35,6 +36,33 @@ export interface TwitchHelixProviders {
   badges: TwitchBadgeProvider
   emotes: TwitchEmoteProvider
   cheermotes: TwitchCheermoteProvider
+}
+
+/** Where a raw IRC line reached us: the live socket, or the recent-messages backlog. */
+export type TwitchRawLineSource = 'live' | 'recent-messages'
+
+/** Per-column wiring that isn't a shared provider: live settings, raw capture, stored identity. */
+export interface TwitchSourceOptions {
+  /** Whether the recent-messages backlog is enabled; read per connect so a settings change applies. */
+  twitchHistory: () => boolean
+  /** Every raw IRC line, as it arrives, for capture/debugging. */
+  rawSink?: (line: string, source: TwitchRawLineSource) => void
+  /** The streamer key this column was already stored under, when it has one. */
+  persistedStreamerKey?: string
+}
+
+/**
+ * How long the backlog waits for this channel's third-party emotes before rendering. History rows
+ * are tokenized once and never again, so emitting before the catalog lands leaves the whole backlog
+ * permanently missing the channel's emotes; the cap stops a slow (or failed) load holding it for good.
+ */
+const HISTORY_EMOTE_WAIT_MS = 3_000
+
+/** A sleep whose timer never holds the process open. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref()
+  })
 }
 
 /** How often to ask Helix whether the stream is live, plus per-cycle jitter so columns spread out. */
@@ -171,13 +199,15 @@ export class TwitchSource extends BaseChatSource {
   // connection can't emit history into a newer one.
   #historyGeneration = 0
   readonly #historyEnabled: () => boolean
+  readonly #rawSink: ((line: string, source: TwitchRawLineSource) => void) | undefined
+  readonly #persistedStreamerKey: string | undefined
 
   constructor(
     login: string,
     emotes: EmoteEngine,
     auth: TwitchAuthManager,
     helix: TwitchHelixProviders,
-    historyEnabled: () => boolean
+    options: TwitchSourceOptions
   ) {
     super()
     this.#login = normalizeTarget('twitch', login)
@@ -186,7 +216,9 @@ export class TwitchSource extends BaseChatSource {
     this.#badges = helix.badges
     this.#twitchEmotes = helix.emotes
     this.#cheermotes = helix.cheermotes
-    this.#historyEnabled = historyEnabled
+    this.#historyEnabled = options.twitchHistory
+    this.#rawSink = options.rawSink
+    this.#persistedStreamerKey = options.persistedStreamerKey
     this.id = channelId('twitch', login)
   }
 
@@ -214,6 +246,18 @@ export class TwitchSource extends BaseChatSource {
     })
 
     this.#listeners = [
+      // Every inbound IRC line, ahead of twurple's typed dispatch: it feeds the raw capture sink,
+      // and carries the USERNOTICEs twurple parses no event for. One client joins one channel, so
+      // every line here belongs to this column.
+      client.irc.onAnyMessage((msg) => {
+        const line = msg.rawLine
+        if (line !== undefined) {
+          this.#rawSink?.(line, 'live')
+        }
+        if (msg.command === 'USERNOTICE' && msg.tags.get('msg-id') === 'anongiftpaidupgrade') {
+          this.#anonGiftUpgrade(msg.tags)
+        }
+      }),
       client.onConnect(() => {
         this.#setConnected()
       }),
@@ -447,11 +491,24 @@ export class TwitchSource extends BaseChatSource {
       if (generation !== this.#historyGeneration) {
         return
       }
+      for (const line of lines) {
+        this.#rawSink?.(line, 'recent-messages')
+      }
       // Resolve the room id first (logged-in only — logged-out can't, and would just fail an unauthed
       // Helix call) so history rows tokenize with the channel's emotes, not only the global set.
       const roomId = this.#auth.isLoggedIn ? await this.#ensureRoomId() : this.#roomId
       if (generation !== this.#historyGeneration) {
         return
+      }
+      if (roomId !== undefined) {
+        // …and then wait for that channel's emotes to actually load (see HISTORY_EMOTE_WAIT_MS).
+        await Promise.race([
+          this.#emotes.whenChannelLoaded({ platform: 'twitch', channelId: roomId }),
+          delay(HISTORY_EMOTE_WAIT_MS)
+        ])
+        if (generation !== this.#historyGeneration) {
+          return
+        }
       }
       for (const message of parseRecentMessages(lines, this.id, this.#normalizeOptions())) {
         message.fragments = this.#emotes.tokenize(message.fragments, 'twitch', roomId)
@@ -510,6 +567,14 @@ export class TwitchSource extends BaseChatSource {
 
   emoteScope(): { platform: Platform; channelId: string } | undefined {
     return this.#roomId === undefined ? undefined : { platform: 'twitch', channelId: this.#roomId }
+  }
+
+  /**
+   * The streamer identity this column groups under (donation dedup, per-streamer totals). A column
+   * stored with a key keeps it, so a rename can't split one streamer's history in two.
+   */
+  streamerKey(): string {
+    return this.#persistedStreamerKey ?? streamerKeyOf('twitch', this.#login)
   }
 
   async send(text: string, reply?: SendReply): Promise<void> {
@@ -767,6 +832,36 @@ export class TwitchSource extends BaseChatSource {
   #emitUserNotice(message: ChatMessage): void {
     message.fragments = this.#emotes.tokenize(message.fragments, 'twitch', this.#roomId)
     this.emitMessage(message)
+  }
+
+  /**
+   * `anongiftpaidupgrade` — a viewer continuing a sub that was gifted to them anonymously. twurple
+   * parses no event for it, so it is built here from the USERNOTICE's own tags and emitted as the
+   * same kind of system line as the gift-upgrade notice twurple does surface. The tags name the
+   * *continuing* viewer; the anonymity belongs to the original gifter. No menu token: the line is a
+   * notice, not a message to moderate.
+   */
+  #anonGiftUpgrade(tags: ReadonlyMap<string, string>): void {
+    this.#echoCount += 1
+    const login = tags.get('login') ?? ''
+    const name = tags.get('display-name') || login || 'Someone'
+    this.#emitUserNotice({
+      id: tags.get('id') ?? `anon-upgrade-${this.id}-${this.#echoCount}-${Date.now()}`,
+      platform: 'twitch',
+      channelId: this.id,
+      timestamp: Date.now(),
+      author: {
+        id: tags.get('user-id') ?? '',
+        name: login,
+        displayName: name,
+        badges: [],
+        roles: { broadcaster: false, moderator: false }
+      },
+      fragments: [
+        { type: 'text', text: `${name} is continuing the gift sub they got from an anonymous user` }
+      ],
+      system: true
+    })
   }
 
   /** Emit a USERNOTICE-derived system line (raid, sub upgrade, pay-forward, …) for this channel. */

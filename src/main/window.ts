@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, session, type IpcMainEvent } from 
 import type { ChatEvent } from '@shared/model'
 import { debugLog, debugLogPath } from '@main/debugLog'
 import { isTrustedRendererUrl } from '@main/net/origin'
+import { installSpellingMenu } from '@main/spelling'
 import linuxIcon from '@build/icon.png?asset'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -90,6 +91,10 @@ export function createWindow(rendererUrl: string | undefined): void {
       backgroundThrottling: false
     }
   })
+
+  // The composer's right-click spelling-suggestions menu, wired per-window like every other
+  // webContents listener below.
+  installSpellingMenu(window.webContents, window.webContents.session)
 
   // 'ready-to-show' needs a renderer to paint, so a window whose renderer never launched stays
   // hidden forever — the crash handling below must know whether 'focus'/'show' can ever fire.

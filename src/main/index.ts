@@ -1,4 +1,4 @@
-import { appendFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   app,
@@ -7,17 +7,21 @@ import {
   net,
   powerMonitor,
   powerSaveBlocker,
-  safeStorage
+  safeStorage,
+  session,
+  shell
 } from 'electron'
 import { Innertube, Log } from 'youtubei.js'
 import {
+  type AppSettings,
   type AuthState,
   type ChatEvent,
   type ChatLogSettings,
   DEFAULT_SETTINGS,
   type Platform,
   type SendResult,
-  type TwitchLoginPrompt
+  type TwitchLoginPrompt,
+  BACKLOG_MESSAGES_PER_CHANNEL
 } from '@shared/model'
 import { AutoMod } from '@main/AutoMod'
 import { EventBatcher } from '@main/Batcher'
@@ -25,14 +29,18 @@ import { ChatLogger } from '@main/ChatLogger'
 import { DonationStore } from '@main/DonationStore'
 import { RateService } from '@main/RateService'
 import { localeCurrency } from '@shared/currencyFormat'
+import { legacyStreamerKey } from '@shared/streamerKey'
 import { EventBacklog } from '@main/EventBacklog'
 import { ConfigStore } from '@main/ConfigStore'
 import { closeDebugLog, debugLog, debugLogEnabled, initDebugLog } from '@main/debugLog'
 import { KeepAlive } from '@main/KeepAlive'
 import { migrateLegacyUserData } from '@main/migrateUserData'
+import { RawMessageLogger, rawLogBytes } from '@main/RawMessageLogger'
 import { SourceManager } from '@main/SourceManager'
+import { applySpelling } from '@main/spelling'
 import { AuthStore } from '@main/auth/AuthStore'
-import { EmoteEngine } from '@main/emotes/EmoteEngine'
+import { EmoteEngine, type IndexChange } from '@main/emotes/EmoteEngine'
+import { retokenizeAgainst } from '@main/retokenize'
 import { type ChannelService, registerIpc } from '@main/ipc'
 import { isLoopbackRendererUrl } from '@main/net/origin'
 import { proxiedFetch, proxyIgnoresCert, proxyUrl } from '@main/net/proxy'
@@ -47,7 +55,8 @@ import {
 } from '@main/sources/channelId'
 import {
   type DiscoveredStream,
-  discoverChannelStreams
+  discoverChannelStreams,
+  sortForOpening
 } from '@main/sources/youtube/discoverStreams'
 import { TwitchSource } from '@main/sources/twitch/TwitchSource'
 import { TwitchAuthManager } from '@main/sources/twitch/TwitchAuthManager'
@@ -244,6 +253,16 @@ let rateService: RateService | undefined
 const sessionStartedAt = Date.now()
 let configStore: ConfigStore | undefined
 let authStore: AuthStore | undefined
+// The raw wire-level connector log, driven by Settings → raw logging. Read fresh (not captured)
+// by each source's rawSink closure, so toggling the setting takes effect without reconnecting.
+let rawLogger: RawMessageLogger | undefined
+// The directory `rawLogger` is currently open on — RawMessageLogger exposes no getter for it, so
+// applyRawLog tracks it alongside the instance to detect a directory change.
+let rawLoggerDir: string | undefined
+// Every close so far, chained: a status read right after disabling must wait for the tail to flush
+// (or the size it reports is short), and shutdown must wait for all of them — a quick off/on would
+// otherwise orphan the previous file's tail.
+let rawLoggerClosing: Promise<void> = Promise.resolve()
 let authManager: TwitchAuthManager | undefined
 let youtubeAuth: YouTubeAuthManager | undefined
 let emoteEngine: EmoteEngine | undefined
@@ -284,7 +303,23 @@ function collectDonation(event: ChatEvent): void {
   if (event.kind !== 'message') {
     return
   }
-  const donation = donationStore.record(event.message, event.channelId)
+  // The source's resolved cross-platform identity when the source is still registered (it always
+  // is, on the same event that carries the message); a legacy channel-id-derived key otherwise.
+  const streamerKey = manager?.streamerKeyOf(event.channelId) ?? legacyStreamerKey(event.channelId)
+  // Collection is opt-in per streamer (right-click a tab), and off altogether with the panel.
+  const settings = configStore?.settings()
+  if (
+    settings === undefined ||
+    !settings.donationsPanel ||
+    !settings.donationStreamers.includes(streamerKey)
+  ) {
+    return
+  }
+  const creatorId = manager?.creatorIdOf(event.channelId)
+  const donation = donationStore.record(event.message, event.channelId, {
+    streamerKey,
+    ...(creatorId !== undefined ? { creatorId } : {})
+  })
   if (donation === undefined) {
     return
   }
@@ -338,9 +373,52 @@ function applyChatLog(settings: ChatLogSettings): void {
   }
 }
 
-/** Record an event to the chat log when logging is on (every open chat is logged). */
+/** The directory the raw wire-level log is written to: a `raw` subdirectory of the chat-log dir. */
+function rawDir(): string {
+  return join(effectiveLogDir(), 'raw')
+}
+
+/**
+ * (Re)open or close the raw wire-level log from settings. Follows the chat-log directory (raw
+ * logging is nested under it), so a `chatLog.directory` change moves it too even when `rawLog`
+ * itself didn't change.
+ */
+function applyRawLog(settings: AppSettings): void {
+  const dir = rawDir()
+  if (!settings.rawLog.enabled) {
+    closeRawLog()
+    return
+  }
+  if (rawLogger === undefined || rawLoggerDir !== dir) {
+    closeRawLog()
+    rawLogger = new RawMessageLogger(dir)
+    rawLoggerDir = dir
+  }
+}
+
+/** Close the current raw log, keeping every earlier close in the chain readers wait on. */
+function closeRawLog(): void {
+  const closing = rawLogger?.close() ?? Promise.resolve()
+  rawLoggerClosing = Promise.all([rawLoggerClosing, closing]).then(() => undefined)
+  rawLogger = undefined
+  rawLoggerDir = undefined
+}
+
+/** Apply the spelling setting to the app's default session's spell-checker. */
+function applySpellingSetting(value: AppSettings['spelling']): void {
+  applySpelling(session.defaultSession, value)
+}
+
+/**
+ * Record an event to the chat log when logging is on (every open chat is logged). Replacements are
+ * logged too, so a held message's approve/hide outcome reaches the log — the logger already knew
+ * how to write them; the funnel was filtering them out.
+ */
 function recordChatEvent(event: ChatEvent): void {
-  if (chatLogger === undefined || (event.kind !== 'message' && event.kind !== 'clear')) {
+  if (
+    chatLogger === undefined ||
+    (event.kind !== 'message' && event.kind !== 'replace' && event.kind !== 'clear')
+  ) {
     return
   }
   chatLogger.record(event)
@@ -567,7 +645,9 @@ void app
     })
     batcher = new EventBatcher(sendEvents)
     // Replay ring so a fresh renderer (startup race, crash-reload) can refill its chat buffers.
-    const backlog = new EventBacklog()
+    const backlog = new EventBacklog(
+      () => configStore?.settings().bufferSize ?? BACKLOG_MESSAGES_PER_CHANNEL
+    )
     // Created below (it needs the source manager for the action path); the sink guards on it.
     let autoMod: AutoMod | undefined
     const emitEvent = (event: ChatEvent): void => {
@@ -578,6 +658,29 @@ void app
       backlog.record(event)
       batcher?.push(event)
       collectDonation(event)
+    }
+    // A channel's 7TV set (or the shared library every column tokenizes against) often finishes
+    // loading after the first messages did, leaving an emote's name sitting in those rows as plain
+    // text. Re-run the affected columns' buffered messages and push the rows that changed straight
+    // to the renderer: `replace` swaps a rendered row in place, so it must not go through
+    // emitEvent (no second chat-log line, no donation re-collection, no debug line).
+    const retokenizeBuffered = (changed: IndexChange): void => {
+      for (const info of sourceManager.list()) {
+        const scope = sourceManager.emoteScope(info.id)
+        const affected =
+          changed === 'shared' ||
+          (scope?.platform === changed.platform && scope.channelId === changed.channelId)
+        if (!affected) {
+          continue
+        }
+        const updated = retokenizeAgainst(backlog.messagesFor(info.id), (fragments) =>
+          emotes.tokenize(fragments, info.platform, scope?.channelId)
+        )
+        for (const message of updated) {
+          backlog.replaceMessage(info.id, message)
+          batcher?.push({ kind: 'replace', channelId: info.id, message })
+        }
+      }
     }
     const sourceManager = new SourceManager(
       (event) => {
@@ -596,7 +699,12 @@ void app
       // stop tokenizing everywhere and the engine stops re-fetching/watching the channel.
       (scope) => {
         emoteEngine?.releaseChannel(scope.platform, scope.channelId)
-      }
+      },
+      // A source's cross-platform identity resolved (YouTube's creator channel): persist it onto
+      // the channel's config entry so it survives restarts. `configStore` is assigned later in this
+      // closure (after ConfigStore is constructed), so it's read fresh on each call via the
+      // module-level binding rather than captured now.
+      (sourceId, identity) => configStore?.updateChannel(sourceId, identity)
     )
     manager = sourceManager
     // Detect OS sleep/resume (event + wall-clock watchdog) and reconnect both connectors immediately,
@@ -668,6 +776,9 @@ void app
       },
       refreshRates,
       broadcastBaseCurrency,
+      clearDonations: () => {
+        donationStore?.clear()
+      },
       markAllDonationsRead: () => {
         const changed = donationStore?.markAllRead() ?? []
         if (changed.length > 0) {
@@ -678,11 +789,27 @@ void app
       twitchLoginResult: () => twitchLoginCompletion,
       applyChatLog,
       applyKeepAwake,
+      applySpelling: applySpellingSetting,
+      applyRawLog,
       defaultLogDir,
       effectiveLogDir,
       rendererUrl: RENDERER_URL,
       appFilePath: APP_FILE_PATH,
-      sendDebug: SEND_DEBUG
+      sendDebug: SEND_DEBUG,
+      // Files written earlier still take space after logging is turned off; size the folder itself.
+      rawLogStatus: async () => {
+        await rawLoggerClosing
+        return rawLogger?.status() ?? { enabled: false, bytes: rawLogBytes(rawDir()) }
+      },
+      openRawLogDir: async () => {
+        // Only a live logger justifies creating the folder; otherwise open what exists (the raw
+        // folder if earlier runs left one, else the chat-log folder it lives under).
+        const dir = rawDir()
+        if (rawLogger !== undefined) {
+          mkdirSync(dir, { recursive: true })
+        }
+        await shell.openPath(existsSync(dir) ? dir : effectiveLogDir())
+      }
     })
     registerWindowControls(RENDERER_URL)
     applyContentSecurityPolicy()
@@ -711,6 +838,8 @@ void app
     configStore = config
     applyChatLog(config.settings().chatLog)
     applyKeepAwake(config.settings().keepAwake)
+    applyRawLog(config.settings())
+    applySpellingSetting(config.settings().spelling)
     // Donations outlive the renderer's buffers, so their store opens with the app rather than with a
     // window. Rates refresh in the background on a daily timer; nothing waits on either.
     const userDataDir = app.getPath('userData')
@@ -735,6 +864,7 @@ void app
 
     const emotes = new EmoteEngine(undefined, () => config.settings().emoteProviders)
     emoteEngine = emotes
+    emotes.onIndexChanged(retokenizeBuffered)
     void emotes.loadGlobals().catch(() => {
       // Non-fatal: chat still works with native emotes only.
     })
@@ -869,11 +999,23 @@ void app
       return youtubeReader
     }
 
-    const makeSource = (platform: Platform, target: string): ChatSource => {
+    const makeSource = (platform: Platform, target: string, streamerKey?: string): ChatSource => {
+      const id = channelId(platform, target)
       if (platform === 'youtube') {
+        // The streamer this column belongs to, when already known: the key the caller associates
+        // it with (a column added from another tab's menu is that tab's streamer), else one
+        // persisted onto its config entry by an earlier run's creator resolution — so donations
+        // attribute correctly from the first message instead of only once the creator resolves.
+        const persisted = config.channels().find((c) => c.id === id)
+        const persistedStreamerKey = streamerKey ?? persisted?.streamerKey
+        const persistedCreatorId = persisted?.creatorId
         // Pass the reader factory, not an awaited instance: YouTubeSource acquires it
         // inside connect(), so creating a YouTube channel never blocks add()/restore.
-        return new YouTubeSource(target, getYouTubeReader, pageFetch, emotes, ytAuth)
+        return new YouTubeSource(target, getYouTubeReader, pageFetch, emotes, ytAuth, {
+          ...(persistedStreamerKey !== undefined ? { persistedStreamerKey } : {}),
+          ...(persistedCreatorId !== undefined ? { persistedCreatorId } : {}),
+          rawSink: (action) => rawLogger?.record('youtube', id, action)
+        })
       }
       return new TwitchSource(
         target,
@@ -884,12 +1026,15 @@ void app
           emotes: twitchEmotes,
           cheermotes: twitchCheermotes
         },
-        () => config.settings().twitchHistory
+        {
+          twitchHistory: () => config.settings().twitchHistory,
+          rawSink: (line, source) => rawLogger?.record('twitch', id, line, source)
+        }
       )
     }
 
     channelService = {
-      async add(platform, target, label) {
+      async add(platform, target, label, streamerKey) {
         const trimmed = target.trim()
         if (trimmed === '') {
           return { ok: false, error: 'Enter a channel name' }
@@ -916,7 +1061,7 @@ void app
         }
         try {
           await sourceManager.add(
-            makeSource(platform, trimmed),
+            makeSource(platform, trimmed, streamerKey),
             label ?? channelLabel(platform, trimmed)
           )
           config.addChannel({
@@ -925,6 +1070,9 @@ void app
             id,
             ...(label !== undefined && { label })
           })
+          if (streamerKey !== undefined) {
+            config.updateChannel(id, { streamerKey })
+          }
           return { ok: true }
         } catch (error) {
           return {
@@ -933,7 +1081,16 @@ void app
           }
         }
       },
-      async addYouTubeStreams(target) {
+      async addYouTubeStreams(target, originChannelId) {
+        // Columns added from a tab's menu belong to that tab's streamer by the user's own say-so:
+        // they take its key, so their donations group with it whatever YouTube calls the creator.
+        // Only a login or a handle names a streamer for certain; a column opened by video id has a
+        // key that may still be resolving, so its discoveries keep their own.
+        const streamerKey =
+          originChannelId !== undefined &&
+          (originChannelId.startsWith('twitch:') || originChannelId.startsWith('youtube:@'))
+            ? sourceManager.streamerKeyFor(originChannelId)
+            : undefined
         const trimmed = target.trim()
         if (trimmed === '' || !isAcceptableYouTubeTarget(trimmed)) {
           return { ok: false, error: 'Enter a YouTube @handle or channel URL' }
@@ -957,17 +1114,25 @@ void app
         // adding a channel's streams next to its handle column doesn't duplicate the live chat.
         const open = sourceManager.youtubeVideoIds()
         let added = 0
-        for (const stream of streams) {
+        const channelIds: string[] = []
+        const ordered = sortForOpening(streams)
+        for (const stream of ordered) {
           if (open.has(stream.videoId)) {
             continue
           }
-          const result = await channelService?.add('youtube', stream.videoId, stream.title)
+          const result = await channelService?.add(
+            'youtube',
+            stream.videoId,
+            stream.title,
+            streamerKey
+          )
           if (result?.ok === true) {
             added += 1
             open.add(stream.videoId)
+            channelIds.push(channelId('youtube', stream.videoId))
           }
         }
-        return { ok: true, added, total: streams.length }
+        return { ok: true, added, total: streams.length, channelIds }
       },
       async remove(channelId) {
         await sourceManager.remove(channelId)
@@ -1022,17 +1187,20 @@ app.on('before-quit', (event) => {
   debugLog('app', 'quitting')
   keepAlive?.stop()
   batcher?.dispose()
+  // The 7TV socket and the engine's timers would otherwise run until the forced exit below.
+  emoteEngine?.dispose()
   // Writes are debounced, so a donation (or a read tick) from the last second would otherwise be
   // lost to the forced exit below. Synchronous, so it completes before the race starts.
   donationStore?.flush()
   // close() resolves when the log's WriteStream has flushed; include it in the shutdown race
   // so tail writes reach disk before the forced app.exit below can terminate the process.
   const logFlushed = chatLogger?.close() ?? Promise.resolve()
+  const rawLogFlushed = Promise.all([rawLoggerClosing, rawLogger?.close() ?? Promise.resolve()])
   const disposed = (manager?.disposeAll() ?? Promise.resolve()).catch((error: unknown) => {
     console.error('Error during shutdown:', error)
   })
   void Promise.race([
-    Promise.all([disposed, logFlushed]).then(
+    Promise.all([disposed, logFlushed, rawLogFlushed]).then(
       () => 'completed',
       () => 'failed'
     ),

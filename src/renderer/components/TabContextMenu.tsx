@@ -106,6 +106,7 @@ export function TabContextMenu({ anchor, items, onClose }: TabContextMenuProps):
       />
       <div
         ref={menuRef}
+        data-owns-keys
         className="pc-ctx"
         tabIndex={-1}
         style={{ top: position.top, left: position.left }}

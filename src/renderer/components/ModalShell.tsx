@@ -96,6 +96,7 @@ export function ModalShell({
     <div
       ref={overlayRef}
       className="pc-modal-overlay"
+      data-owns-keys
       onKeyDown={handleKeyDown}
       onMouseDown={(event) => {
         if (dismissable && event.target === event.currentTarget) {

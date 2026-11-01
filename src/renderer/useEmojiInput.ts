@@ -8,15 +8,29 @@ import {
   loadEmojiCatalog
 } from '@renderer/emoji'
 import { emoteRetryBus } from '@renderer/emoteRetry'
+import {
+  type Chatter,
+  type UserSuggestion,
+  findMentionToken,
+  matchChatters,
+  userSuggestion
+} from '@renderer/mentions'
 
 const MIN_QUERY = 2
+/** One character after `@` opens the list; a bare `@` (an email, a stray symbol) does not. */
+const MIN_MENTION_QUERY = 1
 const MAX_SUGGESTIONS = 10
+/** Stable default, so a caller without chatters doesn't re-create `refresh` every render. */
+const NO_CHATTERS: readonly Chatter[] = []
+
+/** One autocomplete row: an emoji, an emote, or a chatter to mention. */
+export type ComposerSuggestion = Suggestion | UserSuggestion
 
 export interface EmojiInput {
   catalog: EmojiCatalog | undefined
   emotes: ChannelEmote[]
   open: boolean
-  suggestions: Suggestion[]
+  suggestions: ComposerSuggestion[]
   activeIndex: number
   setActiveIndex: (index: number) => void
   refresh: () => void
@@ -28,19 +42,83 @@ export interface EmojiInput {
 }
 
 /**
- * Drives the chat input's emoji/emote autocomplete and picker insertion: lazy-loads the emoji
- * catalog and the channel's custom emotes, tracks the active `:token` at the caret, and rewrites
- * the controlled value (with a pending caret) on selection.
+ * What a key does to an open suggestion list, or undefined when the list doesn't take it.
+ *
+ * Nothing is taken mid-IME-composition: there Enter, Tab and the arrows belong to the input method
+ * (confirming or browsing candidates), and taking Enter would replace the draft with a suggestion.
+ */
+export function autocompleteAction(
+  key: string,
+  composing: boolean
+): 'next' | 'previous' | 'choose' | 'close' | undefined {
+  if (composing) {
+    return undefined
+  }
+  switch (key) {
+    case 'ArrowDown':
+      return 'next'
+    case 'ArrowUp':
+      return 'previous'
+    case 'Enter':
+    case 'Tab':
+      return 'choose'
+    case 'Escape':
+      return 'close'
+    default:
+      return undefined
+  }
+}
+
+/** What the composer can complete from. */
+interface CompletionSources {
+  emotes: ChannelEmote[]
+  catalog: EmojiCatalog | undefined
+  chatters: readonly Chatter[]
+}
+
+/**
+ * The completions for the token at the caret: recent chatters after `@`, emotes and emoji after
+ * `:` (once the emoji catalog has loaded), or undefined when the caret is in neither.
+ */
+function suggestionsAt(
+  value: string,
+  caret: number,
+  sources: CompletionSources
+): { start: number; list: ComposerSuggestion[] } | undefined {
+  const mention = findMentionToken(value, caret)
+  if (mention !== undefined && mention.query.length >= MIN_MENTION_QUERY) {
+    const list = matchChatters(mention.query, sources.chatters, MAX_SUGGESTIONS).map(userSuggestion)
+    return { start: mention.start, list }
+  }
+  const token = findActiveToken(value, caret)
+  if (token === undefined || token.query.length < MIN_QUERY || sources.catalog === undefined) {
+    return undefined
+  }
+  const list = buildSuggestions(token.query, sources.emotes, sources.catalog, MAX_SUGGESTIONS)
+  return { start: token.start, list }
+}
+
+/**
+ * Drives the chat input's autocomplete and picker insertion: lazy-loads the emoji catalog and the
+ * channel's custom emotes, tracks the active `:token` or `@mention` at the caret, and rewrites the
+ * controlled value (with a pending caret) on selection.
+ *
+ * Args:
+ *   channelId: The column, for its custom emotes.
+ *   inputRef: The composer element.
+ *   setDraft: Writes the controlled draft.
+ *   chatters: Recent chatters offered after `@` (see `recentChatters`); empty disables mentions.
  */
 export function useEmojiInput(
   channelId: string,
   inputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>,
-  setDraft: (value: string) => void
+  setDraft: (value: string) => void,
+  chatters: readonly Chatter[] = NO_CHATTERS
 ): EmojiInput {
   const [catalog, setCatalog] = useState<EmojiCatalog | undefined>(undefined)
   const [emotes, setEmotes] = useState<ChannelEmote[]>([])
   const [open, setOpen] = useState(false)
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [suggestions, setSuggestions] = useState<ComposerSuggestion[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const tokenRef = useRef<{ start: number; end: number } | undefined>(undefined)
   const pendingCaretRef = useRef<number | undefined>(undefined)
@@ -102,23 +180,22 @@ export function useEmojiInput(
 
   const refresh = useCallback(() => {
     const el = inputRef.current
-    if (el === null || catalog === undefined) {
+    if (el === null) {
       setOpen(false)
       return
     }
     const caret = el.selectionStart ?? el.value.length
-    const token = findActiveToken(el.value, caret)
-    if (token === undefined || token.query.length < MIN_QUERY) {
+    const found = suggestionsAt(el.value, caret, { emotes, catalog, chatters })
+    if (found === undefined) {
       setOpen(false)
       tokenRef.current = undefined
       return
     }
-    const list = buildSuggestions(token.query, emotes, catalog, MAX_SUGGESTIONS)
-    tokenRef.current = { start: token.start, end: caret }
-    setSuggestions(list)
+    tokenRef.current = { start: found.start, end: caret }
+    setSuggestions(found.list)
     setActiveIndex(0)
-    setOpen(list.length > 0)
-  }, [catalog, emotes, inputRef])
+    setOpen(found.list.length > 0)
+  }, [catalog, emotes, chatters, inputRef])
 
   const choose = useCallback(
     (index: number) => {
@@ -157,27 +234,21 @@ export function useEmojiInput(
       if (!open || suggestions.length === 0) {
         return false
       }
-      if (event.key === 'ArrowDown') {
-        event.preventDefault()
+      const action = autocompleteAction(event.key, event.nativeEvent.isComposing)
+      if (action === undefined) {
+        return false
+      }
+      event.preventDefault()
+      if (action === 'next') {
         setActiveIndex((index) => (index + 1) % suggestions.length)
-        return true
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault()
+      } else if (action === 'previous') {
         setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length)
-        return true
-      }
-      if (event.key === 'Enter' || event.key === 'Tab') {
-        event.preventDefault()
+      } else if (action === 'choose') {
         choose(activeIndex)
-        return true
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
+      } else {
         close()
-        return true
       }
-      return false
+      return true
     },
     [open, suggestions, activeIndex, choose, close]
   )

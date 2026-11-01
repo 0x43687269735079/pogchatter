@@ -9,7 +9,7 @@ import type {
   UserProfile
 } from '@shared/model'
 import { streamerKeyOf } from '@shared/streamerKey'
-import { BaseChatSource } from '@main/sources/ChatSource'
+import { BaseChatSource, type CurrentStream } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import type { EmoteEngine } from '@main/emotes/EmoteEngine'
 import { isAuthError } from '@main/sources/youtube/authError'
@@ -83,6 +83,8 @@ export class YouTubeSource extends BaseChatSource {
   #creator: { channelId: string; name: string; handle?: string } | undefined
   /** Last stream title announced as the label, so a re-poll only re-emits it when it actually changes. */
   #title: string | undefined
+  /** The video {@link #title} was read for. */
+  #titleVideoId: string | undefined
   /** Initial chat continuation, kept so send eligibility can be re-probed after a login/identity change. */
   #chatContinuation: string | undefined
   /** `:shortcut:` → emojiId for the chat's proprietary emojis, used to convert typed shortcuts on send. */
@@ -205,6 +207,18 @@ export class YouTubeSource extends BaseChatSource {
   /** The video this source is currently reading, once resolved — so discovery can avoid re-adding it. */
   resolvedVideoId(): string | undefined {
     return this.#videoId
+  }
+
+  /** The video being read, identified by its id. */
+  currentStream(): CurrentStream | undefined {
+    if (this.#videoId === undefined) {
+      return undefined
+    }
+    // The title is only this video's once it was read for it; after a roll to the next stream the
+    // previous one's lingers until the new one arrives.
+    return this.#title === undefined || this.#titleVideoId !== this.#videoId
+      ? { key: this.#videoId }
+      : { key: this.#videoId, title: this.#title }
   }
 
   // YouTube has no native reply; the renderer tags the user inline, so `reply` is unused here.
@@ -479,7 +493,11 @@ export class YouTubeSource extends BaseChatSource {
 
   /** Announce the current stream's title as the column label, but only when it's known and changed. */
   #updateTitle(title: string | null | undefined): void {
-    if (typeof title !== 'string' || title === '' || title === this.#title) {
+    if (typeof title !== 'string' || title === '') {
+      return
+    }
+    this.#titleVideoId = this.#videoId
+    if (title === this.#title) {
       return
     }
     this.#title = title

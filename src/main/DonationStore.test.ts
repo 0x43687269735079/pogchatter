@@ -160,6 +160,33 @@ describe('DonationStore', () => {
 })
 
 describe('DonationStore ordering and durability', () => {
+  it('repairs a stored sub whose count was its tenure, keeping real gift counts', () => {
+    const record = (id: string, kind: string, count: number): object => ({
+      id,
+      channelId: 'twitch:chan',
+      platform: 'twitch',
+      kind,
+      timestamp: 1,
+      author: { id: 'u', displayName: 'U' },
+      value: { unit: 'count', count },
+      text: '',
+      read: false
+    })
+    writeFileSync(
+      file,
+      JSON.stringify({
+        donations: [record('resub', 'subscription', 24), record('gift', 'membership_gift', 20)]
+      })
+    )
+    const values = Object.fromEntries(
+      store()
+        .list()
+        .map((d) => [d.id, d.value])
+    )
+    expect(values['resub']).toEqual({ unit: 'count', count: 1 })
+    expect(values['gift']).toEqual({ unit: 'count', count: 20 })
+  })
+
   it('orders by when the donation happened, not when it arrived', () => {
     // Backlog and late arrivals carry older timestamps; ordering by arrival meant the panel opened
     // mis-sorted and retention could evict a newer donation than the one it kept.

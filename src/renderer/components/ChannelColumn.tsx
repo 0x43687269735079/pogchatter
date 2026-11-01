@@ -15,6 +15,7 @@ import { atName, plainText } from '@renderer/format'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { StatusChip } from '@renderer/components/StatusChip'
+import { recentChatters } from '@renderer/mentions'
 import { isInThread, threadCounts } from '@renderer/threads'
 import { useEmojiInput } from '@renderer/useEmojiInput'
 
@@ -113,7 +114,9 @@ export function ChannelColumn({
   >(undefined)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [flashing, setFlashing] = useState(false)
-  const emoji = useEmojiInput(channel.id, inputRef, setDraft)
+  // Who can be @-mentioned: everyone seen chatting in this column's buffer, newest first.
+  const chatters = useMemo(() => recentChatters(messages), [messages])
+  const emoji = useEmojiInput(channel.id, inputRef, setDraft, chatters)
 
   // On a YouTube channel/handle column (not a single video), offer one-click "add all of this
   // creator's live + waiting-room streams". The target is the id's suffix (@handle, UC… channel
@@ -478,7 +481,24 @@ export function ChannelColumn({
         </span>
       </header>
 
-      <div className="pc-stream" ref={bodyRef} onScroll={handleScroll}>
+      <div
+        className="pc-stream"
+        ref={bodyRef}
+        onScroll={handleScroll}
+        onMouseUp={(event) => {
+          // A plain click in the chat puts the caret back in the composer. A drag that selected
+          // text, a click on a link or control, or any other button leaves focus where it is.
+          const target = event.target as Element
+          if (
+            event.button === 0 &&
+            canSend &&
+            window.getSelection()?.isCollapsed !== false &&
+            target.closest('a, button, input, textarea, [data-owns-keys]') === null
+          ) {
+            inputRef.current?.focus({ preventScroll: true })
+          }
+        }}
+      >
         <div ref={contentRef}>
           {messages.length === 0 ? <div className="pc-empty">no messages yet</div> : rows}
         </div>
@@ -535,6 +555,7 @@ export function ChannelColumn({
           <span className="prompt">{canSend ? '›' : '✕'}</span>
           <textarea
             ref={inputRef}
+            data-composer={channel.id}
             rows={1}
             value={draft}
             disabled={!canSend}
@@ -549,12 +570,16 @@ export function ChannelColumn({
               emoji.refresh()
             }}
             onKeyDown={(event) => {
+              // Mid-IME-composition every key belongs to the input method: Escape cancels a
+              // candidate, not the reply or the picker.
+              if (event.nativeEvent.isComposing) {
+                return
+              }
               if (emoji.onKeyDown(event)) {
                 return
               }
-              // Enter sends; Shift+Enter inserts a newline (the textarea's default). Don't send
-              // mid-IME-composition, where Enter only commits the candidate.
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              // Enter sends; Shift+Enter inserts a newline (the textarea's default).
+              if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
                 void submit()
                 return

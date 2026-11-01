@@ -430,7 +430,7 @@ export function normalizeTwitchSub(
     highlight.tier = tier
   }
   if (resub) {
-    highlight.count = subInfo.months
+    highlight.months = subInfo.months
   }
   if (subInfo.originalGiftInfo !== undefined) {
     // A multi-month gifted sub renewing itself: the gifter's purchase was announced (and counted)

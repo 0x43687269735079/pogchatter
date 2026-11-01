@@ -116,13 +116,19 @@ function ThreadReplyBox({
             emoji.refresh()
           }}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) {
+              // Mid-IME-composition every key belongs to the input method; Escape cancelling a
+              // candidate must not reach the modal shell, which would close the thread.
+              event.stopPropagation()
+              return
+            }
             if (emoji.onKeyDown(event)) {
               // The autocomplete consumed the key. Keep it from reaching the modal shell, which
               // treats Escape as "close the thread" and Tab as "move focus out of the composer".
               event.stopPropagation()
               return
             }
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
               void submit()
             } else if (event.key === 'Escape' && error !== undefined) {

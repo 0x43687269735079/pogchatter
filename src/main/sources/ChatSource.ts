@@ -44,6 +44,15 @@ export interface ChatSourceEventMap {
  * surface lifecycle changes via {@link SourceStatus}. The Twitch source is
  * effectively always-on; the YouTube source wraps a lifecycle state machine.
  */
+/** One broadcast, as identified by its platform. */
+export interface CurrentStream {
+  /** Unique per broadcast within its channel: the YouTube video id, or Twitch start time + id. */
+  key: string
+  title?: string
+  /** When the platform says it started (epoch ms). */
+  startedAt?: number
+}
+
 export interface ChatSource {
   readonly id: string
   readonly platform: Platform
@@ -78,6 +87,12 @@ export interface ChatSource {
   streamerKey?(): string
   /** The YouTube creator channel (id + name) this source's chat belongs to, once resolved. */
   creator?(): { channelId: string; name: string } | undefined
+  /**
+   * The broadcast this source is reading right now, when the platform identifies one: a YouTube
+   * video, or a Twitch stream Helix reports live. Read at the point of use — it changes when a
+   * channel column moves to a new video or a Twitch stream starts or ends.
+   */
+  currentStream?(): CurrentStream | undefined
   on<E extends keyof ChatSourceEventMap>(
     event: E,
     listener: (...args: ChatSourceEventMap[E]) => void

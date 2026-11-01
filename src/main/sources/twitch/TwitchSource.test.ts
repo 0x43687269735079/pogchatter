@@ -293,6 +293,16 @@ function subNotice(login: string, tags: Record<string, string> = {}): Record<str
 }
 
 /** Connect a source against the fake IRC client and return that client. */
+/** A live stream as twurple's HelixStream exposes it (the getters TwitchSource reads). */
+function liveStream(): { id: string; viewers: number; startDate: Date; title: string } {
+  return {
+    id: '40001234567',
+    viewers: 7,
+    startDate: new Date('2026-11-01T18:30:12Z'),
+    title: 'Late night chat'
+  }
+}
+
 async function connectSource(source: TwitchSource): Promise<(typeof irc.clients)[number]> {
   await source.connect()
   const client = irc.clients.at(-1)
@@ -965,18 +975,18 @@ describe('TwitchSource stream-live poll', () => {
     client.handlers.get('connect')?.()
     expect(source.status()).toEqual({ state: 'connected' })
 
-    helix.getStreamByUserName.mockResolvedValueOnce({ viewers: 123 })
+    helix.getStreamByUserName.mockResolvedValueOnce({ ...liveStream(), viewers: 123 })
     await vi.advanceTimersByTimeAsync(65_000)
     expect(source.status()).toEqual({ state: 'live', viewers: 123 })
 
     // Unchanged viewers emit no duplicate status event.
-    helix.getStreamByUserName.mockResolvedValueOnce({ viewers: 123 })
+    helix.getStreamByUserName.mockResolvedValueOnce({ ...liveStream(), viewers: 123 })
     const emitted = statuses.length
     await vi.advanceTimersByTimeAsync(65_000)
     expect(statuses.length).toBe(emitted)
 
     // Changed viewers do.
-    helix.getStreamByUserName.mockResolvedValueOnce({ viewers: 200 })
+    helix.getStreamByUserName.mockResolvedValueOnce({ ...liveStream(), viewers: 200 })
     await vi.advanceTimersByTimeAsync(65_000)
     expect(source.status()).toEqual({ state: 'live', viewers: 200 })
 
@@ -1001,9 +1011,26 @@ describe('TwitchSource stream-live poll', () => {
     expect(source.status()).toEqual({ state: 'connected' })
   })
 
+  it('identifies the live broadcast from Helix, and forgets it when the stream ends', async () => {
+    vi.useFakeTimers()
+    helix.getStreamByUserName.mockResolvedValue(liveStream())
+    const source = makeSource(makeAuth())
+    await connectSource(source)
+    await vi.advanceTimersByTimeAsync(65_000)
+    expect(source.currentStream()).toEqual({
+      key: '2026-11-01_1830_40001234567',
+      startedAt: Date.parse('2026-11-01T18:30:12Z'),
+      title: 'Late night chat'
+    })
+    helix.getStreamByUserName.mockResolvedValue(null)
+    await vi.advanceTimersByTimeAsync(200_000)
+    expect(source.currentStream()).toBeUndefined()
+    await source.disconnect()
+  })
+
   it('does not clobber an error status from a join failure', async () => {
     vi.useFakeTimers()
-    helix.getStreamByUserName.mockResolvedValue({ viewers: 7 })
+    helix.getStreamByUserName.mockResolvedValue(liveStream())
     const source = makeSource(makeAuth())
     const client = await connectSource(source)
     client.handlers.get('joinFailure')?.('#somechannel', 'msg_banned')
@@ -1144,7 +1171,8 @@ describe('TwitchSource sub events', () => {
       kind: 'subscription',
       headerText: 'resubscribed',
       tier: 'Prime',
-      count: 13
+      // Tenure, not quantity: twurple's ChatSubInfo.months is total months subscribed.
+      months: 13
     })
     expect(messages[1]?.fragments).toEqual([{ type: 'text', text: 'a year already' }])
     await source.disconnect()

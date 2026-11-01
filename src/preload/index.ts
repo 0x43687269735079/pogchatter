@@ -24,6 +24,7 @@ import type {
   WindowControlsApi
 } from '@shared/model'
 import type { DonationsSnapshot } from '@shared/donations'
+import type { ChatterStatsResult } from '@shared/chatterStats'
 import { createEventBuffer } from '@preload/eventBuffer'
 
 // Listen from preload time, not first subscription: main starts pushing batches the moment its
@@ -43,6 +44,9 @@ const api: ChatApi = {
   },
   getDonations(): Promise<DonationsSnapshot> {
     return ipcRenderer.invoke('chat:getDonations') as Promise<DonationsSnapshot>
+  },
+  getChatterStats(channelId: string): Promise<ChatterStatsResult> {
+    return ipcRenderer.invoke('chat:getChatterStats', channelId) as Promise<ChatterStatsResult>
   },
   markDonationsRead(ids: string[], read: boolean): Promise<void> {
     return ipcRenderer.invoke('chat:markDonationsRead', ids, read) as Promise<void>

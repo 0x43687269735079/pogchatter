@@ -362,6 +362,9 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof input['donationsPanel'] === 'boolean') {
     settings.donationsPanel = input['donationsPanel']
   }
+  if (typeof input['chatterStats'] === 'boolean') {
+    settings.chatterStats = input['chatterStats']
+  }
   if (Array.isArray(input['donationStreamers'])) {
     const keys = input['donationStreamers']
       .filter((key): key is string => typeof key === 'string')

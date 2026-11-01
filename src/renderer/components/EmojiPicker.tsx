@@ -88,6 +88,7 @@ export function EmojiPicker({ catalog, emotes, onPick, onClose }: EmojiPickerPro
   return (
     <div
       className="pc-picker"
+      data-owns-keys
       onKeyDown={(event) => {
         // Escape closes just the picker; never the column/global handlers behind it.
         if (event.key === 'Escape') {

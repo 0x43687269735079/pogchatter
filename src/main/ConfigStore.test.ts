@@ -49,7 +49,8 @@ const DEFAULTS = {
   rawLog: { enabled: false },
   embedGifs: true,
   donationsPanel: true,
-  donationStreamers: []
+  donationStreamers: [],
+  chatterStats: true
 }
 
 describe('ConfigStore settings', () => {
@@ -311,6 +312,13 @@ describe('ConfigStore spelling and raw-log settings', () => {
     expect(store.settings().embedGifs).toBe(true)
     expect(store.setSettings({ embedGifs: 'no' } as never).embedGifs).toBe(true)
     expect(store.setSettings({ embedGifs: false }).embedGifs).toBe(false)
+  })
+
+  it('records chatter stats unless switched off, ignoring a non-boolean', () => {
+    const store = new ConfigStore()
+    expect(store.settings().chatterStats).toBe(true)
+    expect(store.setSettings({ chatterStats: 'no' } as never).chatterStats).toBe(true)
+    expect(store.setSettings({ chatterStats: false }).chatterStats).toBe(false)
   })
 
   it('shows the donations panel unless told otherwise, and keeps its streamer list to distinct keys', () => {

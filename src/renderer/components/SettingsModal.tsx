@@ -373,6 +373,25 @@ export function SettingsModal({
 
         <label className="pc-setting">
           <span className="pc-setting-meta">
+            <span className="pc-setting-name">YouTube chatter stats</span>
+            <span className="pc-setting-desc">
+              Keep a local record of who chats in each YouTube stream — messages, and first and last
+              seen — to spot regulars (right-click a YouTube tab). Presence means chatting at least
+              once; YouTube does not list viewers.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="pc-switch"
+            checked={settings.chatterStats}
+            onChange={(event) => {
+              onChange({ chatterStats: event.target.checked })
+            }}
+          />
+        </label>
+
+        <label className="pc-setting">
+          <span className="pc-setting-meta">
             <span className="pc-setting-name">donation currency</span>
             <span className="pc-setting-desc">
               Currency the donations panel converts amounts into. Leave blank to follow your system.
@@ -509,9 +528,8 @@ export function SettingsModal({
             <span className="pc-setting-meta">
               <span className="pc-setting-name">log chat to disk</span>
               <span className="pc-setting-desc">
-                Append every message and deletion from all open chats to one JSONL file, kept across
-                sessions — a long-term record that survives moderation removals and is easy to
-                search.
+                Write every message and deletion from all open chats to one compact JSONL file per
+                stream — a long-term record that survives moderation removals and is easy to search.
               </span>
             </span>
             <input

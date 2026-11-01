@@ -105,6 +105,19 @@ export function TabBar({
             onClick={() => {
               onSelect(info.id)
             }}
+            // Middle-click closes, like a browser tab. mousedown is cancelled too, or Windows and
+            // Linux start autoscroll mode on the middle button.
+            onMouseDown={(event) => {
+              if (event.button === 1) {
+                event.preventDefault()
+              }
+            }}
+            onAuxClick={(event) => {
+              if (event.button === 1 && info.closable) {
+                event.preventDefault()
+                onRemove(info.id)
+              }
+            }}
             onContextMenu={
               column.kind === 'channel'
                 ? (event) => {

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { donationFrom } from '@shared/donationFrom'
+import { donationTotals } from '@shared/donationTotals'
+import { messageLine } from '@main/chatLog/logLines'
 import { buildEmoteImageUrl, type ChatMessage as TwitchChatMessage } from '@twurple/chat'
 import {
   decodeTwitchMenuToken,
@@ -284,6 +287,36 @@ describe('normalizeTwitchSub gifted-sub renewals', () => {
   })
 })
 
+describe('sub and resub donation counting', () => {
+  const subInfo = {
+    userId: 'u100',
+    displayName: 'Alice',
+    plan: '1000',
+    planName: 'T1',
+    isPrime: false,
+    months: 24
+  }
+
+  it('counts a long-tenured resub as one sub and keeps the tenure for display', () => {
+    const message = normalizeTwitchSub('s', subInfo, ircMessage(), 'resub')
+    expect(message.highlight?.months).toBe(24)
+    expect(message.highlight?.count).toBeUndefined()
+    expect(donationFrom(message, 's', 'sk')?.value).toEqual({ unit: 'count', count: 1 })
+  })
+
+  it('counts a fresh sub and a resub the same', () => {
+    const fresh = normalizeTwitchSub('s', { ...subInfo, months: 1 }, ircMessage(), 'sub')
+    const resub = normalizeTwitchSub('s', subInfo, ircMessage(), 'resub')
+    const totals = donationTotals(
+      [fresh, { ...resub, id: 'msg-2' }].flatMap((m) => donationFrom(m, 's', 'sk') ?? []),
+      undefined,
+      'GBP',
+      0
+    )
+    expect(totals.twitch.subscription?.count).toBe(2)
+  })
+})
+
 describe('normalizeTwitchNotice', () => {
   it('renders a system line carrying the description while keeping the author for the log', () => {
     const msg = ircMessage({ userId: 'u-raider', userName: 'raider' })
@@ -340,6 +373,19 @@ describe('normalizeTwitchMessage cheermotes', () => {
       { type: 'text', text: 'Cheer50', verbatim: true },
       { type: 'text', text: ' hi' }
     ])
+  })
+
+  it('flattens a cheer to its typed text once, in the log and the donation', () => {
+    const withArt = ircMessage()
+    ;(withArt as { bits: number }).bits = 100
+    const art = normalizeTwitchMessage('s', 'Cheer100 gg', withArt, { cheermotes })
+    expect(messageLine(art).m).toBe('Cheer100 gg')
+    expect(donationFrom(art, 's', 'sk')?.text).toBe('Cheer100 gg')
+    const noArt = ircMessage()
+    ;(noArt as { bits: number }).bits = 50
+    const plain = normalizeTwitchMessage('s', 'Cheer50 hi', noArt, { cheermotes })
+    expect(messageLine(plain).m).toBe('Cheer50 hi')
+    expect(donationFrom(plain, 's', 'sk')?.text).toBe('Cheer50 hi')
   })
 
   it('never cheer-parses a message that carries no bits', () => {

@@ -478,6 +478,11 @@ function sanitizeValue(kind: DonationKind, value: unknown): DonationValue | unde
     return undefined
   }
   if (unit === 'count') {
+    // A sub notice is always one sub. Earlier builds stored a resub's tenure in months as its count
+    // (a 24-month resub read as 24 subs), so a stored subscription count is not trusted.
+    if (kind === 'subscription') {
+      return { unit: 'count', count: 1 }
+    }
     const count = input['count']
     return {
       unit: 'count',

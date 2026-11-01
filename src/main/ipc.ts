@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { type DonationsSnapshot, DONATION_RETENTION } from '@shared/donations'
+import type { ChatterStatsResult } from '@shared/chatterStats'
 import {
   type AddStreamsResult,
   type AppSettings,
@@ -60,6 +61,8 @@ export interface IpcDeps {
   authState(): AuthState
   /** Everything the donations panel needs to open: the stored list, rates, and the session start. */
   donationsSnapshot(): DonationsSnapshot
+  /** Chatter statistics for the creator a YouTube column belongs to. */
+  chatterStats(channelId: string): ChatterStatsResult
   /** Set read state on the named donations; broadcasts what actually changed. */
   markDonationsRead(ids: string[], read: boolean): void
   markAllDonationsRead(): void
@@ -119,6 +122,12 @@ export function registerIpc(deps: IpcDeps): void {
   handle('chat:listChannels', () => activeManager.list())
   handle('chat:getBacklog', () => deps.backlogSnapshot())
   handle('chat:getDonations', () => deps.donationsSnapshot())
+  handle('chat:getChatterStats', (_event, channelId): ChatterStatsResult => {
+    if (typeof channelId !== 'string' || !activeManager.has(channelId)) {
+      return { ok: false, error: 'Unknown chat' }
+    }
+    return deps.chatterStats(channelId)
+  })
   handle('chat:clearDonations', () => {
     deps.clearDonations()
   })

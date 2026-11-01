@@ -11,7 +11,7 @@ import type {
   UserProfile
 } from '@shared/model'
 import { legacyStreamerKey } from '@shared/streamerKey'
-import type { ChatSource } from '@main/sources/ChatSource'
+import type { ChatSource, CurrentStream } from '@main/sources/ChatSource'
 import { channelId } from '@main/sources/channelId'
 
 /** A source's emote identity: the platform + channel id its third-party emotes load under. */
@@ -164,6 +164,11 @@ export class SourceManager {
     return source === undefined
       ? undefined
       : (source.streamerKey?.() ?? legacyStreamerKey(source.id))
+  }
+
+  /** The broadcast a registered source is reading right now, when its platform identifies one. */
+  currentStreamOf(sourceId: string): CurrentStream | undefined {
+    return this.#sources.get(sourceId)?.currentStream?.()
   }
 
   /** A YouTube source's resolved creator channel id, or undefined if not registered/resolved. */

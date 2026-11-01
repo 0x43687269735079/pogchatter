@@ -1,7 +1,7 @@
 import { ApiClient } from '@twurple/api'
 import { ChatClient, type ChatClientOptions } from '@twurple/chat'
 import type { ChatAction, ChatMessage, Platform, SendReply, UserProfile } from '@shared/model'
-import { BaseChatSource } from '@main/sources/ChatSource'
+import { BaseChatSource, type CurrentStream } from '@main/sources/ChatSource'
 import { channelId, normalizeTarget } from '@main/sources/channelId'
 import { debugLog } from '@main/debugLog'
 import {
@@ -191,7 +191,7 @@ export class TwitchSource extends BaseChatSource {
   // Bounded so a very long session can't grow it unboundedly.
   readonly #announcedCommunityGifts = new Set<string>()
   // Latest Helix stream-live poll result; undefined = not live (or never polled / logged out).
-  #live: { viewers: number } | undefined
+  #live: { viewers: number; streamId: string; startedAt: number; title: string } | undefined
   #liveTimer: NodeJS.Timeout | undefined
   // Bumped on every connect/disconnect so a stale poll chain (or in-flight call) stops itself.
   #pollGeneration = 0
@@ -871,6 +871,27 @@ export class TwitchSource extends BaseChatSource {
     }
   }
 
+  /**
+   * The broadcast Helix last reported live. Keyed by start time and stream id, so the per-stream
+   * log sorts by date and two streams on one day stay apart. Undefined while offline or logged out
+   * (Helix needs a token), where the log falls back to a dated file.
+   */
+  currentStream(): CurrentStream | undefined {
+    if (this.#live === undefined) {
+      return undefined
+    }
+    const started = new Date(this.#live.startedAt).toISOString()
+    const stamp = `${started.slice(0, 10)}_${started.slice(11, 13)}${started.slice(14, 16)}`
+    const stream: CurrentStream = {
+      key: `${stamp}_${this.#live.streamId}`,
+      startedAt: this.#live.startedAt
+    }
+    if (this.#live.title !== '') {
+      stream.title = this.#live.title
+    }
+    return stream
+  }
+
   /** Report the joined room as live (with viewers) when the Helix poll says so, else plain connected. */
   #setConnected(): void {
     if (this.#live === undefined) {
@@ -892,7 +913,15 @@ export class TwitchSource extends BaseChatSource {
     try {
       const stream = await api.streams.getStreamByUserName(this.#login)
       if (generation === this.#pollGeneration) {
-        this.#live = stream === null ? undefined : { viewers: stream.viewers }
+        this.#live =
+          stream === null
+            ? undefined
+            : {
+                viewers: stream.viewers,
+                streamId: stream.id,
+                startedAt: stream.startDate.getTime(),
+                title: stream.title
+              }
         this.#applyLiveStatus()
       }
     } catch {

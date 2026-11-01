@@ -25,8 +25,12 @@ import {
 } from '@shared/model'
 import { AutoMod } from '@main/AutoMod'
 import { EventBatcher } from '@main/Batcher'
-import { ChatLogger } from '@main/ChatLogger'
+import { StreamLogger } from '@main/chatLog/StreamLogger'
+import { type ColumnState, streamTargetFor } from '@main/chatLog/streamTarget'
+import type { StreamTarget } from '@main/chatLog/logLines'
 import { DonationStore } from '@main/DonationStore'
+import { ChatterStats } from '@main/stats/ChatterStats'
+import type { ChatterStatsResult } from '@shared/chatterStats'
 import { RateService } from '@main/RateService'
 import { localeCurrency } from '@shared/currencyFormat'
 import { legacyStreamerKey } from '@shared/streamerKey'
@@ -246,8 +250,9 @@ const YOUTUBE_CHANNELS = (process.env['YOUTUBE_CHANNELS'] ?? '')
 let manager: SourceManager | undefined
 let keepAlive: KeepAlive | undefined
 let batcher: EventBatcher | undefined
-let chatLogger: ChatLogger | undefined
+let chatLogger: StreamLogger | undefined
 let donationStore: DonationStore | undefined
+let chatterStats: ChatterStats | undefined
 let rateService: RateService | undefined
 /** App-start time: the donations panel's totals cover this session only (spec FR-20). */
 const sessionStartedAt = Date.now()
@@ -332,6 +337,50 @@ function collectDonation(event: ChatEvent): void {
   }
 }
 
+/**
+ * Count a YouTube chat message toward its stream's chatter statistics, when the setting is on.
+ *
+ * The stream is read from the column at the point of use: a channel column moves to the next video
+ * when one ends, and its messages belong to the video it is reading now. Until the creator and
+ * video are resolved there is nothing to file the message under, so it is not counted.
+ */
+function countChatter(event: ChatEvent): void {
+  if (
+    event.kind !== 'message' ||
+    event.message.platform !== 'youtube' ||
+    chatterStats === undefined ||
+    configStore?.settings().chatterStats !== true
+  ) {
+    return
+  }
+  const creatorId = manager?.creatorIdOf(event.channelId)
+  const stream = manager?.currentStreamOf(event.channelId)
+  if (creatorId === undefined || stream === undefined) {
+    return
+  }
+  chatterStats.record(event.message, {
+    creatorId,
+    videoId: stream.key,
+    ...(stream.title !== undefined ? { title: stream.title } : {})
+  })
+}
+
+/** Chatter statistics for the creator a YouTube column belongs to. */
+function chatterStatsFor(channelId: string): ChatterStatsResult {
+  if (chatterStats === undefined) {
+    return { ok: false, error: 'Chatter stats are not available yet' }
+  }
+  const creatorId = manager?.creatorIdOf(channelId)
+  if (creatorId === undefined) {
+    return { ok: false, error: 'This chat’s YouTube channel is not known yet — try again shortly' }
+  }
+  try {
+    return { ok: true, summary: chatterStats.summary(creatorId) }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 /** The currency to convert into: the user's choice, or the OS locale when they've made none. */
 function effectiveBaseCurrency(): string {
   const chosen = configStore?.settings().baseCurrency ?? ''
@@ -367,10 +416,32 @@ function applyChatLog(settings: ChatLogSettings): void {
   const dir = settings.directory.trim() === '' ? defaultLogDir() : settings.directory.trim()
   if (chatLogger === undefined || chatLogger.dir !== dir) {
     void chatLogger?.close()
-    chatLogger = new ChatLogger(dir, (path) => {
-      console.log(`Chat logging → ${path}`)
+    chatLogger = new StreamLogger(dir, logTargetOf, {
+      onOpen: (path) => {
+        console.log(`Chat logging → ${path}`)
+      }
     })
   }
+}
+
+/**
+ * The per-stream log file an event belongs to, from the column's state when the event arrives —
+ * read at the point of use, since a column can move to a new video and a Twitch stream can start.
+ */
+function logTargetOf(channelId: string, at: number): StreamTarget {
+  const column: ColumnState = {
+    channelId,
+    platform: channelId.startsWith('twitch:') ? 'twitch' : 'youtube'
+  }
+  const creatorId = manager?.creatorIdOf(channelId)
+  if (creatorId !== undefined) {
+    column.creatorId = creatorId
+  }
+  const stream = manager?.currentStreamOf(channelId)
+  if (stream !== undefined) {
+    column.stream = stream
+  }
+  return streamTargetFor(column, at)
 }
 
 /** The directory the raw wire-level log is written to: a `raw` subdirectory of the chat-log dir. */
@@ -658,6 +729,7 @@ void app
       backlog.record(event)
       batcher?.push(event)
       collectDonation(event)
+      countChatter(event)
     }
     // A channel's 7TV set (or the shared library every column tokenizes against) often finishes
     // loading after the first messages did, leaving an emote's name sitting in those rows as plain
@@ -761,6 +833,7 @@ void app
       authState,
       broadcastAuth,
       backlogSnapshot: () => backlog.snapshot(),
+      chatterStats: chatterStatsFor,
       donationsSnapshot: () => ({
         donations: donationStore?.list() ?? [],
         rates: rateService?.table(),
@@ -844,6 +917,7 @@ void app
     // window. Rates refresh in the background on a daily timer; nothing waits on either.
     const userDataDir = app.getPath('userData')
     donationStore = new DonationStore({ dir: userDataDir })
+    chatterStats = new ChatterStats({ dir: join(userDataDir, 'chatter-stats') })
     rateService = new RateService({
       dir: userDataDir,
       // Any table/source change (a committed fetch, a coverage recovery, or a failure that marked the
@@ -1192,6 +1266,7 @@ app.on('before-quit', (event) => {
   // Writes are debounced, so a donation (or a read tick) from the last second would otherwise be
   // lost to the forced exit below. Synchronous, so it completes before the race starts.
   donationStore?.flush()
+  chatterStats?.flush()
   // close() resolves when the log's WriteStream has flushed; include it in the shutdown race
   // so tail writes reach disk before the forced app.exit below can terminate the process.
   const logFlushed = chatLogger?.close() ?? Promise.resolve()

@@ -2,6 +2,7 @@ import type { ChatMessage, Highlight } from '@shared/model'
 import type { Donation, DonationKind, DonationValue } from '@shared/donations'
 import { parseAmount } from '@shared/currencyParse'
 import { parseTipAnnouncement } from '@shared/tipMessage'
+import { isCheerAmount } from '@shared/cheerFragments'
 
 /**
  * The single definition of "is this a donation" (spec FR-2). Every other part of the feature trusts
@@ -97,6 +98,11 @@ function valueOf(kind: DonationKind, highlight: Highlight): DonationValue {
       ? { unit: 'money-unparsed', original }
       : { unit: 'money', amount: parsed.amount, currency: parsed.currency, original }
   }
+  // A sub or resub notice is one subscription, however long the subscriber's tenure (which lives in
+  // `months`, display only).
+  if (kind === 'subscription') {
+    return { unit: 'count', count: 1 }
+  }
   // A community gift says how many were given ("is gifting 20 subs"); counting the event rather than
   // the subs would report a twenty-sub gift and a one-sub gift identically.
   const count = highlight.count
@@ -112,7 +118,10 @@ function valueOf(kind: DonationKind, highlight: Highlight): DonationValue {
  */
 function textOf(message: ChatMessage): string {
   return message.fragments
-    .map((fragment) => {
+    .map((fragment, index) => {
+      if (isCheerAmount(message.fragments, index)) {
+        return ''
+      }
       if (fragment.type === 'text') {
         return fragment.text
       }

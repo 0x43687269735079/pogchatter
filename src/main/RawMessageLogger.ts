@@ -88,7 +88,7 @@ function localDateKey(date: Date): string {
 /**
  * Appends every raw connector payload — the untouched wire message, before any parsing — to one
  * JSONL file per platform per local day. This is the ONE deliberate full-content sink besides the
- * human-readable chat log ({@link ChatLogger}): it exists to troubleshoot a platform's response
+ * per-stream chat log ({@link StreamLogger}): it exists to troubleshoot a platform's response
  * shape (a parser miss, an unrecognized action) against exactly what the platform sent, not a
  * reconstruction of it. Off by default; enabled from Settings → raw logging.
  *
@@ -98,7 +98,7 @@ function localDateKey(date: Date): string {
  *
  * Best-effort: any stream error (disk full, removed volume, revoked permissions) or synchronous
  * write failure disables the logger for the rest of this instance's life — mirroring
- * {@link ChatLogger}'s posture that a session with unwritable storage degrades logging rather than
+ * {@link StreamLogger}'s posture that a session with unwritable storage degrades logging rather than
  * chat itself.
  */
 export class RawMessageLogger {
@@ -184,7 +184,7 @@ export class RawMessageLogger {
 
   /**
    * Close every open stream, resolving once their buffered lines have flushed to disk. Terminal:
-   * no further record() call writes, mirroring {@link ChatLogger#close}. Safe to call twice.
+   * no further record() call writes, mirroring {@link StreamLogger#close}. Safe to call twice.
    */
   close(): Promise<void> {
     this.#closed = true

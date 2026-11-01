@@ -7,6 +7,7 @@
 // Type-only both ways (donations.ts imports `Platform` from here), so the cycle is erased at
 // compile time and never exists at runtime.
 import type { Donation, DonationsSnapshot, RateTable } from '@shared/donations'
+import type { ChatterStatsResult } from '@shared/chatterStats'
 
 export type Platform = 'twitch' | 'youtube'
 
@@ -86,7 +87,13 @@ export interface Highlight {
   tier?: string
   /** Accent colour for the highlight card. */
   color?: string
+  /** How many were given in this one event (a gift of 20 subs is 20). Never tenure — see `months`. */
   count?: number
+  /**
+   * Cumulative months of a Twitch resub — the subscriber's tenure, shown on the card. Display only:
+   * a resub is one sub however long the tenure, so revenue accounting must never read this.
+   */
+  months?: number
   /**
    * Membership header line — YouTube's milestone ("Member for 6 months") or welcome/level text.
    * The member's own typed message (milestone chat) rides in the message's `fragments`.
@@ -489,9 +496,9 @@ export type PrebanImport =
   | { canceled: true }
 
 /**
- * Append every chat message + deletion from all open chats to one local JSONL file, for long-term
- * record-keeping and moderation review. When enabled it covers every chat (including newly-opened
- * ones); there's no per-chat selection.
+ * Write every chat message + deletion from all open chats to one compact JSONL file per stream
+ * (format: `src/main/chatLog/logLines.ts`), for long-term record-keeping and moderation review.
+ * When enabled it covers every chat (including newly-opened ones); there's no per-chat selection.
  */
 export interface ChatLogSettings {
   enabled: boolean
@@ -621,6 +628,11 @@ export interface AppSettings {
    * of a listed streamer counts, on either platform; anyone not listed is ignored.
    */
   donationStreamers: string[]
+  /**
+   * Record who chats in each YouTube stream (by channel id: messages, first and last seen) to
+   * per-stream files, for the chatter-stats view. On by default (owner decision); local files only.
+   */
+  chatterStats: boolean
 }
 
 /**
@@ -679,7 +691,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rawLog: { enabled: false },
   embedGifs: true,
   donationsPanel: true,
-  donationStreamers: []
+  donationStreamers: [],
+  chatterStats: true
 }
 
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */
@@ -761,6 +774,8 @@ export interface ChatApi {
   getBacklog(): Promise<ChatEvent[]>
   /** The donations panel's opening state: stored donations, rates, and the session start. */
   getDonations(): Promise<DonationsSnapshot>
+  /** Chatter statistics for the YouTube creator a column belongs to (see `ChatterStats`). */
+  getChatterStats(channelId: string): Promise<ChatterStatsResult>
   /** Mark the named donations read (or unread); the change echoes back as a `donationsRead` event. */
   markDonationsRead(ids: string[], read: boolean): Promise<void>
   markAllDonationsRead(): Promise<void>

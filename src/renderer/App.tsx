@@ -27,6 +27,7 @@ import { AddColumn } from '@renderer/components/AddColumn'
 import { ChannelColumn } from '@renderer/components/ChannelColumn'
 import { CombinedColumn } from '@renderer/components/CombinedColumn'
 import { TabContextMenu, type TabContextMenuItem } from '@renderer/components/TabContextMenu'
+import { ChatterStatsModal } from '@renderer/components/ChatterStatsModal'
 import { DonationThreadModal } from '@renderer/components/DonationThreadModal'
 import { DonationsPanel } from '@renderer/components/DonationsPanel'
 import {
@@ -68,6 +69,7 @@ import {
 import { playPing, showPing } from '@renderer/ping'
 import { isOnline } from '@renderer/status'
 import { streamsTargetFor } from '@renderer/tabMenu'
+import { composerFor, focusContext, routesToComposer } from '@renderer/typeToFocus'
 import { clearUnread, foldUnread, type UnreadLevel } from '@renderer/unread'
 import { TabBar } from '@renderer/components/TabBar'
 import { THEME_PALETTES } from '@renderer/theme'
@@ -153,6 +155,10 @@ export function App(): ReactElement {
   // The tab/header "add this streamer's other streams" context menu, if open.
   const [tabMenu, setTabMenu] = useState<
     { channel: ChannelInfo; anchor: { x: number; y: number } } | undefined
+  >(undefined)
+  // The YouTube column whose creator's chatter stats are open, if any.
+  const [chatterStatsFor, setChatterStatsFor] = useState<
+    { channelId: string; label: string } | undefined
   >(undefined)
   // Streams targets with a request in flight, so the menu item disables rather than double-fires.
   const [streamsInFlight, setStreamsInFlight] = useState<ReadonlySet<string>>(new Set())
@@ -549,6 +555,18 @@ export function App(): ReactElement {
     }
   }
 
+  /** The tab/header menu's "chatter stats" item for a YouTube chat (its creator's regulars). */
+  function chatterStatsItem(channel: ChannelInfo): TabContextMenuItem {
+    return {
+      label: 'Chatter stats',
+      disabled: false,
+      onSelect: () => {
+        setTabMenu(undefined)
+        setChatterStatsFor({ channelId: channel.id, label: channel.label })
+      }
+    }
+  }
+
   /** Open the tab/header context menu for a chat column's channel (right-click on a tab or header). */
   function openTabMenu(channel: ChannelInfo, x: number, y: number): void {
     setTabMenu({ channel, anchor: { x, y } })
@@ -613,6 +631,7 @@ export function App(): ReactElement {
     searchOpen ||
     settingsOpen ||
     userActivity !== undefined ||
+    chatterStatsFor !== undefined ||
     donationThread !== undefined ||
     threadView !== undefined
 
@@ -668,6 +687,18 @@ export function App(): ReactElement {
       }
       if (modalOpen) {
         return
+      }
+      // Typing with no field focused (after clicking a tab, the stream, or refocusing the window)
+      // starts a message instead of vanishing. Focus moves during keydown, so Chromium delivers
+      // the character itself to the composer.
+      if (activeId !== undefined && routesToComposer(event, focusContext(el))) {
+        const composer = composerFor(activeId)
+        if (composer !== undefined) {
+          // Scrolled into view on purpose: in the scroll layout the active column can be
+          // off-screen, and text (and an Enter) must never go to a chat the user can't see.
+          composer.focus()
+          return
+        }
       }
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
         return
@@ -1161,6 +1192,16 @@ export function App(): ReactElement {
             }}
           />
         ) : null}
+        {chatterStatsFor !== undefined ? (
+          <ChatterStatsModal
+            channelId={chatterStatsFor.channelId}
+            label={chatterStatsFor.label}
+            recording={settings.chatterStats}
+            onClose={() => {
+              setChatterStatsFor(undefined)
+            }}
+          />
+        ) : null}
         {userActivity !== undefined ? (
           <UserActivityModal
             author={userActivity.author}
@@ -1282,7 +1323,11 @@ export function App(): ReactElement {
         {tabMenu !== undefined ? (
           <TabContextMenu
             anchor={tabMenu.anchor}
-            items={[tabMenuItem(tabMenu.channel), donationItem(tabMenu.channel)]}
+            items={[
+              tabMenuItem(tabMenu.channel),
+              donationItem(tabMenu.channel),
+              ...(tabMenu.channel.platform === 'youtube' ? [chatterStatsItem(tabMenu.channel)] : [])
+            ]}
             onClose={() => {
               setTabMenu(undefined)
             }}

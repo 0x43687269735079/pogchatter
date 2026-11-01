@@ -19,7 +19,6 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
-    "chatlog": "node scripts/simple-chatlog.mjs",
     "build:unpack": "electron-vite build && electron-builder --dir",
     "build:win": "electron-vite build && ELECTRON_BUILDER_7Z_FILTER=BCJ2 electron-builder --win",
     "build:mac": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",

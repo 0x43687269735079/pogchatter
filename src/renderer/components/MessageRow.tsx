@@ -356,7 +356,7 @@ export const MessageRow = memo(function MessageRow({
         <span>
           <b>{atName(name)}</b> {highlight.headerText ?? 'subscribed'}
           {highlight.tier !== undefined ? ` (${highlight.tier})` : ''}
-          {highlight.count !== undefined ? ` · ${highlight.count}mo` : ''}
+          {highlight.months !== undefined ? ` · ${highlight.months}mo` : ''}
         </span>
       </>
     )

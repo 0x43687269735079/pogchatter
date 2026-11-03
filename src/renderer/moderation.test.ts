@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ModerationRule } from '@shared/model'
-import { isFlagged } from '@renderer/moderation'
+import { flaggedViewVisible, isFlagged } from '@renderer/moderation'
+
+describe('flaggedViewVisible', () => {
+  it('shows the panel from launch when the setting is on, with nothing to review yet', () => {
+    expect(flaggedViewVisible({ alwaysShow: true, hasRules: false, heldSeen: false })).toBe(true)
+  })
+
+  it('otherwise waits for a watchlist term or a held message', () => {
+    expect(flaggedViewVisible({ alwaysShow: false, hasRules: false, heldSeen: false })).toBe(false)
+    expect(flaggedViewVisible({ alwaysShow: false, hasRules: true, heldSeen: false })).toBe(true)
+    expect(flaggedViewVisible({ alwaysShow: false, hasRules: false, heldSeen: true })).toBe(true)
+  })
+})
 
 function message(text: string, over: Partial<ChatMessage> = {}): ChatMessage {
   return {

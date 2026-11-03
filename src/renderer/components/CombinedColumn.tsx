@@ -36,8 +36,8 @@ interface CombinedColumnProps {
   canMoveLeft: boolean
   canMoveRight: boolean
   onActivate: (id: string) => void
-  /** Open and focus the message's own column so a mod can act there. */
-  onJump: (channelId: string) => void
+  /** Open the message in its own column so a mod can act there. */
+  onJump: (channelId: string, messageId?: string) => void
   /** Open the "User activity" view for a message's author. */
   onUserActivity: (message: ChatMessage) => void
   /** Open the reply thread of the Super Chat a message replies to. */

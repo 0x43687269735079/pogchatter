@@ -8,6 +8,7 @@
 // compile time and never exists at runtime.
 import type { Donation, DonationsSnapshot, RateTable } from '@shared/donations'
 import type { ChatterStatsResult } from '@shared/chatterStats'
+import type { UserHistoryProgress, UserHistoryResult } from '@shared/userHistory'
 
 export type Platform = 'twitch' | 'youtube'
 
@@ -633,6 +634,11 @@ export interface AppSettings {
    * per-stream files, for the chatter-stats view. On by default (owner decision); local files only.
    */
   chatterStats: boolean
+  /**
+   * Show the messages-flagged-for-moderation panel from launch. Off (the default), it appears once
+   * a moderation term is set or the first held-for-review message arrives.
+   */
+  alwaysShowModerationPanel: boolean
 }
 
 /**
@@ -692,7 +698,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   embedGifs: true,
   donationsPanel: true,
   donationStreamers: [],
-  chatterStats: true
+  chatterStats: true,
+  alwaysShowModerationPanel: false
 }
 
 /** Result of a send attempt — never rejects across IPC, so failures are handled gracefully. */
@@ -776,6 +783,20 @@ export interface ChatApi {
   getDonations(): Promise<DonationsSnapshot>
   /** Chatter statistics for the YouTube creator a column belongs to (see `ChatterStats`). */
   getChatterStats(channelId: string): Promise<ChatterStatsResult>
+  /**
+   * Search the local chat logs for one account's messages, across every logged stream of its
+   * platform. Cancels any search already running (it resolves as cancelled). Never rejects.
+   * `requestId` (a positive integer the caller picks, new per search) tags its progress and result.
+   */
+  searchUserHistory(
+    platform: Platform,
+    userId: string,
+    requestId: number
+  ): Promise<UserHistoryResult>
+  /** Stop the running user-history search, if any. */
+  cancelUserHistory(): Promise<void>
+  /** Progress of the running user-history search; returns the unsubscribe. */
+  onUserHistoryProgress(callback: (progress: UserHistoryProgress) => void): () => void
   /** Mark the named donations read (or unread); the change echoes back as a `donationsRead` event. */
   markDonationsRead(ids: string[], read: boolean): Promise<void>
   markAllDonationsRead(): Promise<void>

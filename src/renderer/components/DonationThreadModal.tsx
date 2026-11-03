@@ -15,8 +15,8 @@ interface DonationThreadModalProps {
   palette: readonly string[]
   /** Monitored authors (`<platform>:<authorId>`); the Set's identity changes only on toggle. */
   monitoredKeys?: ReadonlySet<string> | undefined
-  /** Jump to the source chat's column (also closes this view). */
-  onJump: (channelId: string) => void
+  /** Jump to a message in the source chat's column (also closes this view). */
+  onJump: (channelId: string, messageId?: string) => void
   onClose: () => void
 }
 

@@ -17,6 +17,7 @@ import { MessageRow } from '@renderer/components/MessageRow'
 import { StatusChip } from '@renderer/components/StatusChip'
 import { recentChatters } from '@renderer/mentions'
 import { isInThread, threadCounts } from '@renderer/threads'
+import { type JumpTarget, useColumnFollow } from '@renderer/useColumnFollow'
 import { useEmojiInput } from '@renderer/useEmojiInput'
 
 const MIN_COL_WIDTH = 240
@@ -63,6 +64,10 @@ interface ChannelColumnProps {
   onHeaderContextMenu: (channel: ChannelInfo, x: number, y: number) => void
   /** Transient result note from that menu's last add-streams call for this column, if any. */
   menuNote?: string | undefined
+  /** The latest "go to message" aimed at this column: scroll to it and stop following chat. */
+  jumpTo?: JumpTarget | undefined
+  /** Report a jump handled (by its `seq`), so the parent stops passing it. Stable. */
+  onJumpHandled: (seq: number) => void
 }
 
 interface ContextMenuState {
@@ -94,16 +99,15 @@ export function ChannelColumn({
   monitoredKeys,
   inTab = false,
   onHeaderContextMenu,
-  menuNote
+  menuNote,
+  jumpTo,
+  onJumpHandled
 }: ChannelColumnProps): ReactElement {
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const emoteButtonRef = useRef<HTMLButtonElement>(null)
-  // Pin to bottom only when the user is already there, so scrolling up to read
-  // history isn't yanked back down by incoming messages.
-  const atBottomRef = useRef(true)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | undefined>(undefined)
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
@@ -184,52 +188,21 @@ export function ChannelColumn({
     }
   }, [pickerOpen])
 
-  function handleScroll(): void {
-    const el = bodyRef.current
-    if (!el) {
-      return
-    }
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-    if (atBottom !== atBottomRef.current) {
-      atBottomRef.current = atBottom
-      // Pause buffer trimming while reading history, so scrollback isn't deleted mid-read.
-      onScrollPause(channel.id, atBottom ? [] : [channel.id])
-    }
-  }
-
-  // A removed column must not leave its channel's trimming paused.
-  useEffect(() => {
-    return () => {
-      onScrollPause(channel.id, [])
-    }
-  }, [channel.id, onScrollPause])
-
-  // Pin before paint (not after) so a fast chat doesn't show a frame scrolled off the bottom.
-  useLayoutEffect(() => {
-    const el = bodyRef.current
-    if (el && atBottomRef.current) {
-      el.scrollTop = el.scrollHeight
-    }
-  }, [messages])
-
-  // Late-loading emote/badge/avatar images grow rows after render; keep the column
-  // pinned to the bottom as the content resizes, when the user is already there.
-  useEffect(() => {
-    const body = bodyRef.current
-    const content = contentRef.current
-    if (body === null || content === null) {
-      return undefined
-    }
-    const observer = new ResizeObserver(() => {
-      if (atBottomRef.current) {
-        body.scrollTop = body.scrollHeight
-      }
-    })
-    observer.observe(content)
-    return () => {
-      observer.disconnect()
-    }
+  // Pin to the newest message only while the reader is at the bottom, so scrolling up to read
+  // history (or jumping to a message) isn't yanked back down by incoming messages.
+  const noteJumpMissed = useCallback(() => {
+    setStreamsNote('that message is no longer in this chat')
   }, [])
+  const { followRef, handleScroll, handleReaderScroll, handleWheel } = useColumnFollow({
+    bodyRef,
+    contentRef,
+    columnId: channel.id,
+    onScrollPause,
+    messages,
+    jumpTo,
+    onJumpMissed: noteJumpMissed,
+    onJumpHandled
+  })
 
   // Auto-grow the composer with the draft: reset to measure, then size to content (the `.pc-inrow
   // textarea` max-height caps it at four lines and scrolls beyond). A taller composer shrinks the
@@ -252,10 +225,10 @@ export function ChannelColumn({
       el.style.overflowY = el.scrollHeight > el.clientHeight ? 'auto' : 'hidden'
     }
     const body = bodyRef.current
-    if (body !== null && atBottomRef.current) {
+    if (body !== null && followRef.current.pinned) {
       body.scrollTop = body.scrollHeight
     }
-  }, [])
+  }, [followRef])
 
   // Resize whenever the draft changes — typing, send (cleared back to one line), emoji insertion,
   // and reply-mention prepend all flow through `draft`. Layout effect avoids a one-frame flicker.
@@ -485,6 +458,10 @@ export function ChannelColumn({
         className="pc-stream"
         ref={bodyRef}
         onScroll={handleScroll}
+        onWheel={handleWheel}
+        onPointerDown={handleReaderScroll}
+        onTouchStart={handleReaderScroll}
+        onKeyDown={handleReaderScroll}
         onMouseUp={(event) => {
           // A plain click in the chat puts the caret back in the composer. A drag that selected
           // text, a click on a link or control, or any other button leaves focus where it is.

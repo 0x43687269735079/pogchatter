@@ -32,8 +32,8 @@ interface ThreadModalProps {
   monitoredKeys?: ReadonlySet<string> | undefined
   /** Retarget the composer at a thread message, or `undefined` to fall back to the newest reply. */
   onSelectReplyTarget: (messageId: string | undefined) => void
-  /** Jump to the source chat's column (also closes this view). */
-  onJump: (channelId: string) => void
+  /** Jump to a message in the source chat's column (also closes this view). */
+  onJump: (channelId: string, messageId?: string) => void
   onClose: () => void
 }
 

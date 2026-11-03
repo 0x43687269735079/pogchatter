@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { type DonationsSnapshot, DONATION_RETENTION } from '@shared/donations'
 import type { ChatterStatsResult } from '@shared/chatterStats'
+import type { UserHistoryResult } from '@shared/userHistory'
 import {
   type AddStreamsResult,
   type AppSettings,
@@ -63,6 +64,14 @@ export interface IpcDeps {
   donationsSnapshot(): DonationsSnapshot
   /** Chatter statistics for the creator a YouTube column belongs to. */
   chatterStats(channelId: string): ChatterStatsResult
+  /** Search the chat logs for one account's messages (cancels any search in flight). */
+  searchUserHistory(
+    platform: Platform,
+    userId: string,
+    requestId: number
+  ): Promise<UserHistoryResult>
+  /** Stop the user-history search in flight, if any. */
+  cancelUserHistory(): void
   /** Set read state on the named donations; broadcasts what actually changed. */
   markDonationsRead(ids: string[], read: boolean): void
   markAllDonationsRead(): void
@@ -127,6 +136,21 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: false, error: 'Unknown chat' }
     }
     return deps.chatterStats(channelId)
+  })
+  handle(
+    'chat:searchUserHistory',
+    (_event, platform, userId, requestId): Promise<UserHistoryResult> => {
+      // An account id is short (Twitch: digits, YouTube: UC + 22); anything else is refused unseen.
+      const validUser = typeof userId === 'string' && /^[\w-]{1,64}$/u.test(userId)
+      const validId = Number.isSafeInteger(requestId) && (requestId as number) > 0
+      if (!isPlatform(platform) || !validUser || !validId) {
+        return Promise.resolve({ ok: false, requestId: 0, error: 'Invalid request' })
+      }
+      return deps.searchUserHistory(platform, userId, requestId as number)
+    }
+  )
+  handle('chat:cancelUserHistory', () => {
+    deps.cancelUserHistory()
   })
   handle('chat:clearDonations', () => {
     deps.clearDonations()

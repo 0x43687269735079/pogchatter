@@ -29,8 +29,8 @@ interface DonationsPanelProps {
   selectedStreamer: string | undefined
   onSelectStreamer: (key: string | undefined) => void
   onActivate: (id: string) => void
-  /** Open the donation's own chat column (inactive once its message has left the buffer). */
-  onJump: (channelId: string) => void
+  /** Open the donation's message in its chat column (inactive once that chat is closed). */
+  onJump: (channelId: string, messageId?: string) => void
   onMarkRead: (ids: string[], read: boolean) => void
   onMarkAllRead: () => void
   /** Forget every collected donation and start the collection again from nothing. */
@@ -413,7 +413,7 @@ function Feed({
   rates: DonationsState['rates']
   base: string
   showConverted: boolean
-  onJump: (channelId: string) => void
+  onJump: (channelId: string, messageId?: string) => void
   onMarkRead: (ids: string[], read: boolean) => void
 }): ReactElement {
   const rows: ReactElement[] = []
@@ -463,7 +463,7 @@ function Row({
   rates: DonationsState['rates']
   base: string
   showConverted: boolean
-  onJump: (channelId: string) => void
+  onJump: (channelId: string, messageId?: string) => void
   onMarkRead: (ids: string[], read: boolean) => void
 }): ReactElement {
   const converted = showConverted ? convert(donation.value, rates, base) : undefined
@@ -528,7 +528,7 @@ function Row({
           onClick={(event) => {
             // Without this the jump would also toggle the row it sits in.
             event.stopPropagation()
-            onJump(donation.channelId)
+            onJump(donation.channelId, donation.id)
           }}
         >
           ↗

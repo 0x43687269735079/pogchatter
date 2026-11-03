@@ -15,8 +15,8 @@ interface SearchModalProps {
   palette: readonly string[]
   /** Monitored authors (`<platform>:<authorId>`); the Set's identity changes only on toggle. */
   monitoredKeys?: ReadonlySet<string> | undefined
-  /** Jump to a message's own column (also closes search). */
-  onJump: (channelId: string) => void
+  /** Jump to a message in its own column (also closes search). */
+  onJump: (channelId: string, messageId?: string) => void
   onUserActivity: (message: ChatMessage) => void
   onDonationReplies: (message: ChatMessage) => void
   onClose: () => void
@@ -89,8 +89,8 @@ export function SearchModal({
     }
   }
 
-  const jump = (channelId: string): void => {
-    onJump(channelId)
+  const jump = (channelId: string, messageId?: string): void => {
+    onJump(channelId, messageId)
     onClose()
   }
 

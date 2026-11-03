@@ -9,6 +9,7 @@ import {
   type ParsedMessageTextPart
 } from '@twurple/chat'
 import type { Author, Badge, ChatMessage, Fragment, Highlight, ReplyContext } from '@shared/model'
+import { isHttpsImageFrom } from '@main/net/imageUrl'
 
 /**
  * The slice of twurple's UserNotice the sub-event builders read. Structural (rather than the
@@ -37,16 +38,7 @@ interface GifTagEntry {
  * fetch. Credentials in the URL are refused for the same reason.
  */
 function isGiphyImageUrl(url: string): boolean {
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return false
-  }
-  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
-    return false
-  }
-  return parsed.hostname === 'giphy.com' || parsed.hostname.endsWith('.giphy.com')
+  return isHttpsImageFrom(url, ['giphy.com'])
 }
 
 const GIF_ENTRY_BOUND = /^\d+$/

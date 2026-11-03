@@ -1,13 +1,26 @@
 import { type ReactElement, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Author, ChatMessage, UserModerationActivity, UserProfile } from '@shared/model'
+import type {
+  Author,
+  ChatMessage,
+  Platform,
+  UserModerationActivity,
+  UserProfile
+} from '@shared/model'
 import { atName, monthYear } from '@renderer/format'
 import { Avatar } from '@renderer/components/Avatar'
 import { MessageContextMenu } from '@renderer/components/MessageContextMenu'
 import { MessageRow } from '@renderer/components/MessageRow'
 import { ModalShell } from '@renderer/components/ModalShell'
+import { UserHistoryControls, UserHistoryRows } from '@renderer/components/UserHistorySection'
+import { groupHistory, historyStatus } from '@renderer/userHistoryView'
+import { shownResult, useUserHistory } from '@renderer/useUserHistory'
 
 interface UserActivityModalProps {
   author: Author
+  /** The author's platform: the account id is looked up in that platform's chat logs. */
+  platform: Platform
+  /** Whether chat logging is on now, so an empty log search can say why. */
+  loggingEnabled: boolean
   /** The chat the card opened from — the profile fetch is routed through its source. */
   channelId: string
   /** The chat the messages came from, for the header. */
@@ -21,8 +34,8 @@ interface UserActivityModalProps {
   monitored: boolean
   /** Add/remove this author on the persisted monitored-users list. */
   onToggleMonitor: () => void
-  /** Jump to the source chat's column (also closes this view). */
-  onJump: (channelId: string) => void
+  /** Jump to a message in the source chat's column (also closes this view). */
+  onJump: (channelId: string, messageId?: string) => void
   onClose: () => void
 }
 
@@ -41,6 +54,8 @@ interface ContextMenuState {
  */
 export function UserActivityModal({
   author,
+  platform,
+  loggingEnabled,
   channelId,
   channelLabel,
   messages,
@@ -58,15 +73,18 @@ export function UserActivityModal({
   const [menu, setMenu] = useState<ContextMenuState | undefined>(undefined)
   const [profile, setProfile] = useState<UserProfile | undefined>(undefined)
   const [modActivity, setModActivity] = useState<UserModerationActivity | undefined>(undefined)
+  // The chat-log search, run only when the button asks (it reads every log of the platform).
+  const history = useUserHistory(platform, author.id)
+  const found = shownResult(history.state)
 
   // Show the latest activity on open, and keep following it as new lines arrive while pinned. Also
-  // re-pins when the fetched moderation history lands (it changes scroll height after mount).
+  // re-pins when the fetched moderation or logged history lands (it grows the list above).
   useLayoutEffect(() => {
     const el = bodyRef.current
     if (el !== null && atBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [messages, modActivity])
+  }, [messages, modActivity, found])
 
   function handleScroll(): void {
     const el = bodyRef.current
@@ -126,6 +144,16 @@ export function UserActivityModal({
   const historyEntries = (modActivity?.history ?? []).filter(
     (entry) => entry.kind === 'plain' || !sessionIds.has(entry.message.id)
   )
+  // Logged rows already shown from the session or YouTube's own history are left out: those copies
+  // carry badges, colours and the action menu the log doesn't keep.
+  const shownIds = new Set(sessionIds)
+  for (const entry of historyEntries) {
+    if (entry.kind === 'message') {
+      shownIds.add(entry.message.id)
+    }
+  }
+  // At most USER_HISTORY_CAP rows, and the rows themselves are memoized: cheap to regroup per render.
+  const logGroups = found === undefined ? [] : groupHistory(found, shownIds)
 
   return (
     <ModalShell className="pc-modal-wide" onClose={onClose}>
@@ -184,9 +212,14 @@ export function UserActivityModal({
           ) : null}
         </div>
       ) : null}
-      {/* One scroll for potentially a year of history: the server list and the session list share the
-          body, so its content-visibility keeps a long list cheap and neither list is boxed in. */}
+      <UserHistoryControls
+        history={history}
+        status={found === undefined ? undefined : historyStatus(found, loggingEnabled)}
+      />
+      {/* One scroll for potentially years of history: the logged, server and session lists share the
+          body, so its content-visibility keeps a long list cheap and no list is boxed in. */}
       <div className="mb pc-ua-body" ref={bodyRef} onScroll={handleScroll}>
+        <UserHistoryRows groups={logGroups} palette={palette} monitoredKeys={monitoredKeys} />
         {historyEntries.length > 0 ? (
           <>
             {modActivity?.historyTitle !== undefined ? (
@@ -206,8 +239,10 @@ export function UserActivityModal({
                 </div>
               )
             )}
-            {messages.length > 0 ? <div className="pc-ua-modhead">Seen this session</div> : null}
           </>
+        ) : null}
+        {(historyEntries.length > 0 || logGroups.length > 0) && messages.length > 0 ? (
+          <div className="pc-ua-modhead">Seen this session</div>
         ) : null}
         {messages.map((message) => (
           <MessageRow
@@ -220,7 +255,7 @@ export function UserActivityModal({
             }}
           />
         ))}
-        {messages.length === 0 && historyEntries.length === 0 ? (
+        {messages.length === 0 && historyEntries.length === 0 && logGroups.length === 0 ? (
           <div className="pc-empty">no messages from this user yet</div>
         ) : null}
       </div>

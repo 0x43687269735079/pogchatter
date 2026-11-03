@@ -26,6 +26,11 @@ import {
 import { AutoMod } from '@main/AutoMod'
 import { EventBatcher } from '@main/Batcher'
 import { StreamLogger } from '@main/chatLog/StreamLogger'
+import { UserHistorySearch } from '@main/chatLog/UserHistorySearch'
+// `?modulePath` resolves to the built worker bundle's path string (declared in assets.d.ts), not
+// to the module's own exports, which the import rule inspects.
+// oxlint-disable-next-line import/default
+import userHistoryWorkerPath from '@main/chatLog/userHistoryWorker?modulePath'
 import { type ColumnState, streamTargetFor } from '@main/chatLog/streamTarget'
 import type { StreamTarget } from '@main/chatLog/logLines'
 import { DonationStore } from '@main/DonationStore'
@@ -364,6 +369,32 @@ function countChatter(event: ChatEvent): void {
     ...(stream.title !== undefined ? { title: stream.title } : {})
   })
 }
+
+/**
+ * Searches the chat logs for one account's messages (the user card's "load logged history"), in a
+ * worker thread so chat keeps flowing. Progress goes to the window that asked; the log directory is
+ * read when each search starts, so a changed setting applies to the next one.
+ */
+const userHistory = new UserHistorySearch({
+  workerPath: userHistoryWorkerPath,
+  onProgress: (progress) => {
+    const window = getMainWindow()
+    if (window === undefined || window.isDestroyed()) {
+      return
+    }
+    const contents = window.webContents
+    if (contents.isDestroyed() || contents.isCrashed()) {
+      return
+    }
+    try {
+      contents.send('chat:userHistoryProgress', progress)
+    } catch {
+      // As in sendEvents: the frame can be disposed mid-reload even when the checks above pass. A
+      // dropped progress update is harmless (the result still arrives), and must not crash main.
+      debugLog('renderer', 'user-history progress dropped mid-reload')
+    }
+  }
+})
 
 /** Chatter statistics for the creator a YouTube column belongs to. */
 function chatterStatsFor(channelId: string): ChatterStatsResult {
@@ -834,6 +865,11 @@ void app
       broadcastAuth,
       backlogSnapshot: () => backlog.snapshot(),
       chatterStats: chatterStatsFor,
+      searchUserHistory: (platform, userId, requestId) =>
+        userHistory.search(effectiveLogDir(), platform, userId, requestId),
+      cancelUserHistory: () => {
+        userHistory.cancel()
+      },
       donationsSnapshot: () => ({
         donations: donationStore?.list() ?? [],
         rates: rateService?.table(),
@@ -1261,6 +1297,7 @@ app.on('before-quit', (event) => {
   debugLog('app', 'quitting')
   keepAlive?.stop()
   batcher?.dispose()
+  userHistory.dispose()
   // The 7TV socket and the engine's timers would otherwise run until the forced exit below.
   emoteEngine?.dispose()
   // Writes are debounced, so a donation (or a read tick) from the last second would otherwise be

@@ -2,6 +2,19 @@ import type { ChatMessage, ModerationRule } from '@shared/model'
 import { matchesPattern, messageText } from '@renderer/match'
 
 /**
+ * Whether the built-in flagged-messages panel is shown: always when the owner asked for it at
+ * launch, otherwise only once there's something to review — a watchlist term is configured, or a
+ * held-for-review message has been seen this session.
+ */
+export function flaggedViewVisible(state: {
+  alwaysShow: boolean
+  hasRules: boolean
+  heldSeen: boolean
+}): boolean {
+  return state.alwaysShow || state.hasRules || state.heldSeen
+}
+
+/**
  * Whether a message trips any moderation watchlist term, matched against the message text. Empty
  * patterns and system (non-chat) lines never match. Used to flag messages for moderator review.
  */

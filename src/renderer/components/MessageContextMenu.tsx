@@ -30,8 +30,8 @@ interface MessageContextMenuProps {
   onClose: () => void
   /** Reply affordance — omitted in read-only/monitor contexts. */
   onReply?: ((message: ChatMessage) => void) | undefined
-  /** Jump to the message's own column — used by the combined monitor view. */
-  onJump?: ((channelId: string) => void) | undefined
+  /** Jump to the message in its own column — offered outside that column (views, modals). */
+  onJump?: ((channelId: string, messageId?: string) => void) | undefined
   /** Open this author's "User activity" view; omitted inside that view to avoid nesting. */
   onUserActivity?: ((message: ChatMessage) => void) | undefined
   /** Open a Super Chat's reply thread; only shown on a message that replies to a donation. */
@@ -275,11 +275,11 @@ export function MessageContextMenu({
               <button
                 type="button"
                 onClick={() => {
-                  onJump?.(message.channelId)
+                  onJump?.(message.channelId, message.id)
                   onClose()
                 }}
               >
-                go to chat
+                go to message
               </button>
             ) : null}
             {hasUserActivity ? (

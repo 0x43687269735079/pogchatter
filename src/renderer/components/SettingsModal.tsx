@@ -506,6 +506,23 @@ export function SettingsModal({
 
         <div className="pc-setting-group">
           <div className="pc-setting-group-title">Moderation alerts</div>
+          <label className="pc-setting">
+            <span className="pc-setting-meta">
+              <span className="pc-setting-name">moderation panel at launch</span>
+              <span className="pc-setting-desc">
+                Show the messages-flagged-for-moderation panel as soon as the app opens. Off, it
+                appears once a moderation term is set or the first held-for-review message arrives.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="pc-switch"
+              checked={settings.alwaysShowModerationPanel}
+              onChange={(event) => {
+                onChange({ alwaysShowModerationPanel: event.target.checked })
+              }}
+            />
+          </label>
           <ModerationSettings
             settings={settings.moderation}
             onRulesChange={onModerationChange}

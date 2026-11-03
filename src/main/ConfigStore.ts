@@ -365,6 +365,9 @@ function sanitizeSettings(value: unknown): Partial<AppSettings> {
   if (typeof input['chatterStats'] === 'boolean') {
     settings.chatterStats = input['chatterStats']
   }
+  if (typeof input['alwaysShowModerationPanel'] === 'boolean') {
+    settings.alwaysShowModerationPanel = input['alwaysShowModerationPanel']
+  }
   if (Array.isArray(input['donationStreamers'])) {
     const keys = input['donationStreamers']
       .filter((key): key is string => typeof key === 'string')

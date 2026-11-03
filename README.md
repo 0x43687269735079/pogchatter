@@ -7,6 +7,8 @@ multi-column window. Built with Electron, React, and TypeScript.
 - Send messages, emotes, and YouTube emoji from a unified composer
 - Right-click moderation (report/block; remove/timeout/ban when you are a mod or the broadcaster)
 - Reveal deleted messages and highlight/ping on specific users or keywords
+- A moderation panel of flagged and held messages (optionally open from launch), and a user card
+  that can load a chatter's messages from your local chat logs across every logged stream
 - 7TV / BTTV / FFZ and Twitch emotes, plus the live YouTube emoji catalog
 - A donations tab collecting Super Chats, members, cheers, subs and StreamElements tips for the
   streamers you choose (right-click a tab), grouped per streamer across both platforms, with

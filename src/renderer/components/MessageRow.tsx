@@ -155,8 +155,8 @@ interface MessageRowProps {
    */
   originLabel?: string | undefined
   originColor?: string | undefined
-  /** Click handler for the origin tag — jumps to the message's own column. */
-  onOriginClick?: ((channelId: string) => void) | undefined
+  /** Click handler for the origin tag — jumps to this message in its own column. */
+  onOriginClick?: ((channelId: string, messageId: string) => void) | undefined
   /**
    * Monitored authors as `<platform>:<authorId>` keys; their rows get the monitored accent. The
    * Set itself is passed (not a per-row boolean) so its identity only changes when the monitored
@@ -220,6 +220,7 @@ function HeldCard({
   return (
     <div
       className="pc-held"
+      data-msgid={message.id}
       onContextMenu={
         onContextMenu !== undefined
           ? (event): void => {
@@ -311,7 +312,7 @@ export const MessageRow = memo(function MessageRow({
     const base = highlight.color ?? '#1976d2'
     const fg = contrastText(base)
     return (
-      <div className="pc-hl" onContextMenu={handleContextMenu}>
+      <div className="pc-hl" data-msgid={message.id} onContextMenu={handleContextMenu}>
         <div className="pc-sc-head" style={{ background: darken(base, 0.18), color: fg }}>
           <span className="nm">{atName(name)}</span>
           <span className="pc-sc-time">{time}</span>
@@ -335,7 +336,11 @@ export const MessageRow = memo(function MessageRow({
         : (highlight.headerText ?? 'became a member')
     const hasBody = message.fragments.length > 0
     return (
-      <div className="pc-hl pc-hl-member-card" onContextMenu={handleContextMenu}>
+      <div
+        className="pc-hl pc-hl-member-card"
+        data-msgid={message.id}
+        onContextMenu={handleContextMenu}
+      >
         <div className="pc-hl-line pc-hl-member">
           <span className="ic">✦</span>
           <span>
@@ -363,14 +368,22 @@ export const MessageRow = memo(function MessageRow({
     // A resub message rides along as a body, in the member-card layout.
     if (message.fragments.length > 0) {
       return (
-        <div className="pc-hl pc-hl-member-card" onContextMenu={handleContextMenu}>
+        <div
+          className="pc-hl pc-hl-member-card"
+          data-msgid={message.id}
+          onContextMenu={handleContextMenu}
+        >
           <div className="pc-hl-line pc-hl-sub">{line}</div>
           <div className="pc-hl-sub-body">{renderFragments(message.fragments)}</div>
         </div>
       )
     }
     return (
-      <div className="pc-hl pc-hl-line pc-hl-sub" onContextMenu={handleContextMenu}>
+      <div
+        className="pc-hl pc-hl-line pc-hl-sub"
+        data-msgid={message.id}
+        onContextMenu={handleContextMenu}
+      >
         {line}
       </div>
     )
@@ -379,7 +392,7 @@ export const MessageRow = memo(function MessageRow({
   if (highlight?.kind === 'bits') {
     const count = highlight.amount ?? 0
     return (
-      <div className="pc-bits" onContextMenu={handleContextMenu}>
+      <div className="pc-bits" data-msgid={message.id} onContextMenu={handleContextMenu}>
         <span className="pc-time">{time}</span>
         <Avatar name={message.author.name} url={message.author.avatarUrl} palette={palette} />
         <span className="pc-body-txt">
@@ -407,6 +420,7 @@ export const MessageRow = memo(function MessageRow({
       // A moderation-activity notice has no per-message actions, so it takes no context menu.
       <div
         className={moderation ? 'pc-sys pc-mod' : 'pc-sys'}
+        data-msgid={message.id}
         onContextMenu={moderation ? undefined : handleContextMenu}
       >
         {moderation ? (
@@ -466,7 +480,12 @@ export const MessageRow = memo(function MessageRow({
           <span className="ic">★</span> redeemed {message.reward.name ?? 'a channel-points reward'}
         </div>
       ) : null}
-      <div className={classes.join(' ')} style={rowStyle} onContextMenu={handleContextMenu}>
+      <div
+        className={classes.join(' ')}
+        style={rowStyle}
+        data-msgid={message.id}
+        onContextMenu={handleContextMenu}
+      >
         <span className="pc-time">{time}</span>
         <Avatar name={message.author.name} url={message.author.avatarUrl} palette={palette} />
         <span className="pc-body-txt">
@@ -478,7 +497,7 @@ export const MessageRow = memo(function MessageRow({
               title={`From ${originLabel} — click to open its chat`}
               onClick={(event) => {
                 event.stopPropagation()
-                onOriginClick?.(message.channelId)
+                onOriginClick?.(message.channelId, message.id)
               }}
             >
               {originLabel}

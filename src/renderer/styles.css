@@ -828,6 +828,20 @@ body,
     background: var(--bg);
   }
 }
+/* The row a "go to message" landed on, outlined briefly so the eye finds it. */
+.pc-stream [data-msgid].pc-jumped {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  animation: pc-jumped 2s ease-out;
+}
+@keyframes pc-jumped {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
 .pc-time {
   flex: 0 0 auto;
   color: var(--dimmer);
@@ -2148,6 +2162,28 @@ body,
 .pc-ua-modhead:first-child {
   border-top: none;
   margin-top: 0;
+}
+/* Each logged stream heads its own group; every group after the first is ruled off like a section. */
+.pc-ua-loggroup:not(:first-child) > .pc-ua-modhead:first-child {
+  border-top: 1px solid var(--rule);
+  margin-top: 4px;
+}
+/* The chat-log search: its button, then progress or what it found. */
+.pc-ua-logs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.pc-ua-logstatus {
+  color: var(--dimmer);
+  font-size: var(--fs-small);
+}
+.pc-ua-logstatus.err {
+  color: var(--err);
 }
 .pc-ua-modplain {
   color: var(--dim);

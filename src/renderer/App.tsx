@@ -70,7 +70,9 @@ import { playPing, showPing } from '@renderer/ping'
 import { isOnline } from '@renderer/status'
 import { streamsTargetFor } from '@renderer/tabMenu'
 import { composerFor, focusContext, routesToComposer } from '@renderer/typeToFocus'
+import { flaggedViewVisible } from '@renderer/moderation'
 import { clearUnread, foldUnread, type UnreadLevel } from '@renderer/unread'
+import type { JumpTarget } from '@renderer/useColumnFollow'
 import { TabBar } from '@renderer/components/TabBar'
 import { THEME_PALETTES } from '@renderer/theme'
 
@@ -164,6 +166,12 @@ export function App(): ReactElement {
   const [streamsInFlight, setStreamsInFlight] = useState<ReadonlySet<string>>(new Set())
   // Transient add-streams result note, per origin column id (tab menu / header context menu).
   const [columnNotes, setColumnNotes] = useState<Record<string, string>>({})
+  // The latest "go to message"; only the target chat's column receives it, and clears it once
+  // handled, so a column mounted again later (a tab switch, a layout change) doesn't repeat it.
+  const [jumpTarget, setJumpTarget] = useState<JumpTarget | undefined>(undefined)
+  const consumeJump = useCallback((seq: number): void => {
+    setJumpTarget((prev) => (prev?.seq === seq ? undefined : prev))
+  }, [])
 
   // Total messages received; StatusBar samples it at 1 Hz for the msg/s rate, so the per-second
   // re-render stays scoped there instead of cascading through the whole column tree.
@@ -358,14 +366,16 @@ export function App(): ReactElement {
     ytUserLogoutRef.current = false
   }, [auth.youtube.loggedIn])
 
-  // The built-in flagged-messages view exists whenever the moderation watchlist has a configured
-  // term, or a YouTube automod "held for review" message has appeared (only moderators receive
-  // those).
+  // The built-in flagged-messages view (see flaggedViewVisible): from launch when the setting asks,
+  // otherwise once the moderation watchlist has a configured term or a YouTube automod "held for
+  // review" message has appeared (only moderators receive those).
+  const alwaysShowModeration = settings.alwaysShowModerationPanel
   const hasModerationRules = settings.moderation.rules.some((rule) => rule.pattern.trim() !== '')
   // Latch on the first held message and stay visible for the session, rather than recomputing from
   // current buffer contents — otherwise the column would unmount mid-review once the last held row
   // ages out of the buffers (and mirrors how it stays open while rules exist). The scan runs only
-  // until it latches and only when no watchlist term already shows the view.
+  // until it latches and only while no watchlist term shows the view. It still runs while the
+  // setting shows it, so turning the setting off later keeps a panel that had something to review.
   const [heldSeen, setHeldSeen] = useState(false)
   useEffect(() => {
     if (heldSeen || hasModerationRules) {
@@ -377,7 +387,11 @@ export function App(): ReactElement {
       setHeldSeen(true)
     }
   }, [messages, heldSeen, hasModerationRules])
-  const flaggedVisible = hasModerationRules || heldSeen
+  const flaggedVisible = flaggedViewVisible({
+    alwaysShow: alwaysShowModeration,
+    hasRules: hasModerationRules,
+    heldSeen
+  })
   flaggedVisibleRef.current = flaggedVisible
   // Every open chat feeds the flagged view; memoized so its merge isn't recomputed on every render.
   const allChannelIds = useMemo(() => channels.map((channel) => channel.id), [channels])
@@ -812,9 +826,14 @@ export function App(): ReactElement {
   )
 
   // From a combined monitor view, open and focus a message's own column so the mod acts there.
-  // Stable so the memoized rows aren't invalidated as messages arrive.
-  const jumpToChannel = useCallback((channelId: string): void => {
-    setActiveId(channelId)
+  // Stable so the memoized rows aren't invalidated as messages arrive (selectTab only touches state
+  // setters, refs and IPC, so its first-render copy stays correct).
+  // With a message id, the chat's column also scrolls to that message and stops following chat.
+  const jumpToChannel = useCallback((channelId: string, messageId?: string): void => {
+    selectTab(channelId)
+    if (messageId !== undefined) {
+      setJumpTarget((prev) => ({ channelId, messageId, seq: (prev?.seq ?? 0) + 1 }))
+    }
     const el = document.querySelector(`[data-colid="${channelId.replace(/"/g, '\\"')}"]`)
     el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
   }, [])
@@ -941,6 +960,8 @@ export function App(): ReactElement {
           monitoredKeys={monitoredKeys}
           onHeaderContextMenu={openTabMenu}
           menuNote={columnNotes[column.id]}
+          jumpTo={jumpTarget?.channelId === column.id ? jumpTarget : undefined}
+          onJumpHandled={consumeJump}
         />
       )
     }
@@ -1205,6 +1226,8 @@ export function App(): ReactElement {
         {userActivity !== undefined ? (
           <UserActivityModal
             author={userActivity.author}
+            platform={userActivity.platform}
+            loggingEnabled={settings.chatLog.enabled}
             channelId={userActivity.channelId}
             channelLabel={
               channels.find((channel) => channel.id === userActivity.channelId)?.label ??
@@ -1223,8 +1246,8 @@ export function App(): ReactElement {
                 userActivity.author.name
               )
             }}
-            onJump={(channelId) => {
-              jumpToChannel(channelId)
+            onJump={(channelId, messageId) => {
+              jumpToChannel(channelId, messageId)
               setUserActivity(undefined)
             }}
             onClose={() => {
@@ -1239,8 +1262,8 @@ export function App(): ReactElement {
             parentAuthor={donationThread.parentAuthor}
             palette={palette}
             monitoredKeys={monitoredKeys}
-            onJump={(channelId) => {
-              jumpToChannel(channelId)
+            onJump={(channelId, messageId) => {
+              jumpToChannel(channelId, messageId)
               setDonationThread(undefined)
             }}
             onClose={() => {
@@ -1270,8 +1293,8 @@ export function App(): ReactElement {
                 return messageId === undefined ? rest : { ...rest, replyToId: messageId }
               })
             }}
-            onJump={(channelId) => {
-              jumpToChannel(channelId)
+            onJump={(channelId, messageId) => {
+              jumpToChannel(channelId, messageId)
               setThreadView(undefined)
             }}
             onClose={() => {

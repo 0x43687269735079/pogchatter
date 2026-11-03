@@ -25,6 +25,7 @@ import type {
 } from '@shared/model'
 import type { DonationsSnapshot } from '@shared/donations'
 import type { ChatterStatsResult } from '@shared/chatterStats'
+import type { UserHistoryProgress, UserHistoryResult } from '@shared/userHistory'
 import { createEventBuffer } from '@preload/eventBuffer'
 
 // Listen from preload time, not first subscription: main starts pushing batches the moment its
@@ -47,6 +48,30 @@ const api: ChatApi = {
   },
   getChatterStats(channelId: string): Promise<ChatterStatsResult> {
     return ipcRenderer.invoke('chat:getChatterStats', channelId) as Promise<ChatterStatsResult>
+  },
+  searchUserHistory(
+    platform: Platform,
+    userId: string,
+    requestId: number
+  ): Promise<UserHistoryResult> {
+    return ipcRenderer.invoke(
+      'chat:searchUserHistory',
+      platform,
+      userId,
+      requestId
+    ) as Promise<UserHistoryResult>
+  },
+  cancelUserHistory(): Promise<void> {
+    return ipcRenderer.invoke('chat:cancelUserHistory') as Promise<void>
+  },
+  onUserHistoryProgress(callback: (progress: UserHistoryProgress) => void): () => void {
+    const listener = (_event: IpcRendererEvent, progress: UserHistoryProgress): void => {
+      callback(progress)
+    }
+    ipcRenderer.on('chat:userHistoryProgress', listener)
+    return () => {
+      ipcRenderer.removeListener('chat:userHistoryProgress', listener)
+    }
   },
   markDonationsRead(ids: string[], read: boolean): Promise<void> {
     return ipcRenderer.invoke('chat:markDonationsRead', ids, read) as Promise<void>

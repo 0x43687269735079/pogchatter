@@ -50,7 +50,8 @@ const DEFAULTS = {
   embedGifs: true,
   donationsPanel: true,
   donationStreamers: [],
-  chatterStats: true
+  chatterStats: true,
+  alwaysShowModerationPanel: false
 }
 
 describe('ConfigStore settings', () => {
@@ -319,6 +320,17 @@ describe('ConfigStore spelling and raw-log settings', () => {
     expect(store.settings().chatterStats).toBe(true)
     expect(store.setSettings({ chatterStats: 'no' } as never).chatterStats).toBe(true)
     expect(store.setSettings({ chatterStats: false }).chatterStats).toBe(false)
+  })
+
+  it('keeps the moderation panel to its usual rule unless switched on, ignoring a non-boolean', () => {
+    const store = new ConfigStore()
+    expect(store.settings().alwaysShowModerationPanel).toBe(false)
+    expect(
+      store.setSettings({ alwaysShowModerationPanel: 'yes' } as never).alwaysShowModerationPanel
+    ).toBe(false)
+    expect(store.setSettings({ alwaysShowModerationPanel: true }).alwaysShowModerationPanel).toBe(
+      true
+    )
   })
 
   it('shows the donations panel unless told otherwise, and keeps its streamer list to distinct keys', () => {

@@ -58,6 +58,10 @@ pnpm build:mac     # or build:win / build:linux — installers land in dist/
 
 Build each platform on that platform; cross-compiling is not supported.
 
+Before committing, run `prek install` once in your clone ([prek](https://github.com/j178/prek)).
+Its hooks refuse commits, tags and `Co-authored-by` lines whose identity isn't listed in
+`.github/commit-identities`, and CI runs the same check on every pull request.
+
 ## Logging in
 
 Log in from the chips in the app's title bar. You can read chat without logging in; sending and

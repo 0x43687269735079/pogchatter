@@ -25,3 +25,26 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
+
+  # Every commit identity in this public repository is published, and a squash merge copies each
+  # pull request commit's author into main as a co-author. Only the identities listed in
+  # .github/commit-identities may appear; this job is a required check for main.
+  identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check commit identities
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -n "$BASE" ]; then
+            scripts/check-commit-identity.sh range "$BASE..$HEAD"
+          else
+            scripts/check-commit-identity.sh range HEAD
+          fi
+      - name: Check that the identity check refuses foreign identities
+        run: scripts/check-commit-identity.test.sh

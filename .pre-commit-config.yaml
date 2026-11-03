@@ -1,0 +1,29 @@
+# Git hooks, run by prek (https://github.com/j178/prek): `prek install` once per clone.
+# This repository is public, so every commit, tag and co-author identity in it is published; these
+# hooks refuse any identity not in .github/commit-identities before it leaves this machine. CI runs
+# the same check (.github/workflows/ci.yml) for anything that gets past them.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: commit-identity
+        name: commit identity (configured name and email)
+        entry: scripts/check-commit-identity.sh configured
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: commit-identity-message
+        name: commit identity (Co-authored-by trailers)
+        entry: scripts/check-commit-identity.sh message
+        language: system
+        always_run: true
+        stages: [commit-msg]
+      - id: commit-identity-push
+        name: commit identity (outgoing commits and tags)
+        entry: scripts/check-commit-identity.sh unpublished
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

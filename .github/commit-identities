@@ -1,0 +1,9 @@
+# The only identities allowed in this repository's history, as "<role> <email>".
+# Roles: author (commit authors and Co-authored-by trailers), committer, tagger.
+# Checked by scripts/check-commit-identity.sh, locally (prek hooks) and in CI. An allowlist on
+# purpose: anything not listed here is refused, so no other address needs to appear in the repo.
+author 289092784+0x43687269735079@users.noreply.github.com
+committer 289092784+0x43687269735079@users.noreply.github.com
+# GitHub commits squash merges and web edits as itself.
+committer noreply@github.com
+tagger 289092784+0x43687269735079@users.noreply.github.com
